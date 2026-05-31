@@ -351,6 +351,31 @@ body {
 .summary-reasons { display:flex; gap:6px; flex-wrap:wrap; margin-top:12px; }
 .summary-reasons span { color:var(--text-secondary); background:rgba(255,255,255,.04); border-radius:6px; padding:4px 8px; font-size:11px; font-family:var(--font-mono); }
 
+.inventory-policy {
+  color:var(--accent-orange); background:rgba(237,137,54,.08);
+  border:1px solid rgba(237,137,54,.25); border-radius:var(--radius-sm);
+  padding:10px 12px; margin-bottom:14px; font-size:12px;
+}
+.inventory-balances { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:10px; margin-bottom:12px; }
+.inventory-balances div { display:flex; flex-direction:column; gap:4px; background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius-sm); padding:12px; }
+.inventory-balances span { color:var(--text-muted); font-size:10px; text-transform:uppercase; }
+.inventory-balances strong { color:var(--text-primary); font-family:var(--font-mono); }
+.inventory-readiness { display:flex; gap:10px; align-items:center; padding:10px 12px; border-radius:var(--radius-sm); margin-bottom:8px; }
+.inventory-readiness.yes { color:var(--accent-green); background:rgba(72,187,120,.12); }
+.inventory-readiness.no { color:var(--accent-orange); background:rgba(237,137,54,.12); }
+.inventory-blockers { color:var(--text-secondary); font-family:var(--font-mono); font-size:11px; margin-bottom:14px; }
+.inventory-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:12px; }
+.inventory-card { background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:14px; }
+.inventory-card.ok { border-color:rgba(72,187,120,.35); }
+.inventory-card.shortage { border-color:rgba(237,137,54,.35); }
+.inventory-symbol { color:var(--text-primary); font-size:18px; font-weight:700; margin-bottom:8px; }
+.inventory-qty, .inventory-missing, .inventory-manual { color:var(--text-secondary); font-size:11px; font-family:var(--font-mono); margin-top:5px; }
+.inventory-directions { display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; }
+.inventory-directions span { padding:3px 7px; border-radius:999px; font-size:10px; font-weight:700; }
+.inventory-directions .ok { color:var(--accent-green); background:rgba(72,187,120,.12); }
+.inventory-directions .no { color:var(--accent-orange); background:rgba(237,137,54,.12); }
+.inventory-manual { color:var(--accent-yellow); line-height:1.5; }
+
 /* ── STOP Button ─────────────────────────────────────── */
 .stop-btn {
   padding: 8px 16px; border: 1px solid rgba(252,129,129,.4);

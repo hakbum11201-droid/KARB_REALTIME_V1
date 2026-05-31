@@ -1,5 +1,25 @@
 # KARB_REALTIME_V1 보안 가이드
 
+## 출금 금지 및 수동 리밸런싱 정책
+
+이 프로젝트는 출금 API를 사용하지 않습니다.
+
+- 출금 권한 사용 금지
+- 지갑 주소 저장 금지
+- 자동 전송 금지
+- 자동 리밸런싱 금지
+- 선물, 마진, P2P, internal transfer 사용 금지
+- 부족 자산은 UI에서 안내하고 사용자가 직접 수동 리밸런싱
+
+## 거래소별 API 키 권한
+
+- Upbit 허용: 자산조회, 주문조회, 주문하기
+- Upbit 금지: 출금하기, 출금조회, 출금주소 관리
+- Binance 허용: Spot 계정 조회, Spot 거래, 주문조회
+- Binance 금지: Withdrawals, Futures, Margin, P2P, Internal transfer
+- 가능하면 IP 제한을 설정합니다.
+- API 키는 `.env.local`에만 저장하며 GitHub에 업로드하지 않습니다.
+
 ## 핵심 원칙
 
 1. **API 키는 `.env.local` 또는 `.env` 파일에만 저장한다.**

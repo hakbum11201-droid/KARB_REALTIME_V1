@@ -60,6 +60,7 @@ document.querySelectorAll('.nav-item').forEach(btn => {
     setText('page-title', btn.textContent.trim());
     if (tab === 'keys')    fetchKeyStatus();
     if (tab === 'session') fetchLastSession();
+    if (tab === 'inventory') fetchInventory();
     if (tab === 'perf')    fetchPerf();
     if (tab === 'trades')  fetchTrades();
   });
@@ -481,6 +482,51 @@ async function fetchKeyStatus() {
   } catch {}
 }
 
+async function fetchInventory() {
+  try {
+    const [inventoryRes, readinessRes] = await Promise.all([
+      fetch('/api/inventory'),
+      fetch('/api/live/readiness'),
+    ]);
+    if (!inventoryRes.ok || !readinessRes.ok) return;
+    renderInventory(await inventoryRes.json(), await readinessRes.json());
+  } catch (error) {
+    console.error('[fetchInventory] failed', error);
+  }
+}
+
+function renderInventory(inventory, readiness) {
+  const balances = inventory.balances||{};
+  const upbit = balances.upbit||{}, binance = balances.binance||{};
+  const symbols = inventory.symbols||[];
+  const balancesEl = $('inventory-balances');
+  if (balancesEl) balancesEl.innerHTML = `
+    <div><span>Upbit KRW</span><strong>${fmt(upbit.KRW)} KRW</strong></div>
+    <div><span>Binance USDT</span><strong>${fmt(binance.USDT,2)} USDT</strong></div>`;
+  const readyEl = $('inventory-readiness');
+  if (readyEl) {
+    readyEl.className = `inventory-readiness ${readiness.ready?'yes':'no'}`;
+    readyEl.innerHTML = `<span>Tiny Live Ready</span><strong>${readiness.ready?'YES':'NO'}</strong>`;
+  }
+  setText('inventory-blockers', readiness.blockers?.length
+    ? `Blockers: ${readiness.blockers.join(' / ')}`
+    : 'No blockers. Manual review is still required.');
+  const grid = $('inventory-grid');
+  if (!grid) return;
+  grid.innerHTML = symbols.map(row => `
+    <div class="inventory-card ${row.status==='OK'?'ok':'shortage'}">
+      <div class="inventory-symbol">${row.symbol}</div>
+      <div class="inventory-qty">Upbit ${fmt(row.upbit_coin_qty,6)} / Binance ${fmt(row.binance_coin_qty,6)}</div>
+      <div class="inventory-directions">
+        <span class="${row.direction_a_possible?'ok':'no'}">Direction A ${row.direction_a_possible?'YES':'NO'}</span>
+        <span class="${row.direction_b_possible?'ok':'no'}">Direction B ${row.direction_b_possible?'YES':'NO'}</span>
+      </div>
+      <div class="inventory-missing">A missing: ${(row.missing_for_a||[]).join(', ')||'none'}</div>
+      <div class="inventory-missing">B missing: ${(row.missing_for_b||[]).join(', ')||'none'}</div>
+      <div class="inventory-manual">Manual Rebalance: ${row.recommended_manual_action}</div>
+    </div>`).join('') || '<div class="empty-row">Inventory unavailable. Review blockers.</div>';
+}
+
 on('btn-save-keys', 'click', async () => {
   const body = {
     upbit_access_key:  $('inp-upbit-access').value,
@@ -504,6 +550,7 @@ on('btn-save-keys', 'click', async () => {
 fetchData();
 fetchPerf();
 fetchLastSession();
+fetchInventory();
 setInterval(fetchData,   POLL_MS);
 setInterval(fetchPerf,   POLL_MS*2);
 setInterval(fetchTrades, POLL_MS*2);

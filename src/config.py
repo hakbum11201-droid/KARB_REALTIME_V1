@@ -23,6 +23,24 @@ class Config:
         self._mode_override = mode
     @property
     def enable_live_trading(self): return self.get('enable_live_trading', False)
+    @property
+    def tiny_live_enabled(self): return self.get('tiny_live_enabled', False)
+    @property
+    def live_order_enabled(self): return self.get('live_order_enabled', False)
+    @property
+    def withdrawals_enabled(self): return self.get('withdrawals_enabled', False)
+    @property
+    def futures_hedge_enabled(self): return self.get('futures_hedge_enabled', False)
+    @property
+    def manual_rebalance_only(self): return self.get('manual_rebalance_only', True)
+    @property
+    def require_paper_pass_for_tiny_live(self): return self.get('require_paper_pass_for_tiny_live', True)
+    @property
+    def min_paper_closed_trades_for_tiny_live(self): return self.get('min_paper_closed_trades_for_tiny_live', 10)
+    @property
+    def min_paper_win_rate_for_tiny_live(self): return self.get('min_paper_win_rate_for_tiny_live', 0.65)
+    @property
+    def min_paper_net_pnl_krw_for_tiny_live(self): return self.get('min_paper_net_pnl_krw_for_tiny_live', 0)
 
     # ── 심볼 / 루프 ────────────────────────────────────────────
     @property

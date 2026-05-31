@@ -25,6 +25,7 @@
       <button class="nav-item" data-tab="trades">📋 거래 로그</button>
       <button class="nav-item" data-tab="perf">📈 성과 분석</button>
       <button class="nav-item" data-tab="session">📊 세션 리포트</button>
+      <button class="nav-item" data-tab="inventory">Inventory / Rebalance</button>
       <button class="nav-item" data-tab="keys">🔑 API Keys</button>
     </nav>
     <div class="sidebar-footer">
@@ -181,6 +182,22 @@
       <div class="section-label">Session Summary</div>
       <div class="session-report" id="session-report">
         <div class="empty-row">세션 리포트 없음 – 엔진 종료 후 자동 생성됩니다</div>
+      </div>
+    </section>
+
+    <!-- Inventory / Rebalance Tab -->
+    <section class="tab-content" id="tab-inventory">
+      <div class="section-label">Inventory / Rebalance</div>
+      <div class="inventory-policy">Manual rebalance only. Withdrawals and automatic transfers are disabled.</div>
+      <div class="inventory-balances" id="inventory-balances">
+        <div class="empty-row">Loading inventory...</div>
+      </div>
+      <div class="inventory-readiness" id="inventory-readiness">
+        <span>Tiny Live Ready</span><strong>NO</strong>
+      </div>
+      <div class="inventory-blockers" id="inventory-blockers">Loading blockers...</div>
+      <div class="inventory-grid" id="inventory-grid">
+        <div class="empty-row">Loading Inventory / Rebalance guide...</div>
       </div>
     </section>
 
