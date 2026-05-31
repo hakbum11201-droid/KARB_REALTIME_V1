@@ -77,7 +77,7 @@ def main():
     base_dir     = os.path.dirname(os.path.abspath(__file__))
     runtime_dir  = os.path.normpath(os.path.join(base_dir, '..', 'runtime'))
     os.makedirs(runtime_dir, exist_ok=True)
-    state_path   = os.path.join(runtime_dir, 'latest_state.json')
+    state_path   = os.path.join(runtime_dir, 'state.json')
     quotes_path  = os.path.join(runtime_dir, 'latest_quotes.json')
 
     # ── 세션 통계 누적기 ──────────────────────────────────────────────────

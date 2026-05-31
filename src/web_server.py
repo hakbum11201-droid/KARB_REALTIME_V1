@@ -1,7 +1,7 @@
 """
 web_server.py - KARB Realtime V1 HTTP 서버.
 엔드포인트:
-  GET  /api/state          – latest_state.json
+  GET  /api/state          – state.json
   GET  /api/data           – state + quotes 통합
   GET  /api/perf           – performance_summary + recent_trades
   GET  /api/performance    – performance_summary
@@ -90,11 +90,11 @@ class KarbHandler(SimpleHTTPRequestHandler):
             self._send_json(process_manager.get_engine_status())
 
         elif self.path == '/api/state':
-            self._send_json(_read_json(os.path.join(RUNTIME_DIR, 'latest_state.json')))
+            self._send_json(_read_json(os.path.join(RUNTIME_DIR, 'state.json')))
 
         elif self.path == '/api/data':
             self._send_json({
-                'state':   _read_json(os.path.join(RUNTIME_DIR, 'latest_state.json')),
+                'state':   _read_json(os.path.join(RUNTIME_DIR, 'state.json')),
                 'quotes':  _read_json(os.path.join(RUNTIME_DIR, 'latest_quotes.json')),
                 'control': ctrl_module.get_control_state(),
                 'engine':  process_manager.get_engine_status(),

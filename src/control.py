@@ -21,13 +21,15 @@ def _ensure_runtime():
 
 def _read_control() -> dict:
     _ensure_runtime()
+    default_state = {'run_id': '', 'status': 'STOPPED', 'stop_requested': False}
     if not os.path.exists(CONTROL_PATH):
-        return {}
+        return default_state
     try:
         with open(CONTROL_PATH, 'r', encoding='utf-8') as f:
-            return json.load(f)
+            data = json.load(f)
+            return {**default_state, **data}
     except Exception:
-        return {}
+        return default_state
 
 
 def _write_control(data: dict) -> None:
@@ -93,7 +95,7 @@ if __name__ == '__main__':
         print(f"Stop requested. run_id={ctrl.get('run_id', '?')}")
         print("Engine will finalize session report on next loop.")
     elif len(sys.argv) > 1 and sys.argv[1] == 'status':
-        ctrl = get_control()
+        ctrl = get_control_state()
         print(json.dumps(ctrl, indent=2, ensure_ascii=False))
     else:
         print("Usage: python src/control.py stop|status")

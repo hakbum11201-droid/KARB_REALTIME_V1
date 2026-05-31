@@ -30,7 +30,7 @@ REPORTS_DIR = os.path.normpath(os.path.join(BASE_DIR, '..', 'reports', 'sessions
 def analyze_session(run_id: str) -> dict:
     """
     엔진 종료 후 호출되어 파일 기반으로 세션 리포트를 생성한다.
-    입력: runtime/performance_summary.json, runtime/latest_state.json,
+    입력: runtime/performance_summary.json, runtime/state.json,
           logs/paper_trades.jsonl, logs/decisions.jsonl
     """
     os.makedirs(REPORTS_DIR, exist_ok=True)
@@ -58,7 +58,7 @@ def analyze_session(run_id: str) -> dict:
         return lines
 
     perf_path = os.path.join(RUNTIME_DIR, 'performance_summary.json')
-    state_path = os.path.join(RUNTIME_DIR, 'latest_state.json')
+    state_path = os.path.join(RUNTIME_DIR, 'state.json')
     trades_path = os.path.join(LOGS_DIR, 'paper_trades.jsonl')
     decisions_path = os.path.join(LOGS_DIR, 'decisions.jsonl')
 
