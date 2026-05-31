@@ -243,7 +243,7 @@ function renderTopbar(s, e) {
 
   setDisabled('btn-start-paper', isRunning);
   setDisabled('btn-start-tiny', isRunning);
-  setDisabled('btn-start-live', isRunning);
+  setDisabled('btn-start-live', true);
   setDisabled('btn-stop-engine', !isRunning);
 
   setText('stat-session', e.run_id ? e.run_id.slice(0,15) : '--');
@@ -484,18 +484,19 @@ async function fetchKeyStatus() {
 
 async function fetchInventory() {
   try {
-    const [inventoryRes, readinessRes] = await Promise.all([
+    const [inventoryRes, readinessRes, statusRes] = await Promise.all([
       fetch('/api/inventory'),
       fetch('/api/live/readiness'),
+      fetch('/api/tiny-live/status'),
     ]);
-    if (!inventoryRes.ok || !readinessRes.ok) return;
-    renderInventory(await inventoryRes.json(), await readinessRes.json());
+    if (!inventoryRes.ok || !readinessRes.ok || !statusRes.ok) return;
+    renderInventory(await inventoryRes.json(), await readinessRes.json(), await statusRes.json());
   } catch (error) {
     console.error('[fetchInventory] failed', error);
   }
 }
 
-function renderInventory(inventory, readiness) {
+function renderInventory(inventory, readiness, tinyStatus={}) {
   const balances = inventory.balances||{};
   const upbit = balances.upbit||{}, binance = balances.binance||{};
   const symbols = inventory.symbols||[];
@@ -511,6 +512,11 @@ function renderInventory(inventory, readiness) {
   setText('inventory-blockers', readiness.blockers?.length
     ? `Blockers: ${readiness.blockers.join(' / ')}`
     : 'No blockers. Manual review is still required.');
+  setText('tiny-live-status', tinyStatus.status||'DISARMED');
+  setClass('tiny-live-status', `tiny-live-status ${(tinyStatus.armed?'armed':'disarmed')}`);
+  setText('tiny-live-limits', `Order ${fmt(readiness.limits?.tiny_live_order_krw)} KRW / Max ${fmt(readiness.limits?.tiny_live_max_order_krw)} KRW`);
+  const last = tinyStatus.last_order?.status || tinyStatus.last_preflight?.blockers?.join(' / ') || 'No preflight result.';
+  setText('tiny-live-result', `Last result: ${last}`);
   const grid = $('inventory-grid');
   if (!grid) return;
   grid.innerHTML = symbols.map(row => `
@@ -526,6 +532,22 @@ function renderInventory(inventory, readiness) {
       <div class="inventory-manual">Manual Rebalance: ${row.recommended_manual_action}</div>
     </div>`).join('') || '<div class="empty-row">Inventory unavailable. Review blockers.</div>';
 }
+
+async function tinyLiveAction(action) {
+  if (action === 'execute-once' && !confirm('Execute one guarded tiny-live Spot order pair?')) return;
+  try {
+    const res = await fetch(`/api/tiny-live/${action}`, { method:'POST' });
+    const data = await res.json();
+    setText('tiny-live-result', data.ok ? `Last result: ${data.status}` : `Blocked: ${(data.blockers||[]).join(' / ')}`);
+    fetchInventory();
+  } catch (error) {
+    console.error('[tinyLiveAction] failed', error);
+  }
+}
+
+on('btn-tiny-arm', 'click', () => tinyLiveAction('arm'));
+on('btn-tiny-disarm', 'click', () => tinyLiveAction('disarm'));
+on('btn-tiny-execute', 'click', () => tinyLiveAction('execute-once'));
 
 on('btn-save-keys', 'click', async () => {
   const body = {

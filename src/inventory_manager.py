@@ -39,17 +39,32 @@ class InventoryManager:
             upbit = UpbitPrivateClient().get_balances()
             binance = BinanceSpotPrivateClient().get_balances()
             blockers = list(upbit['blockers']) + list(binance['blockers'])
-            return {
-                'mode': mode,
-                'source': 'read_only_private_clients',
-                'ok': False,
-                'blockers': blockers,
-                'manual_rebalance_only': True,
-                'balances': {'upbit': upbit['balances'], 'binance': binance['balances']},
-                'symbols': [],
+            if blockers:
+                return {
+                    'mode': mode,
+                    'source': 'read_only_private_clients',
+                    'ok': False,
+                    'blockers': blockers,
+                    'manual_rebalance_only': True,
+                    'balances': {'upbit': upbit['balances'], 'binance': binance['balances']},
+                    'symbols': [],
+                }
+            source = 'read_only_private_clients'
+            snap = {
+                'upbit_krw': upbit['balances'].get('KRW', 0),
+                'binance_usdt': binance['balances'].get('USDT', 0),
+                'upbit_coin_qty': upbit['balances'],
+                'binance_coin_qty': binance['balances'],
             }
-
-        snap = self.paper_snapshot()
+        else:
+            source = 'paper_config_inventory'
+            paper = self.paper_snapshot()
+            snap = {
+                'upbit_krw': paper['upbit_krw'],
+                'binance_usdt': paper['binance_usdt'],
+                'upbit_coin_qty': paper['coin_qty'],
+                'binance_coin_qty': paper['coin_qty'],
+            }
         symbols = []
         trade_krw = float(min(cfg.max_one_trade_krw, cfg.max_position_krw))
         for symbol in cfg.symbols:
@@ -59,8 +74,8 @@ class InventoryManager:
             calc = quote.get('calc', {})
             upbit_krw = float(snap['upbit_krw'])
             binance_usdt = float(snap['binance_usdt'])
-            upbit_coin = float(snap['coin_qty'].get(symbol, 0))
-            binance_coin = float(snap['coin_qty'].get(symbol, 0))
+            upbit_coin = float(snap['upbit_coin_qty'].get(symbol, 0))
+            binance_coin = float(snap['binance_coin_qty'].get(symbol, 0))
             upbit_bid = float(upbit.get('bid', 0) or 0)
             binance_bid = float(binance.get('bid', 0) or 0)
             krw_usdt = float(calc.get('krw_usdt', 0) or 0)
@@ -154,13 +169,13 @@ class InventoryManager:
             })
         return {
             'mode': mode,
-            'source': 'paper_config_inventory',
+            'source': source,
             'ok': True,
             'blockers': [],
             'manual_rebalance_only': True,
             'balances': {
-                'upbit': {'KRW': snap['upbit_krw'], **snap['coin_qty']},
-                'binance': {'USDT': snap['binance_usdt'], **snap['coin_qty']},
+                'upbit': {'KRW': snap['upbit_krw'], **snap['upbit_coin_qty']},
+                'binance': {'USDT': snap['binance_usdt'], **snap['binance_coin_qty']},
             },
             'symbols': symbols,
         }

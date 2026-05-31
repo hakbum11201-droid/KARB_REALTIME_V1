@@ -9,6 +9,10 @@ class ExecutionPlan:
     mode: str
     quote_available: bool
     inventory_sufficient: bool
+    order_krw: float = 0
+    quantity: float = 0
+    binance_usdt: float = 0
+    quote_timestamp: float = 0
     blockers: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     executable: bool = False

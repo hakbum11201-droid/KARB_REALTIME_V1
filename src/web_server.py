@@ -28,7 +28,9 @@ import secrets_manager
 import control as ctrl_module
 import process_manager
 from config import cfg
-from executors import create_preflight_plan, get_inventory_summary, get_tiny_live_readiness
+from executors import TinyLiveExecutor, create_preflight_plan, get_inventory_summary, get_tiny_live_readiness
+
+tiny_live_executor = TinyLiveExecutor()
 
 
 def _read_json(path, default=None):
@@ -122,6 +124,12 @@ class KarbHandler(SimpleHTTPRequestHandler):
         elif self.path == '/api/live/readiness':
             self._send_json(get_tiny_live_readiness())
 
+        elif self.path == '/api/execution/preflight':
+            self._send_json(create_preflight_plan())
+
+        elif self.path == '/api/tiny-live/status':
+            self._send_json(tiny_live_executor.status())
+
         elif self.path == '/api/trades/recent':
             recent = _read_jsonl_tail(os.path.join(LOGS_DIR, 'paper_trades.jsonl'), 100)
             exits = [r for r in recent if r.get('event') == 'EXIT'][-20:]
@@ -149,6 +157,24 @@ class KarbHandler(SimpleHTTPRequestHandler):
                 return
             self._send_json(create_preflight_plan())
 
+        elif self.path == '/api/tiny-live/arm':
+            if not self._is_localhost():
+                self._send_403()
+                return
+            self._send_json(tiny_live_executor.arm())
+
+        elif self.path == '/api/tiny-live/disarm':
+            if not self._is_localhost():
+                self._send_403()
+                return
+            self._send_json(tiny_live_executor.disarm())
+
+        elif self.path == '/api/tiny-live/execute-once':
+            if not self._is_localhost():
+                self._send_403()
+                return
+            self._send_json(tiny_live_executor.execute_once())
+
         elif self.path == '/api/engine/start':
             if not self._is_localhost():
                 self._send_403()
@@ -160,6 +186,9 @@ class KarbHandler(SimpleHTTPRequestHandler):
             except Exception:
                 body = {}
             mode = body.get('mode', 'paper')
+            if mode == 'live':
+                self._send_json({'ok': False, 'message': 'Full live mode is disabled. Use guarded tiny_live only.'}, 403)
+                return
             result = process_manager.start_engine(mode)
             self._send_json(result)
 

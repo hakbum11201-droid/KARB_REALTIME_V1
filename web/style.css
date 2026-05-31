@@ -375,6 +375,14 @@ body {
 .inventory-directions .ok { color:var(--accent-green); background:rgba(72,187,120,.12); }
 .inventory-directions .no { color:var(--accent-orange); background:rgba(237,137,54,.12); }
 .inventory-manual { color:var(--accent-yellow); line-height:1.5; }
+.tiny-live-panel { border:1px solid rgba(237,137,54,.35); background:var(--bg-card); border-radius:var(--radius); padding:14px; margin:14px 0; }
+.tiny-live-panel-title { color:var(--text-primary); font-weight:700; margin-bottom:8px; }
+.tiny-live-badges, .tiny-live-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
+.tiny-live-badges span { color:var(--accent-green); background:rgba(72,187,120,.12); border-radius:999px; padding:3px 7px; font-size:10px; font-weight:700; }
+.tiny-live-status { display:inline-block; margin-top:10px; padding:5px 8px; border-radius:var(--radius-sm); font-family:var(--font-mono); font-weight:700; }
+.tiny-live-status.armed { color:var(--accent-green); background:rgba(72,187,120,.12); }
+.tiny-live-status.disarmed { color:var(--accent-orange); background:rgba(237,137,54,.12); }
+.tiny-live-limits, .tiny-live-result { color:var(--text-secondary); font-family:var(--font-mono); font-size:11px; margin-top:8px; }
 
 /* ── STOP Button ─────────────────────────────────────── */
 .stop-btn {

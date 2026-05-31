@@ -34,13 +34,25 @@ class Config:
     @property
     def manual_rebalance_only(self): return self.get('manual_rebalance_only', True)
     @property
-    def require_paper_pass_for_tiny_live(self): return self.get('require_paper_pass_for_tiny_live', True)
+    def require_paper_pass_for_tiny_live(self): return self.get('tiny_live_require_paper_pass', self.get('require_paper_pass_for_tiny_live', True))
     @property
     def min_paper_closed_trades_for_tiny_live(self): return self.get('min_paper_closed_trades_for_tiny_live', 10)
     @property
     def min_paper_win_rate_for_tiny_live(self): return self.get('min_paper_win_rate_for_tiny_live', 0.65)
     @property
     def min_paper_net_pnl_krw_for_tiny_live(self): return self.get('min_paper_net_pnl_krw_for_tiny_live', 0)
+    @property
+    def tiny_live_order_krw(self): return self.get('tiny_live_order_krw', 10000)
+    @property
+    def tiny_live_max_order_krw(self): return self.get('tiny_live_max_order_krw', 20000)
+    @property
+    def tiny_live_daily_loss_limit_krw(self): return self.get('tiny_live_daily_loss_limit_krw', 10000)
+    @property
+    def tiny_live_max_trades_per_day(self): return self.get('tiny_live_max_trades_per_day', 5)
+    @property
+    def tiny_live_require_preflight(self): return self.get('tiny_live_require_preflight', True)
+    @property
+    def tiny_live_require_inventory_ok(self): return self.get('tiny_live_require_inventory_ok', True)
 
     # ── 심볼 / 루프 ────────────────────────────────────────────
     @property

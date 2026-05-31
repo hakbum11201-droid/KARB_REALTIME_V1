@@ -1,5 +1,20 @@
 # KARB_REALTIME_V1
 
+## Guarded tiny-live Spot execution
+
+- Tiny-live supports one explicitly armed Upbit Spot and Binance Spot order pair at a time.
+- The default configuration is blocked: `enable_live_trading`, `tiny_live_enabled`, and
+  `live_order_enabled` are all `false`.
+- Full `live` mode is blocked. Only `tiny_live` may reach guarded order methods.
+- Every execution requires a fresh preflight, a non-stale quote, paper-pass checks,
+  inventory checks, exchange minimum-order checks, and an explicit ARM action.
+- If only one exchange order succeeds, the status becomes `PARTIAL_RISK`, the executor
+  disarms immediately, and new entries remain blocked for manual review.
+- Withdrawals, wallet addresses, automatic transfers, futures, margin, P2P, and internal
+  transfers are intentionally not implemented.
+- Runtime state uses overwrite-only files: `runtime/tiny_live_status.json`,
+  `runtime/tiny_live_last_preflight.json`, and `runtime/tiny_live_last_order.json`.
+
 ## 재고 기반 Spot 차익 구조
 
 이 프로젝트의 tiny-live 준비 구조는 **재고 기반 Upbit ↔ Binance spot 차익**만 다룹니다.

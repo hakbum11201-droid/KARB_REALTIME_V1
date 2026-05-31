@@ -46,7 +46,7 @@
         <div class="engine-controls">
           <button class="btn btn-paper" id="btn-start-paper">▶ PAPER</button>
           <button class="btn btn-tiny" id="btn-start-tiny">▶ TINY LIVE</button>
-          <button class="btn btn-live" id="btn-start-live">▶ LIVE</button>
+          <button class="btn btn-live" id="btn-start-live" disabled title="Full live mode is disabled">▶ LIVE BLOCKED</button>
           <button class="btn btn-stop" id="btn-stop-engine" disabled>⏹ STOP</button>
         </div>
         <div class="stat-pill" id="pill-engine">
@@ -196,6 +196,20 @@
         <span>Tiny Live Ready</span><strong>NO</strong>
       </div>
       <div class="inventory-blockers" id="inventory-blockers">Loading blockers...</div>
+      <div class="tiny-live-panel">
+        <div class="tiny-live-panel-title">Tiny Live Spot Execution</div>
+        <div class="tiny-live-badges">
+          <span>Withdrawals Disabled</span><span>Manual Rebalance Only</span>
+        </div>
+        <div class="tiny-live-status" id="tiny-live-status">DISARMED</div>
+        <div class="tiny-live-limits" id="tiny-live-limits">Loading limits...</div>
+        <div class="tiny-live-result" id="tiny-live-result">No preflight result.</div>
+        <div class="tiny-live-actions">
+          <button class="btn btn-tiny" id="btn-tiny-arm">ARM TINY LIVE</button>
+          <button class="btn btn-stop" id="btn-tiny-disarm">DISARM</button>
+          <button class="btn btn-live" id="btn-tiny-execute">EXECUTE ONCE</button>
+        </div>
+      </div>
       <div class="inventory-grid" id="inventory-grid">
         <div class="empty-row">Loading Inventory / Rebalance guide...</div>
       </div>

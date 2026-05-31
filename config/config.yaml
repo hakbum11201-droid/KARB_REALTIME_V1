@@ -6,9 +6,16 @@ withdrawals_enabled: false
 futures_hedge_enabled: false
 manual_rebalance_only: true
 require_paper_pass_for_tiny_live: true
+tiny_live_require_paper_pass: true
 min_paper_closed_trades_for_tiny_live: 10
 min_paper_win_rate_for_tiny_live: 0.65
 min_paper_net_pnl_krw_for_tiny_live: 0
+tiny_live_order_krw: 10000
+tiny_live_max_order_krw: 20000
+tiny_live_daily_loss_limit_krw: 10000
+tiny_live_max_trades_per_day: 5
+tiny_live_require_preflight: true
+tiny_live_require_inventory_ok: true
 
 symbols: [BTC, ETH, XRP, DOGE, SOL]
 

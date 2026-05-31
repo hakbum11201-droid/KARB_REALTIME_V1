@@ -1,5 +1,15 @@
 # KARB_REALTIME_V1 보안 가이드
 
+## Tiny-live safety boundary
+
+- Tiny-live is disabled and disarmed by default.
+- Only small Upbit Spot and Binance Spot order pairs are supported after explicit ARM.
+- Full live mode, withdrawals, wallet-address storage, transfers, futures, margin, P2P,
+  and internal transfers remain blocked.
+- Use API keys without withdrawal permissions and restrict them by IP where possible.
+- A one-sided fill is recorded as `PARTIAL_RISK`; the executor disarms and requires
+  manual review instead of attempting an automatic unwind.
+
 ## 출금 금지 및 수동 리밸런싱 정책
 
 이 프로젝트는 출금 API를 사용하지 않습니다.
