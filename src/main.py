@@ -49,7 +49,7 @@ def main():
 
     # ── 세션 시작 ────────────────────────────────────────────────────────
     if args.until_stop:
-        ctrl = control.start_session()
+        ctrl = control.start_run()
         run_id = ctrl['run_id']
         print(f"[KARB] Session: {run_id}")
         print(f"[KARB] Stop: run STOP_PAPER.bat or POST /api/stop")
@@ -296,31 +296,10 @@ def main():
     ended_at = time.time()
 
     if args.until_stop:
-        control.finalize_session(ended_at)
+        control.finish_run(ended_at)
 
-    perf_summary = perf_tracker.summary()
-
-    session_stats = {
-        **perf_summary,
-        'run_id':             run_id or f'oneshot_{int(start_time)}',
-        'started_at':         start_time,
-        'ended_at':           ended_at,
-        'duration_sec':       round(ended_at - start_time, 1),
-        'total_loops':        total_loops,
-        'quote_count':        quote_count,
-        'candidate_count':    candidate_count,
-        'paper_entry_count':  paper_entry_count,
-        'paper_exit_count':   paper_exit_count,
-        'error_count':        error_count,
-        'reason_counts':      reason_counts,
-        'surplus_bp_list':    surplus_bp_list,
-        'loop_latency_ms_list':  loop_lat_list,
-        'quote_latency_ms_list': quote_lat_list,
-        'avg_trade_size_krw': cfg.max_one_trade_krw,
-    }
-
-    analyzer = SessionAnalyzer(cfg)
-    report = analyzer.analyze(session_stats)
+    import session_analyzer
+    report = session_analyzer.analyze_session(run_id or f'oneshot_{int(start_time)}')
 
     print(f"\n{'='*60}")
     print(f"[KARB] Session Report → Judgement: {report['judgement']}")

@@ -92,7 +92,7 @@ class KarbHandler(SimpleHTTPRequestHandler):
             self._send_json({
                 'state':   _read_json(os.path.join(RUNTIME_DIR, 'latest_state.json')),
                 'quotes':  _read_json(os.path.join(RUNTIME_DIR, 'latest_quotes.json')),
-                'control': ctrl_module.get_control(),
+                'control': ctrl_module.get_control_state(),
             })
 
         elif self.path == '/api/perf':

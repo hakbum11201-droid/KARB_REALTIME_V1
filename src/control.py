@@ -36,7 +36,7 @@ def _write_control(data: dict) -> None:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
-def start_session() -> dict:
+def start_run() -> dict:
     """새 세션을 시작한다. run_id를 반환한다."""
     run_id = time.strftime('%Y%m%d_%H%M%S') + '_' + uuid.uuid4().hex[:6]
     ctrl = {
@@ -65,7 +65,7 @@ def is_stop_requested() -> bool:
     return ctrl.get('stop_requested', False)
 
 
-def finalize_session(ended_at: float | None = None) -> dict:
+def finish_run(ended_at: float | None = None) -> dict:
     """세션 종료 상태를 기록한다."""
     ctrl = _read_control()
     ctrl['status']     = 'STOPPED'
@@ -75,7 +75,7 @@ def finalize_session(ended_at: float | None = None) -> dict:
     return ctrl
 
 
-def get_control() -> dict:
+def get_control_state() -> dict:
     """현재 control.json 읽기."""
     return _read_control()
 
