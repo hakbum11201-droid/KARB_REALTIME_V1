@@ -1,0 +1,3 @@
+@echo off
+echo Starting Web UI Server...
+python src/web_server.py

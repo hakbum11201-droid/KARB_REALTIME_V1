@@ -1,0 +1,3 @@
+@echo off
+echo Starting KARB_REALTIME_V1...
+python src/main.py

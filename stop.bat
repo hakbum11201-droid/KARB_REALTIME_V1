@@ -1,0 +1,3 @@
+@echo off
+echo Stopping python processes...
+taskkill /IM python.exe /F

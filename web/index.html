@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KARB_REALTIME_V1 Dashboard</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>KARB_REALTIME_V1</h1>
+            <div class="status-panel">
+                <div class="status-item">Mode: <span id="mode">--</span></div>
+                <div class="status-item">FX (KRW/USDT): <span id="krw-usdt">--</span></div>
+                <div class="status-item">Paper Trades: <span id="paper-trades">--</span></div>
+            </div>
+        </header>
+        
+        <main>
+            <table id="quotes-table">
+                <thead>
+                    <tr>
+                        <th>Symbol</th>
+                        <th>Upbit Price</th>
+                        <th>Binance Price</th>
+                        <th>Kimp %</th>
+                        <th>Go/No-Go</th>
+                        <th>Reason</th>
+                    </tr>
+                </thead>
+                <tbody id="quotes-body">
+                </tbody>
+            </table>
+        </main>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>

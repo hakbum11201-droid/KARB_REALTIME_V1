@@ -1,0 +1,10 @@
+logs/
+runtime/
+__pycache__/
+*.pyc
+*.log
+*.sqlite
+*.db
+*.jsonl
+.env
+secrets*
