@@ -50,22 +50,26 @@ def main():
         else:
             quotes = quote_engine.fetch_all()
             
-            with open(quotes_path, 'w', encoding='utf-8') as f:
-                json.dump(quotes, f)
-            
             for sym, q in quotes.items():
                 calc_res = arb_calc.calculate(sym, q['upbit'], q['binance'], krw_usdt)
+                q['calc'] = calc_res
                 
                 is_safe = risk_guard.check_trade(calc_res)
                 event_logger.log_decision(calc_res)
                 
+                if args.once:
+                    print(f"[{sym}] Kimp: {calc_res['kimchi_premium_pct']:.2f}% | Gross: {calc_res['gross_gap_krw']:.0f} KRW | Net: {calc_res['net_expected_profit_krw']:.0f} KRW | Safe: {is_safe} ({calc_res.get('reason_no_trade', '')})")
+                
                 if is_safe:
                     if cfg.mode == 'paper':
                         paper_eng.execute(calc_res)
-                        print(f"[{sym}] PAPER TRADE executed! Profit: {calc_res['expected_profit_krw']:.0f} KRW")
+                        print(f"[{sym}] PAPER TRADE executed! Profit: {calc_res['net_expected_profit_krw']:.0f} KRW")
                     else:
                         exec_eng.execute(calc_res)
                         
+            with open(quotes_path, 'w', encoding='utf-8') as f:
+                json.dump(quotes, f)
+                
             state = {
                 'mode': cfg.mode,
                 'krw_usdt': krw_usdt,

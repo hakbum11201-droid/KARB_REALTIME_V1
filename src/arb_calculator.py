@@ -18,7 +18,8 @@ class ArbCalculator:
         net_surplus_b = surplus_b_raw - cfg.upbit_fee_bp - cfg.binance_fee_bp - cfg.slippage_bp - cfg.fx_error_bp - cfg.risk_buffer_bp
         
         max_qty_a = min(upbit_quote['bid_size'], binance_quote['ask_size'])
-        profit_a_krw = max_qty_a * (u_bid - b_ask * krw_usdt) * (net_surplus_a / 10000)
+        gross_gap_krw = max_qty_a * (u_bid - b_ask * krw_usdt)
+        profit_a_krw = max_qty_a * (b_ask * krw_usdt) * (net_surplus_a / 10000)
         
         return {
             'symbol': symbol,
@@ -31,6 +32,8 @@ class ArbCalculator:
             'direction_a_net_surplus_bp': net_surplus_a,
             'direction_b_net_surplus_bp': net_surplus_b,
             'max_fillable_qty': max_qty_a,
+            'gross_gap_krw': gross_gap_krw,
+            'net_expected_profit_krw': max(0, profit_a_krw),
             'expected_profit_krw': max(0, profit_a_krw),
             'required_upbit_balance': max_qty_a * u_ask,
             'required_binance_balance': max_qty_a * b_ask,

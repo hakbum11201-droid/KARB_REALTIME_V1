@@ -7,4 +7,13 @@ __pycache__/
 *.db
 *.jsonl
 .env
+.env.*
 secrets*
+*_key*
+*_secret*
+
+# 소스 코드 예외 처리 (파일명이 패턴에 걸리지만 Git에 포함해야 함)
+!src/secrets_manager.py
+
+# Allow the example file (no real keys inside)
+!.env.example
