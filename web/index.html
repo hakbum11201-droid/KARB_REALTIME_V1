@@ -1,39 +1,135 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>KARB_REALTIME_V1 Dashboard</title>
-    <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>KARB Realtime V1 – 김프 아비트라지 대시보드</title>
+  <meta name="description" content="Upbit ↔ Binance 실시간 김프 차익 계산 및 Paper/Live 운용 대시보드">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>KARB_REALTIME_V1</h1>
-            <div class="status-panel">
-                <div class="status-item">Mode: <span id="mode">--</span></div>
-                <div class="status-item">FX (KRW/USDT): <span id="krw-usdt">--</span></div>
-                <div class="status-item">Paper Trades: <span id="paper-trades">--</span></div>
-            </div>
-        </header>
-        
-        <main>
-            <table id="quotes-table">
-                <thead>
-                    <tr>
-                        <th>Symbol</th>
-                        <th>Upbit Price</th>
-                        <th>Binance Price</th>
-                        <th>Kimp %</th>
-                        <th>Go/No-Go</th>
-                        <th>Reason</th>
-                    </tr>
-                </thead>
-                <tbody id="quotes-body">
-                </tbody>
-            </table>
-        </main>
-    </div>
-    <script src="app.js"></script>
+  <div class="app">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="logo">
+        <div class="logo-icon">₿↔₩</div>
+        <div class="logo-text">
+          <span class="logo-title">KARB</span>
+          <span class="logo-sub">Realtime V1</span>
+        </div>
+      </div>
+
+      <nav class="nav">
+        <button class="nav-item active" data-tab="dashboard" id="nav-dashboard">
+          <span class="nav-icon">⬛</span> 대시보드
+        </button>
+        <button class="nav-item" data-tab="trades" id="nav-trades">
+          <span class="nav-icon">📋</span> 거래 로그
+        </button>
+        <button class="nav-item" data-tab="perf" id="nav-perf">
+          <span class="nav-icon">📈</span> 성과 분석
+        </button>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="connection-status" id="conn-status">
+          <span class="conn-dot"></span>
+          <span id="conn-label">연결 중...</span>
+        </div>
+        <div class="last-update" id="last-update">--</div>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main">
+      <!-- Top Bar -->
+      <header class="topbar">
+        <div class="topbar-left">
+          <h1 class="page-title" id="page-title">대시보드</h1>
+        </div>
+        <div class="topbar-right">
+          <div class="stat-pill" id="pill-mode">
+            <span class="pill-label">MODE</span>
+            <span class="pill-value" id="stat-mode">--</span>
+          </div>
+          <div class="stat-pill fx" id="pill-fx">
+            <span class="pill-label">KRW/USDT</span>
+            <span class="pill-value" id="stat-fx">--</span>
+          </div>
+          <div class="stat-pill trades-count" id="pill-trades">
+            <span class="pill-label">Paper Trades</span>
+            <span class="pill-value" id="stat-paper-trades">--</span>
+          </div>
+          <div class="stat-pill profit" id="pill-profit">
+            <span class="pill-label">Latest PnL</span>
+            <span class="pill-value" id="stat-pnl">--</span>
+          </div>
+        </div>
+      </header>
+
+      <!-- Dashboard Tab -->
+      <section class="tab-content active" id="tab-dashboard">
+        <div class="section-label">실시간 호가 & 아비트라지 신호</div>
+        <div class="quotes-grid" id="quotes-grid">
+          <div class="loading-placeholder">데이터 로딩 중...</div>
+        </div>
+      </section>
+
+      <!-- Trades Tab -->
+      <section class="tab-content" id="tab-trades">
+        <div class="section-label">최근 Paper Trade 기록</div>
+        <div class="table-wrapper">
+          <table class="data-table" id="trades-table">
+            <thead>
+              <tr>
+                <th>시각</th>
+                <th>심볼</th>
+                <th>방향</th>
+                <th>김프 %</th>
+                <th>Gross Gap (KRW)</th>
+                <th>Net Profit (KRW)</th>
+                <th>수량</th>
+                <th>KRW/USDT</th>
+              </tr>
+            </thead>
+            <tbody id="trades-body">
+              <tr><td colspan="8" class="empty-row">거래 데이터 없음</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Performance Tab -->
+      <section class="tab-content" id="tab-perf">
+        <div class="section-label">성과 요약</div>
+        <div class="perf-grid" id="perf-grid">
+          <div class="perf-card">
+            <div class="perf-card-label">총 Paper 거래</div>
+            <div class="perf-card-value" id="perf-count">--</div>
+          </div>
+          <div class="perf-card green">
+            <div class="perf-card-label">총 Net Profit</div>
+            <div class="perf-card-value" id="perf-total-net">--</div>
+          </div>
+          <div class="perf-card blue">
+            <div class="perf-card-label">평균 Net/trade</div>
+            <div class="perf-card-value" id="perf-avg-net">--</div>
+          </div>
+          <div class="perf-card orange">
+            <div class="perf-card-label">최근 Paper PnL</div>
+            <div class="perf-card-value" id="perf-latest-pnl">--</div>
+          </div>
+        </div>
+        <div class="section-label" style="margin-top:2rem">최근 신호 히스토그램</div>
+        <div class="histogram-container" id="histogram">
+          <div class="empty-row">데이터 없음</div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
 </body>
 </html>
