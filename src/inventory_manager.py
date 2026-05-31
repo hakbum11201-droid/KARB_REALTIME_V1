@@ -31,6 +31,82 @@ class InventoryManager:
             'coin_qty':      copy.copy(self._paper_coin_qty),
         }
 
+    def inventory_summary(self, quotes: dict | None = None, mode: str = 'paper') -> dict:
+        """Return display-only inventory readiness. Never moves assets."""
+        quotes = quotes or {}
+        if mode != 'paper':
+            from exchange_clients import BinanceSpotPrivateClient, UpbitPrivateClient
+            upbit = UpbitPrivateClient().get_balances()
+            binance = BinanceSpotPrivateClient().get_balances()
+            blockers = list(upbit['blockers']) + list(binance['blockers'])
+            return {
+                'mode': mode,
+                'source': 'read_only_private_clients',
+                'ok': False,
+                'blockers': blockers,
+                'manual_rebalance_only': True,
+                'balances': {'upbit': upbit['balances'], 'binance': binance['balances']},
+                'symbols': [],
+            }
+
+        snap = self.paper_snapshot()
+        symbols = []
+        for symbol in cfg.symbols:
+            quote = quotes.get(symbol, {})
+            upbit = quote.get('upbit', {})
+            binance = quote.get('binance', {})
+            calc = quote.get('calc', {})
+            qty = float(calc.get('max_fillable_qty', 0) or 0)
+            upbit_krw = float(snap['upbit_krw'])
+            binance_usdt = float(snap['binance_usdt'])
+            upbit_coin = float(snap['coin_qty'].get(symbol, 0))
+            binance_coin = float(snap['coin_qty'].get(symbol, 0))
+            need_usdt = qty * float(binance.get('ask', 0) or 0)
+            need_krw = qty * float(upbit.get('ask', 0) or 0)
+            direction_a_possible = qty > 0 and upbit_coin >= qty and binance_usdt >= need_usdt
+            direction_b_possible = qty > 0 and upbit_krw >= need_krw and binance_coin >= qty
+            missing_for_a = []
+            missing_for_b = []
+            if upbit_coin < qty:
+                missing_for_a.append(f'Upbit {symbol}')
+            if binance_usdt < need_usdt:
+                missing_for_a.append('Binance USDT')
+            if upbit_krw < need_krw:
+                missing_for_b.append('Upbit KRW')
+            if binance_coin < qty:
+                missing_for_b.append(f'Binance {symbol}')
+            missing = missing_for_a + missing_for_b
+            action = (
+                'Inventory ready for both directions.'
+                if not missing else
+                'Manual rebalance required: hold or buy ' + ', '.join(sorted(set(missing))) + '.'
+            )
+            symbols.append({
+                'symbol': symbol,
+                'upbit_coin_qty': upbit_coin,
+                'binance_coin_qty': binance_coin,
+                'upbit_krw_available': upbit_krw,
+                'binance_usdt_available': binance_usdt,
+                'direction_a_possible': direction_a_possible,
+                'direction_b_possible': direction_b_possible,
+                'missing_for_a': missing_for_a,
+                'missing_for_b': missing_for_b,
+                'recommended_manual_action': action,
+                'status': 'OK' if direction_a_possible or direction_b_possible else 'INVENTORY_SHORTAGE',
+            })
+        return {
+            'mode': mode,
+            'source': 'paper_config_inventory',
+            'ok': True,
+            'blockers': [],
+            'manual_rebalance_only': True,
+            'balances': {
+                'upbit': {'KRW': snap['upbit_krw'], **snap['coin_qty']},
+                'binance': {'USDT': snap['binance_usdt'], **snap['coin_qty']},
+            },
+            'symbols': symbols,
+        }
+
     # ──────────────────────────────────────────────────────────────────────
     # 진입 가능 여부 확인
     # ──────────────────────────────────────────────────────────────────────

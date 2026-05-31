@@ -1,5 +1,32 @@
 # KARB_REALTIME_V1
 
+## 재고 기반 Spot 차익 구조
+
+이 프로젝트의 tiny-live 준비 구조는 **재고 기반 Upbit ↔ Binance spot 차익**만 다룹니다.
+
+- 사용자가 양 거래소에 자산을 미리 배치합니다.
+- 프로그램은 Direction A/B 가능 여부와 부족 자산을 표시합니다.
+- 부족 자산은 사용자가 직접 수동 리밸런싱합니다.
+- 출금 API, 자동 전송, 자동 리밸런싱은 구현하지 않습니다.
+- Futures, Margin, P2P, internal transfer는 사용하지 않습니다.
+
+| 방향 | Upbit | Binance | 필요한 재고 |
+|---|---|---|---|
+| `A_KIMCHI` | SELL | BUY | Upbit coin, Binance USDT |
+| `B_REVERSE_KIMCHI` | BUY | SELL | Upbit KRW, Binance coin |
+
+`GET /api/live/readiness`와 `POST /api/execution/preflight`는 blocker와 수동 조치만 반환합니다.
+실제 주문 실행은 구현하지 않습니다.
+
+## API 키 최소 권한 정책
+
+- Upbit 허용: 자산조회, 주문조회, 주문하기
+- Upbit 금지: 출금하기, 출금조회, 출금주소 관리
+- Binance 허용: Spot 계정 조회, Spot 거래, 주문조회
+- Binance 금지: Withdrawals, Futures, Margin, P2P, Internal transfer
+- 가능하면 IP 제한을 설정합니다.
+- 키는 `.env.local`에만 저장하며 GitHub에 업로드하지 않습니다.
+
 Upbit ↔ Binance 실시간 김프(Kimchi Premium) 차익 계산 및 Paper/Live 운용 엔진.
 
 ## 공식 실행 방법 (UI 중심)

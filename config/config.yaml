@@ -1,5 +1,14 @@
 mode: paper
 enable_live_trading: false
+tiny_live_enabled: false
+live_order_enabled: false
+withdrawals_enabled: false
+futures_hedge_enabled: false
+manual_rebalance_only: true
+require_paper_pass_for_tiny_live: true
+min_paper_closed_trades_for_tiny_live: 10
+min_paper_win_rate_for_tiny_live: 0.65
+min_paper_net_pnl_krw_for_tiny_live: 0
 
 symbols: [BTC, ETH, XRP, DOGE, SOL]
 

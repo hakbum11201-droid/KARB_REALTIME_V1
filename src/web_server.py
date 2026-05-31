@@ -28,6 +28,7 @@ import secrets_manager
 import control as ctrl_module
 import process_manager
 from config import cfg
+from executors import create_preflight_plan, get_inventory_summary, get_tiny_live_readiness
 
 
 def _read_json(path, default=None):
@@ -115,6 +116,12 @@ class KarbHandler(SimpleHTTPRequestHandler):
         elif self.path == '/api/performance':
             self._send_json(_read_json(os.path.join(RUNTIME_DIR, 'performance_summary.json')))
 
+        elif self.path == '/api/inventory':
+            self._send_json(get_inventory_summary())
+
+        elif self.path == '/api/live/readiness':
+            self._send_json(get_tiny_live_readiness())
+
         elif self.path == '/api/trades/recent':
             recent = _read_jsonl_tail(os.path.join(LOGS_DIR, 'paper_trades.jsonl'), 100)
             exits = [r for r in recent if r.get('event') == 'EXIT'][-20:]
@@ -136,7 +143,13 @@ class KarbHandler(SimpleHTTPRequestHandler):
             super().do_GET()
 
     def do_POST(self):
-        if self.path == '/api/engine/start':
+        if self.path == '/api/execution/preflight':
+            if not self._is_localhost():
+                self._send_403()
+                return
+            self._send_json(create_preflight_plan())
+
+        elif self.path == '/api/engine/start':
             if not self._is_localhost():
                 self._send_403()
                 return

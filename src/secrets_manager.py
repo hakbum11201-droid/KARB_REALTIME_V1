@@ -97,6 +97,19 @@ def get_key_status() -> dict:
     }
 
 
+def get_api_permission_policy() -> dict:
+    """Return documentation-only API scope guidance. Never return secret values."""
+    return {
+        'withdrawals_enabled': False,
+        'manual_rebalance_only': True,
+        'upbit_allowed': ['BALANCE_READ', 'ORDER_READ', 'ORDER_CREATE'],
+        'upbit_forbidden': ['WITHDRAW_CREATE', 'WITHDRAW_READ', 'WITHDRAW_ADDRESS_MANAGE'],
+        'binance_allowed': ['SPOT_ACCOUNT_READ', 'SPOT_TRADE', 'ORDER_READ'],
+        'binance_forbidden': ['WITHDRAWALS', 'FUTURES', 'MARGIN', 'P2P', 'INTERNAL_TRANSFER'],
+        'recommend_ip_restriction': True,
+    }
+
+
 def save_keys(upbit_access: str, upbit_secret: str,
               binance_api: str, binance_secret: str) -> dict:
     """
