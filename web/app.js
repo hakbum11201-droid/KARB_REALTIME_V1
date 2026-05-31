@@ -4,9 +4,35 @@
  * STOP 버튼, 세션 배너, 세션 리포트 표시
  */
 const POLL_MS = 3000;
-const $ = id => document.getElementById(id);
+const missingElements = new Set();
+const $ = id => {
+  const el = document.getElementById(id);
+  if (!el && !missingElements.has(id)) {
+    missingElements.add(id);
+    console.error(`[UI] missing element: ${id}`);
+  }
+  return el;
+};
 const fmt  = (n, d=0) => Number(n||0).toLocaleString('ko-KR',{maximumFractionDigits:d});
 const pnlC = n => n >= 0 ? 'var(--accent-green)' : 'var(--accent-red)';
+const setText = (id, value) => { const el=$(id); if (el) el.textContent=value; };
+const setClass = (id, value) => { const el=$(id); if (el) el.className=value; };
+const setStyle = (id, name, value) => { const el=$(id); if (el) el.style[name]=value; };
+const setDisabled = (id, value) => { const el=$(id); if (el) el.disabled=value; };
+const on = (id, event, handler) => { const el=$(id); if (el) el.addEventListener(event, handler); };
+
+function showUiError(error) {
+  const message = error instanceof Error ? error.message : String(error);
+  console.error('[UI render error]', error);
+  setText('conn-label', `UI 렌더 오류: ${message}`);
+  const grid = $('quotes-grid');
+  if (grid && !grid.querySelector('.quote-card')) {
+    const placeholder = document.createElement('div');
+    placeholder.className = 'loading-placeholder';
+    placeholder.textContent = `UI 렌더 오류: ${message}`;
+    grid.replaceChildren(placeholder);
+  }
+}
 
 // ── Tab Navigation ──────────────────────────────────────────────────────
 document.querySelectorAll('.nav-item').forEach(btn => {
@@ -15,8 +41,8 @@ document.querySelectorAll('.nav-item').forEach(btn => {
     document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
     btn.classList.add('active');
-    document.getElementById(`tab-${tab}`).classList.add('active');
-    $('page-title').textContent = btn.textContent.trim();
+    document.getElementById(`tab-${tab}`)?.classList.add('active');
+    setText('page-title', btn.textContent.trim());
     if (tab === 'keys')    fetchKeyStatus();
     if (tab === 'session') fetchLastSession();
     if (tab === 'perf')    fetchPerf();
@@ -26,8 +52,8 @@ document.querySelectorAll('.nav-item').forEach(btn => {
 
 // ── Connection ──────────────────────────────────────────────────────────
 function setConn(ok) {
-  $('conn-dot').className = ok ? 'conn-dot live' : 'conn-dot err';
-  $('conn-label').textContent = ok ? '연결됨' : '연결 실패';
+  setClass('conn-dot', ok ? 'conn-dot live' : 'conn-dot err');
+  setText('conn-label', ok ? '연결됨' : '연결 실패');
 }
 
 // ── Engine Controls ───────────────────────────────────────────────────────
@@ -45,11 +71,11 @@ async function startEngine(mode) {
   } catch { alert('엔진 시작 요청 실패'); }
 }
 
-$('btn-start-paper').addEventListener('click', () => startEngine('paper'));
-$('btn-start-tiny').addEventListener('click', () => startEngine('tiny_live'));
-$('btn-start-live').addEventListener('click', () => startEngine('live'));
+on('btn-start-paper', 'click', () => startEngine('paper'));
+on('btn-start-tiny', 'click', () => startEngine('tiny_live'));
+on('btn-start-live', 'click', () => startEngine('live'));
 
-$('btn-stop-engine').addEventListener('click', async () => {
+on('btn-stop-engine', 'click', async () => {
   if (!confirm('엔진을 정지하시겠습니까? 세션 리포트가 자동 생성됩니다.')) return;
   try {
     const res = await fetch('/api/engine/stop', { method: 'POST' });
@@ -58,7 +84,7 @@ $('btn-stop-engine').addEventListener('click', async () => {
     fetchData();
   } catch { alert('연결 실패'); }
 });
-$('btn-stop').addEventListener('click', async () => {
+on('btn-stop', 'click', async () => {
   // Graceful stop banner button
   try {
     const res = await fetch('/api/engine/stop', { method: 'POST' });
@@ -73,63 +99,75 @@ async function fetchData() {
     const res = await fetch('/api/data');
     if (!res.ok) throw 0;
     const d = await res.json();
-    setConn(true);
     renderTopbar(d.state||{}, d.engine||{});
     renderBanner(d.state||{}, d.control||{});
     renderQuotes(d.quotes||{});
-    $('last-update').textContent = new Date().toLocaleTimeString('ko-KR');
-  } catch { setConn(false); }
+    setText('last-update', new Date().toLocaleTimeString('ko-KR'));
+    if (missingElements.size) {
+      showUiError(new Error(`missing element ${Array.from(missingElements).join(', ')}`));
+    } else {
+      setConn(true);
+    }
+  } catch (error) {
+    console.error('[fetchData] failed', error);
+    setConn(false);
+    showUiError(error);
+  }
 }
 
 // ── Topbar ──────────────────────────────────────────────────────────────
 function renderTopbar(s, e) {
   const isRunning = e.running;
   const status = e.status || 'STOPPED';
-  $('stat-engine-status').textContent = status;
-  if (status === 'RUNNING') $('stat-engine-status').style.color = 'var(--accent-green)';
-  else if (status === 'STOP_PENDING') $('stat-engine-status').style.color = 'var(--accent-orange)';
-  else $('stat-engine-status').style.color = 'var(--text-muted)';
+  setText('stat-engine-status', status);
+  if (status === 'RUNNING') setStyle('stat-engine-status', 'color', 'var(--accent-green)');
+  else if (status === 'STOP_PENDING') setStyle('stat-engine-status', 'color', 'var(--accent-orange)');
+  else setStyle('stat-engine-status', 'color', 'var(--text-muted)');
 
-  $('btn-start-paper').disabled = isRunning;
-  $('btn-start-tiny').disabled  = isRunning;
-  $('btn-start-live').disabled  = isRunning;
-  $('btn-stop-engine').disabled = !isRunning;
+  setDisabled('btn-start-paper', isRunning);
+  setDisabled('btn-start-tiny', isRunning);
+  setDisabled('btn-start-live', isRunning);
+  setDisabled('btn-stop-engine', !isRunning);
 
-  $('stat-session').textContent = e.run_id ? e.run_id.slice(0,15) : '--';
-  $('stat-fx').textContent      = s.krw_usdt ? fmt(s.krw_usdt,1) : '--';
-  $('stat-trades').textContent  = `${s.open_trades??'--'} / ${s.closed_trades??'--'}`;
+  setText('stat-session', e.run_id ? e.run_id.slice(0,15) : '--');
+  setText('stat-fx', s.krw_usdt ? fmt(s.krw_usdt,1) : '--');
+  setText('stat-trades', `${s.open_trades??'--'} / ${s.closed_trades??'--'}`);
   const pnl = Number(s.net_pnl_krw||0);
   const pe = $('stat-pnl');
-  pe.textContent = `${pnl>=0?'+':''}${fmt(pnl)} ₩`;
-  pe.style.color = pnlC(pnl);
-  $('stat-winrate').textContent = s.win_rate!=null ? `${Number(s.win_rate).toFixed(1)}%` : '--';
+  if (pe) {
+    pe.textContent = `${pnl>=0?'+':''}${fmt(pnl)} ₩`;
+    pe.style.color = pnlC(pnl);
+  }
+  setText('stat-winrate', s.win_rate!=null ? `${Number(s.win_rate).toFixed(1)}%` : '--');
 }
 
 // ── Session Banner ──────────────────────────────────────────────────────
 function renderBanner(state, ctrl) {
   const b = $('session-banner');
+  if (!b) return;
   if (!ctrl.run_id) { b.style.display='none'; return; }
   b.style.display = 'flex';
   const status = ctrl.status || 'UNKNOWN';
-  $('sb-status').textContent = status;
-  $('sb-status').className   = `sb-status ${status==='RUNNING'?'running':'stopped'}`;
-  $('sb-runid').textContent  = ctrl.run_id;
+  setText('sb-status', status);
+  setClass('sb-status', `sb-status ${status==='RUNNING'?'running':'stopped'}`);
+  setText('sb-runid', ctrl.run_id);
   const rt = state.runtime_sec || 0;
   const m = Math.floor(rt/60), s = Math.floor(rt%60);
-  $('sb-runtime').textContent = `${m}m ${s}s`;
-  $('sb-reason').textContent  = state.latest_reason || '--';
+  setText('sb-runtime', `${m}m ${s}s`);
+  setText('sb-reason', state.latest_reason || '--');
 }
 
 // ── Quote Grid ──────────────────────────────────────────────────────────
 function renderQuotes(quotes) {
   const grid = $('quotes-grid');
+  if (!grid) return;
   const syms = Object.keys(quotes);
   if (!syms.length) { grid.innerHTML='<div class="loading-placeholder">데이터 없음</div>'; return; }
 
   grid.innerHTML = syms.map(sym => {
     const q=quotes[sym]||{}, up=q.upbit||{}, bn=q.binance||{}, c=q.calc||{};
     const kimp=Number(c.kimchi_premium_pct||0), surplus=Number(c.best_net_surplus_bp||0);
-    const net=Number(c.net_expected_profit_krw||0), gross=Number(c.gross_gap_krw||0);
+    const net=Number(c.net_expected_profit_krw||0);
     const qty=Number(c.max_fillable_qty||0), dir=c.best_direction||'--';
     const reason=c.reason_no_trade||'', isGo=reason==='OK';
     const ub=fmt(up.bid||0), ua=fmt(up.ask||0);
@@ -304,7 +342,7 @@ async function fetchKeyStatus() {
   } catch {}
 }
 
-$('btn-save-keys').addEventListener('click', async () => {
+on('btn-save-keys', 'click', async () => {
   const body = {
     upbit_access_key:  $('inp-upbit-access').value,
     upbit_secret_key:  $('inp-upbit-secret').value,
