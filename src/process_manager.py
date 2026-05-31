@@ -51,6 +51,9 @@ def is_engine_running() -> bool:
     return False
 
 def start_engine(mode: str) -> dict:
+    if mode not in ('paper', 'tiny_live', 'live'):
+        return {'ok': False, 'message': f'Invalid mode: {mode}. Must be paper/tiny_live/live'}
+
     if is_engine_running():
         return {'ok': False, 'message': 'Engine is already running.'}
 

@@ -8,13 +8,19 @@ class Config:
     def __init__(self):
         with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
             self._cfg = yaml.safe_load(f)
+        self._mode_override = None
 
     def get(self, name, default=None):
         return self._cfg.get(name, default)
 
     # ── 운용 모드 ──────────────────────────────────────────────
     @property
-    def mode(self): return self.get('mode', 'paper')
+    def mode(self): return self._mode_override or self.get('mode', 'paper')
+
+    def set_mode(self, mode: str):
+        if mode not in ('paper', 'tiny_live', 'live'):
+            raise ValueError(f"Invalid mode: {mode}. Must be paper/tiny_live/live")
+        self._mode_override = mode
     @property
     def enable_live_trading(self): return self.get('enable_live_trading', False)
 

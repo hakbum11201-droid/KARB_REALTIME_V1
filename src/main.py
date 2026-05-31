@@ -40,7 +40,7 @@ def main():
     args = parser.parse_args()
 
     if args.mode:
-        cfg.mode = args.mode
+        cfg.set_mode(args.mode)
 
     print(f"[KARB] Mode: {cfg.mode.upper()}")
 
