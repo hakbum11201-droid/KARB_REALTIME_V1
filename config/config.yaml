@@ -1,4 +1,5 @@
 mode: paper
+enable_live_trading: false
 symbols: [BTC, ETH, XRP, DOGE, SOL]
 loop_interval_sec: 1
 upbit_fee_bp: 5
@@ -21,3 +22,17 @@ paper_timeout_sec: 300
 paper_take_profit_bp: 20
 paper_stop_loss_bp: 20
 raw_save_enabled: false
+bounded_collector_enabled: false
+log_decisions_only_when_candidate: true
+decision_log_min_surplus_bp: 0
+state_write_interval_sec: 5
+max_log_file_mb: 20
+log_retention_days: 14
+paper_initial_upbit_krw: 1000000
+paper_initial_binance_usdt: 700
+paper_initial_coin_qty:
+  BTC: 0
+  ETH: 0
+  XRP: 0
+  DOGE: 0
+  SOL: 0
