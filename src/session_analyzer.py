@@ -59,25 +59,35 @@ def analyze_session(run_id: str) -> dict:
 
     perf_path = os.path.join(RUNTIME_DIR, 'performance_summary.json')
     state_path = os.path.join(RUNTIME_DIR, 'state.json')
+    control_path = os.path.join(RUNTIME_DIR, 'control.json')
     trades_path = os.path.join(LOGS_DIR, 'paper_trades.jsonl')
     decisions_path = os.path.join(LOGS_DIR, 'decisions.jsonl')
 
     perf = _read_json(perf_path)
     state = _read_json(state_path)
+    control = _read_json(control_path)
     trades = _read_jsonl(trades_path)
     decisions = _read_jsonl(decisions_path)
 
     analyzer = SessionAnalyzer(cfg)
     
     # ── 통계 집계 ────────────────────────────────────────────────────────
+    session_control = control if control.get('run_id') == run_id else {}
+    ended_at = session_control.get('ended_at') or time.time()
+    duration_sec = state.get('runtime_sec') or perf.get('duration_sec') or 0
+    started_at = session_control.get('started_at') or state.get('started_at')
+    if not started_at:
+        started_at = ended_at - duration_sec
+    duration_sec = max(0, ended_at - started_at)
+
     session_stats = {
         **perf,
         'run_id': run_id,
-        'started_at': state.get('started_at', 0),
-        'ended_at': time.time(),
-        'duration_sec': state.get('runtime_sec', 0),
-        'total_loops': len(decisions),
-        'quote_count': len(decisions),
+        'started_at': started_at,
+        'ended_at': ended_at,
+        'duration_sec': duration_sec,
+        'total_loops': state.get('loop_count', perf.get('loop_count', len(decisions))),
+        'quote_count': state.get('quote_count', perf.get('quote_count', len(decisions))),
         'candidate_count': sum(1 for d in decisions if d.get('reason_no_trade') == 'OK'),
         'paper_entry_count': sum(1 for t in trades if t.get('event') == 'ENTRY'),
         'paper_exit_count': sum(1 for t in trades if t.get('event') == 'EXIT'),
@@ -97,9 +107,6 @@ def analyze_session(run_id: str) -> dict:
             
     session_stats['reason_counts'] = reasons
     session_stats['surplus_bp_list'] = surplus_list
-    session_stats['loop_latency_ms_list'] = []  # 파일에서는 레이턴시를 구하기 어려움
-    session_stats['quote_latency_ms_list'] = []
-
     report = analyzer.analyze(session_stats)
     return report
 
@@ -146,6 +153,8 @@ class SessionAnalyzer:
             'positive_net_ratio': session_stats.get('positive_net_ratio', 0.0),
             'error_count':        session_stats.get('error_count', 0),
         }
+        r['started_at_iso'] = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(r['started_at']))
+        r['ended_at_iso'] = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(r['ended_at']))
 
         # ── surplus 통계 ─────────────────────────────────────────────────
         surplus_list = session_stats.get('surplus_bp_list', [])
@@ -159,8 +168,10 @@ class SessionAnalyzer:
         # ── 레이턴시 통계 ─────────────────────────────────────────────────
         loop_lats  = session_stats.get('loop_latency_ms_list', [])
         quote_lats = session_stats.get('quote_latency_ms_list', [])
-        r['p95_loop_latency_ms']  = self._percentile(loop_lats, 95)
-        r['p95_quote_latency_ms'] = self._percentile(quote_lats, 95)
+        r['p95_loop_latency_ms'] = session_stats.get(
+            'p95_loop_latency_ms', self._percentile(loop_lats, 95))
+        r['p95_quote_latency_ms'] = session_stats.get(
+            'p95_quote_latency_ms', self._percentile(quote_lats, 95))
 
         # 네트워크 건강도
         p95_q = r['p95_quote_latency_ms']

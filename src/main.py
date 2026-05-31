@@ -3,6 +3,7 @@ import json
 import os
 import sys
 import time
+from collections import deque
 
 from config import cfg
 from secrets_manager import assert_live_credentials_available
@@ -30,6 +31,14 @@ def _write_json(path: str, data) -> None:
         pass
 
 
+def _percentile(values, pct: int) -> float:
+    if not values:
+        return 0.0
+    sorted_values = sorted(values)
+    idx = min(int(len(sorted_values) * pct / 100), len(sorted_values) - 1)
+    return round(sorted_values[idx], 2)
+
+
 def main():
     parser = argparse.ArgumentParser(description="KARB_REALTIME_V1 Engine")
     parser.add_argument('--once', action='store_true', help='Run once and exit')
@@ -55,10 +64,12 @@ def main():
     if args.until_stop:
         ctrl = control.start_run()
         run_id = ctrl['run_id']
+        started_at = ctrl['started_at']
         print(f"[KARB] Session: {run_id}")
         print(f"[KARB] Stop: run STOP_PAPER.bat or POST /api/stop")
     else:
         run_id = ''
+        started_at = time.time()
 
     # ── 컴포넌트 초기화 ──────────────────────────────────────────────────
     upbit_pub    = UpbitPublic()
@@ -81,7 +92,7 @@ def main():
     quotes_path  = os.path.join(runtime_dir, 'latest_quotes.json')
 
     # ── 세션 통계 누적기 ──────────────────────────────────────────────────
-    start_time         = time.time()
+    start_time         = started_at
     last_state_write   = 0.0
     last_console_print = 0.0
     console_interval   = cfg.get('console_summary_interval_sec', 15)
@@ -96,12 +107,12 @@ def main():
     error_count      = 0
     reason_counts:   dict[str, int] = {}
     surplus_bp_list: list[float]    = []
-    loop_lat_list:   list[float]    = []
-    quote_lat_list:  list[float]    = []
+    loop_lat_list:   deque[float]   = deque(maxlen=1000)
+    quote_lat_list:  deque[float]   = deque(maxlen=1000)
     latest_reason    = ''
+    last_quote_at    = 0.0
 
     # bounded: 최근 1000건만 보존 (무한 리스트 방지)
-    MAX_LAT_SAMPLES = 1000
     MAX_SURPLUS_SAMPLES = 1000
 
     while True:
@@ -153,8 +164,8 @@ def main():
             u_lat = upbit_q.get('latency_ms', 0)
             b_lat = binance_q.get('latency_ms', 0)
             max_q_lat = max(u_lat, b_lat)
-            if len(quote_lat_list) < MAX_LAT_SAMPLES:
-                quote_lat_list.append(max_q_lat)
+            quote_lat_list.append(max_q_lat)
+            last_quote_at = max(last_quote_at, upbit_q.get('ts', 0), binance_q.get('ts', 0))
 
             if cfg.bounded_collector_enabled:
                 collector.push(sym, {'upbit': upbit_q, 'binance': binance_q, 'symbol': sym})
@@ -236,11 +247,21 @@ def main():
 
         # ── 루프 레이턴시 추적 ────────────────────────────────────────────
         loop_ms = (time.time() - loop_start) * 1000
-        if len(loop_lat_list) < MAX_LAT_SAMPLES:
-            loop_lat_list.append(loop_ms)
+        loop_lat_list.append(loop_ms)
 
         # ── --until-stop 콘솔 요약 (간격별) ───────────────────────────────
         now = time.time()
+        runtime_metrics = {
+            'started_at':           started_at,
+            'loop_count':           total_loops,
+            'quote_count':          quote_count,
+            'last_loop_latency_ms': round(loop_ms, 2),
+            'p95_loop_latency_ms':  _percentile(loop_lat_list, 95),
+            'p95_quote_latency_ms': _percentile(quote_lat_list, 95),
+            'last_quote_age_sec':   round(max(0.0, now - last_quote_at), 2) if last_quote_at else None,
+            'updated_at':           now,
+        }
+        perf_tracker.update_runtime_metrics(runtime_metrics)
         if args.until_stop and (now - last_console_print >= console_interval):
             elapsed_sec = now - start_time
             perf_s = perf_tracker.summary()
@@ -262,6 +283,7 @@ def main():
             _write_json(state_path, {
                 'mode':           cfg.mode,
                 'run_id':         run_id,
+                **runtime_metrics,
                 'krw_usdt':       krw_usdt,
                 'fx_status':      fx_status,
                 'symbols':        list(quotes.keys()),
@@ -272,7 +294,6 @@ def main():
                 'today_pnl_krw':  perf_summary.get('today_pnl_krw', 0),
                 'runtime_sec':    round(now - start_time, 1),
                 'latest_reason':  latest_reason,
-                'updated_at':     now,
             })
             last_state_write = now
 

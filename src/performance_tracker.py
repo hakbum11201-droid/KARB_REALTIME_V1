@@ -17,6 +17,7 @@ class PerformanceTracker:
         self._closed: deque[dict] = deque(maxlen=self.MAX_TRADES)
         self._open_count: int = 0
         self._started_at: float = time.time()
+        self._runtime_metrics: dict = {}
 
         # today 집계
         self._today_pnl_krw: float = 0.0
@@ -31,6 +32,9 @@ class PerformanceTracker:
 
     def update_open_count(self, n: int) -> None:
         self._open_count = n
+
+    def update_runtime_metrics(self, metrics: dict) -> None:
+        self._runtime_metrics = dict(metrics)
 
     def record_exit(self, trade: dict) -> None:
         """closed trade(EXIT 이벤트)를 기록하고 성과를 갱신한다."""
@@ -104,6 +108,7 @@ class PerformanceTracker:
             'elapsed_hours':       round((time.time() - self._started_at) / 3600, 3),
             'buffered_trades':     len(self._closed),
             'updated_at':          time.time(),
+            **self._runtime_metrics,
         }
         self._write_summary(s)
         return s

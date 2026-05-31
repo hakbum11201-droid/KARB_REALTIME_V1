@@ -89,9 +89,28 @@
           <span class="sb-reason" id="sb-reason">--</span>
         </div>
       </div>
+      <div class="runtime-panel">
+        <div class="runtime-primary">
+          <span class="heartbeat" id="heartbeat"></span>
+          <span class="runtime-status" id="runtime-status">STOPPED</span>
+          <span class="quote-status" id="quote-status">QUOTE WAITING</span>
+        </div>
+        <div class="runtime-grid">
+          <div><span>Runtime</span><strong id="metric-runtime">00:00:00</strong></div>
+          <div><span>Last update</span><strong id="metric-last-update">--</strong></div>
+          <div><span>Loops</span><strong id="metric-loop-count">--</strong></div>
+          <div><span>Quotes</span><strong id="metric-quote-count">--</strong></div>
+          <div><span>P95 loop</span><strong id="metric-p95-loop">--</strong></div>
+          <div><span>P95 quote</span><strong id="metric-p95-quote">--</strong></div>
+        </div>
+      </div>
       <div class="section-label">실시간 호가 & 아비트라지 신호</div>
       <div class="quotes-grid" id="quotes-grid">
         <div class="loading-placeholder">엔진 연결 중...</div>
+      </div>
+      <div class="dashboard-summary" id="dashboard-summary">
+        <div class="section-label">Last Session Summary</div>
+        <div class="empty-row">세션 리포트 대기 중</div>
       </div>
     </section>
 

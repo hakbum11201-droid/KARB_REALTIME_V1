@@ -20,6 +20,19 @@ const setClass = (id, value) => { const el=$(id); if (el) el.className=value; };
 const setStyle = (id, name, value) => { const el=$(id); if (el) el.style[name]=value; };
 const setDisabled = (id, value) => { const el=$(id); if (el) el.disabled=value; };
 const on = (id, event, handler) => { const el=$(id); if (el) el.addEventListener(event, handler); };
+let latestState = {};
+let latestEngine = {};
+let latestControl = {};
+let lastSummaryFetchAt = 0;
+
+const durationText = seconds => {
+  const total = Math.max(0, Math.floor(Number(seconds)||0));
+  const h = String(Math.floor(total/3600)).padStart(2,'0');
+  const m = String(Math.floor(total%3600/60)).padStart(2,'0');
+  const s = String(total%60).padStart(2,'0');
+  return `${h}:${m}:${s}`;
+};
+const ageText = seconds => seconds == null ? '--' : `${Math.max(0, Math.floor(seconds))}s ago`;
 
 function showUiError(error) {
   const message = error instanceof Error ? error.message : String(error);
@@ -78,6 +91,7 @@ on('btn-start-live', 'click', () => startEngine('live'));
 on('btn-stop-engine', 'click', async () => {
   if (!confirm('엔진을 정지하시겠습니까? 세션 리포트가 자동 생성됩니다.')) return;
   try {
+    showStopping();
     const res = await fetch('/api/engine/stop', { method: 'POST' });
     const d = await res.json();
     alert(d.message || 'Stop requested');
@@ -87,6 +101,7 @@ on('btn-stop-engine', 'click', async () => {
 on('btn-stop', 'click', async () => {
   // Graceful stop banner button
   try {
+    showStopping();
     const res = await fetch('/api/engine/stop', { method: 'POST' });
     const d = await res.json();
     alert(d.message || 'Stop requested');
@@ -99,8 +114,12 @@ async function fetchData() {
     const res = await fetch('/api/data');
     if (!res.ok) throw 0;
     const d = await res.json();
+    latestState = d.state||{};
+    latestEngine = d.engine||{};
+    latestControl = d.control||{};
     renderTopbar(d.state||{}, d.engine||{});
     renderBanner(d.state||{}, d.control||{});
+    renderTelemetry(d.state||{}, d.engine||{}, d.control||{});
     renderQuotes(d.quotes||{});
     setText('last-update', new Date().toLocaleTimeString('ko-KR'));
     if (missingElements.size) {
@@ -112,6 +131,41 @@ async function fetchData() {
     console.error('[fetchData] failed', error);
     setConn(false);
     showUiError(error);
+  }
+}
+
+function showStopping() {
+  setText('runtime-status', 'Stopping... generating session report');
+  setClass('runtime-status', 'runtime-status stopping');
+}
+
+// heartbeat and last update freshness indicators
+function renderTelemetry(state, engine, ctrl) {
+  const status = ctrl.stop_requested && engine.running ? 'STOPPING' : (engine.status || ctrl.status || 'STOPPED');
+  const updatedAge = state.updated_at ? Math.max(0, Date.now()/1000 - state.updated_at) : null;
+  const quoteAge = state.last_quote_age_sec == null
+    ? updatedAge
+    : Math.max(0, Number(state.last_quote_age_sec) + (updatedAge||0));
+  let quoteStatus = 'QUOTE WAITING';
+  let quoteClass = 'waiting';
+  if (quoteAge != null && quoteAge <= 5) { quoteStatus='QUOTE OK'; quoteClass='ok'; }
+  else if (quoteAge != null && quoteAge <= 15) { quoteStatus='QUOTE STALE'; quoteClass='stale'; }
+  else if (quoteAge != null) { quoteStatus='ENGINE WARNING'; quoteClass='warning'; }
+
+  setText('runtime-status', status === 'RUNNING' ? '🟢 RUNNING' : status === 'STOPPING' ? 'Stopping... generating session report' : status);
+  setClass('runtime-status', `runtime-status ${status.toLowerCase()}`);
+  setClass('heartbeat', `heartbeat ${status === 'RUNNING' ? 'running' : ''}`);
+  setText('quote-status', quoteStatus);
+  setClass('quote-status', `quote-status ${quoteClass}`);
+  setText('metric-runtime', durationText(state.runtime_sec));
+  setText('metric-last-update', ageText(updatedAge));
+  setText('metric-loop-count', fmt(state.loop_count));
+  setText('metric-quote-count', fmt(state.quote_count));
+  setText('metric-p95-loop', state.p95_loop_latency_ms!=null ? `${fmt(state.p95_loop_latency_ms,1)} ms` : '--');
+  setText('metric-p95-quote', state.p95_quote_latency_ms!=null ? `${fmt(state.p95_quote_latency_ms,1)} ms` : '--');
+  if (status === 'STOPPED' && Date.now() - lastSummaryFetchAt >= POLL_MS) {
+    lastSummaryFetchAt = Date.now();
+    fetchLastSession();
   }
 }
 
@@ -172,9 +226,13 @@ function renderQuotes(quotes) {
     const reason=c.reason_no_trade||'', isGo=reason==='OK';
     const ub=fmt(up.bid||0), ua=fmt(up.ask||0);
     const bb=Number(bn.bid||0).toFixed(4), ba=Number(bn.ask||0).toFixed(4);
-    return `<div class="quote-card ${isGo?'go':'nogo'}">
+    const reasonClass = reason==='OK' ? 'reason-ok'
+      : reason==='LOW_SURPLUS' ? 'reason-low-surplus'
+      : reason==='WIDE_SPREAD'||reason==='LOW_DEPTH' ? 'reason-warning'
+      : reason==='FX_UNTRUSTED' ? 'reason-danger' : 'reason-default';
+    return `<div class="quote-card ${isGo?'go':'nogo'} refreshed">
       <div class="qc-header">
-        <span class="qc-symbol">${sym}</span>
+        <span class="qc-symbol">${sym} <span class="live-dot"></span><span class="live-label">LIVE</span></span>
         <span class="qc-kimp ${kimp>=0?'pos':'neg'}">${kimp>=0?'+':''}${kimp.toFixed(2)}%</span>
       </div>
       <div class="qc-prices">
@@ -189,7 +247,7 @@ function renderQuotes(quotes) {
       </div>
       <div class="qc-verdict">
         <span class="verdict-badge ${isGo?'go-badge':'nogo-badge'}">${isGo?'✓ GO':'✗ NO-GO'}</span>
-        ${reason&&reason!=='OK'?`<span class="qc-reason">${reason}</span>`:''}
+        <span class="qc-reason ${reasonClass}">${reason||'--'}</span>
       </div>
     </div>`;
   }).join('');
@@ -266,7 +324,23 @@ async function fetchLastSession() {
     if (!r.ok) return;
     const d = await r.json();
     renderSessionReport(d);
+    renderDashboardSummary(d);
   } catch {}
+}
+function renderDashboardSummary(r) {
+  const el = $('dashboard-summary');
+  if (!el || !r || !r.run_id) return;
+  const reasons = Object.entries(r.reason_counts||{}).sort((a,b)=>b[1]-a[1]);
+  el.innerHTML = `
+    <div class="section-label">Last Session Summary</div>
+    <div class="summary-grid">
+      <div><span>Judgement</span><strong>${r.judgement||'--'}</strong></div>
+      <div><span>Win rate</span><strong>${Number(r.win_rate||0).toFixed(1)}%</strong></div>
+      <div><span>Net PnL</span><strong>${fmt(r.net_pnl_krw)} ₩</strong></div>
+      <div><span>Trades</span><strong>${fmt(r.closed_trade_count)}</strong></div>
+      <div><span>Duration</span><strong>${durationText(r.duration_sec)}</strong></div>
+    </div>
+    <div class="summary-reasons">${reasons.map(([reason,count])=>`<span>${reason}: ${count}</span>`).join('')||'<span>No reasons</span>'}</div>`;
 }
 function renderSessionReport(r) {
   const el = $('session-report');
@@ -368,3 +442,4 @@ fetchLastSession();
 setInterval(fetchData,   POLL_MS);
 setInterval(fetchPerf,   POLL_MS*2);
 setInterval(fetchTrades, POLL_MS*2);
+setInterval(() => renderTelemetry(latestState, latestEngine, latestControl), 1000);
