@@ -53,6 +53,12 @@ class Config:
     def tiny_live_require_preflight(self): return self.get('tiny_live_require_preflight', True)
     @property
     def tiny_live_require_inventory_ok(self): return self.get('tiny_live_require_inventory_ok', True)
+    @property
+    def use_websocket_market_data(self): return self.get('use_websocket_market_data', True)
+    @property
+    def rest_fallback_enabled(self): return self.get('rest_fallback_enabled', True)
+    @property
+    def block_new_entries_on_partial_risk(self): return self.get('block_new_entries_on_partial_risk', True)
 
     # ── 심볼 / 루프 ────────────────────────────────────────────
     @property

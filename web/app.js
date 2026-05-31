@@ -287,6 +287,8 @@ function renderQuotes(quotes) {
     const net=Number(c.net_expected_profit_krw||0);
     const threshold_gap = Number(latestLimits.min_net_surplus_bp||0) - surplus;
     const qty=Number(c.max_fillable_qty||0), dir=c.best_direction||'--';
+    const quoteSource=(q.source||up.source||bn.source||'rest').toUpperCase();
+    const quoteAge=Number(q.quote_age_sec||0);
     const reason=c.reason_no_trade||'', isGo=reason==='OK';
     const ub=fmt(up.bid||0), ua=fmt(up.ask||0);
     const bb=Number(bn.bid||0).toFixed(4), ba=Number(bn.ask||0).toFixed(4);
@@ -304,6 +306,7 @@ function renderQuotes(quotes) {
         <div><div class="qc-price-exchange">Binance</div><div class="qc-price-val">${bb} $</div><div class="qc-price-bid-ask">bid ${bb} / ask ${ba}</div></div>
       </div>
       <div class="qc-metrics">
+        <span class="qc-metric">${quoteSource} ${quoteAge.toFixed(2)}s</span>
         <span class="qc-metric">Dir ${dir}</span>
         <span class="qc-metric">${surplus.toFixed(1)} bp</span>
         <span class="qc-metric">Net ${fmt(net)} ₩</span>
@@ -517,6 +520,14 @@ function renderInventory(inventory, readiness, tinyStatus={}) {
   setText('tiny-live-limits', `Order ${fmt(readiness.limits?.tiny_live_order_krw)} KRW / Max ${fmt(readiness.limits?.tiny_live_max_order_krw)} KRW`);
   const last = tinyStatus.last_order?.status || tinyStatus.last_preflight?.blockers?.join(' / ') || 'No preflight result.';
   setText('tiny-live-result', `Last result: ${last}`);
+  const partialRisk = tinyStatus.partial_risk || tinyStatus.status==='PARTIAL_RISK';
+  setText('tiny-live-warning', partialRisk ? 'PARTIAL_RISK: manual review required. New entries are blocked.' : '');
+  setClass('tiny-live-warning', `tiny-live-warning ${partialRisk?'visible':''}`);
+  const plan = tinyStatus.last_preflight?.plan||{};
+  setText('execution-plan', plan.plan_id
+    ? `Execution Plan ${plan.plan_id.slice(0,8)} | ${plan.symbol} ${plan.direction_label} | ${plan.upbit_side}/${plan.binance_side} | ${fmt(plan.order_krw)} KRW | ${fmt(plan.quote_age_ms,0)}ms | ${plan.preflight_status}`
+    : 'Execution Plan: no preflight yet.');
+  setDisabled('btn-tiny-execute', !tinyStatus.armed || !readiness.ready || partialRisk);
   const grid = $('inventory-grid');
   if (!grid) return;
   grid.innerHTML = symbols.map(row => `

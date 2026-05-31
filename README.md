@@ -2,6 +2,9 @@
 
 ## Guarded tiny-live Spot execution
 
+- Public top-of-book market data prefers reconnecting Upbit and Binance WebSocket streams.
+- Until both WebSocket sides are fresh, the existing REST quote engine remains the fallback.
+- Only the latest top-of-book snapshot is kept. Raw tick append storage is not used.
 - Tiny-live supports one explicitly armed Upbit Spot and Binance Spot order pair at a time.
 - The default configuration is blocked: `enable_live_trading`, `tiny_live_enabled`, and
   `live_order_enabled` are all `false`.

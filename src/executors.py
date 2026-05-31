@@ -3,6 +3,7 @@ import json
 import os
 import tempfile
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date
 
@@ -97,7 +98,7 @@ def _base_blockers() -> list[str]:
     if cfg.tiny_live_order_krw > cfg.tiny_live_max_order_krw:
         blockers.append('TINY_LIVE_MAX_ORDER_EXCEEDED')
     status = _status()
-    if status.get('partial_risk'):
+    if cfg.block_new_entries_on_partial_risk and status.get('partial_risk'):
         blockers.append('PARTIAL_RISK')
     if int(status.get('trade_count', 0)) >= cfg.tiny_live_max_trades_per_day:
         blockers.append('TINY_LIVE_DAILY_TRADE_LIMIT')
@@ -206,11 +207,21 @@ def create_preflight_plan() -> dict:
     qty = usdt = 0
     if not blockers:
         qty, usdt = _inventory_and_filter_checks(blockers, symbol, direction, calc)
+    upbit_side, binance_side = ('SELL', 'BUY') if direction == 'A' else ('BUY', 'SELL')
+    quote_ts = float(quote.get('timestamp', 0) or 0)
     plan = ExecutionPlan(
         symbol=symbol, direction=direction, mode=cfg.mode, quote_available=bool(quote),
         inventory_sufficient=not any('SHORTAGE' in item for item in blockers),
-        order_krw=cfg.tiny_live_order_krw, quantity=qty, binance_usdt=usdt,
-        quote_timestamp=float(quote.get('timestamp', 0) or 0), blockers=_unique(blockers),
+        plan_id=str(uuid.uuid4()), direction_label='A_KIMCHI' if direction == 'A' else 'B_REVERSE_KIMCHI',
+        upbit_side=upbit_side, binance_side=binance_side,
+        order_krw=cfg.tiny_live_order_krw, order_usdt=usdt, qty=qty, quantity=qty, binance_usdt=usdt,
+        quote_timestamp=quote_ts, quote_age_ms=round(max(0, time.time() - quote_ts) * 1000, 2),
+        upbit_bid=float(calc.get('upbit_bid', 0) or 0), upbit_ask=float(calc.get('upbit_ask', 0) or 0),
+        binance_bid=float(calc.get('binance_bid', 0) or 0), binance_ask=float(calc.get('binance_ask', 0) or 0),
+        fx_rate=float(calc.get('krw_usdt', 0) or 0),
+        expected_net_profit_krw=float(calc.get('net_expected_profit_krw', 0) or 0),
+        best_net_surplus_bp=float(calc.get('best_net_surplus_bp', 0) or 0),
+        preflight_status='PASS' if not blockers else 'BLOCKED', blockers=_unique(blockers),
         warnings=list(readiness['warnings']), executable=not blockers,
     )
     result = {**readiness, 'ready': not blockers, 'blockers': _unique(blockers), 'plan': plan.to_dict()}
@@ -235,12 +246,12 @@ class TinyLiveExecutor:
     def status(self) -> dict:
         return {**_status(), 'last_preflight': _read_json(PREFLIGHT_FILE), 'last_order': _read_json(ORDER_FILE)}
 
-    def execute_once(self) -> dict:
+    def execute_once(self, plan=None) -> dict:
         status = _status()
         if not status.get('armed'):
             return {'ok': False, 'status': 'DISARMED', 'blockers': ['TINY_LIVE_DISARMED']}
         preflight = create_preflight_plan()
-        plan = preflight.get('plan') or {}
+        plan = plan or preflight.get('plan') or {}
         if not preflight['ready'] or not plan.get('executable'):
             return {'ok': False, 'status': 'BLOCKED', 'blockers': preflight['blockers'], 'plan': plan}
         if time.time() - float(plan.get('quote_timestamp', 0) or 0) > cfg.stale_quote_ms / 1000:

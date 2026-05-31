@@ -127,6 +127,9 @@ class KarbHandler(SimpleHTTPRequestHandler):
         elif self.path == '/api/execution/preflight':
             self._send_json(create_preflight_plan())
 
+        elif self.path == '/api/execution/last-plan':
+            self._send_json(_read_json(os.path.join(RUNTIME_DIR, 'tiny_live_last_preflight.json')))
+
         elif self.path == '/api/tiny-live/status':
             self._send_json(tiny_live_executor.status())
 

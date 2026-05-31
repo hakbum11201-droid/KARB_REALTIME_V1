@@ -383,6 +383,9 @@ body {
 .tiny-live-status.armed { color:var(--accent-green); background:rgba(72,187,120,.12); }
 .tiny-live-status.disarmed { color:var(--accent-orange); background:rgba(237,137,54,.12); }
 .tiny-live-limits, .tiny-live-result { color:var(--text-secondary); font-family:var(--font-mono); font-size:11px; margin-top:8px; }
+.execution-plan { color:var(--text-secondary); background:rgba(255,255,255,.03); border-radius:var(--radius-sm); padding:8px; font-family:var(--font-mono); font-size:11px; margin-top:8px; line-height:1.5; }
+.tiny-live-warning { display:none; color:var(--accent-red); background:rgba(252,129,129,.12); border:1px solid rgba(252,129,129,.35); border-radius:var(--radius-sm); padding:8px; font-weight:700; font-size:11px; margin-top:8px; }
+.tiny-live-warning.visible { display:block; }
 
 /* ── STOP Button ─────────────────────────────────────── */
 .stop-btn {

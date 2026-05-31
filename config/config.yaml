@@ -16,6 +16,9 @@ tiny_live_daily_loss_limit_krw: 10000
 tiny_live_max_trades_per_day: 5
 tiny_live_require_preflight: true
 tiny_live_require_inventory_ok: true
+use_websocket_market_data: true
+rest_fallback_enabled: true
+block_new_entries_on_partial_risk: true
 
 symbols: [BTC, ETH, XRP, DOGE, SOL]
 

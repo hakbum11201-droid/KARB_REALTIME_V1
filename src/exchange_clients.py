@@ -163,6 +163,12 @@ class BinanceSpotPrivateClient:
         value, step = Decimal(str(qty)), Decimal(str(step_size))
         return float((value / step).to_integral_value(rounding=ROUND_DOWN) * step)
 
+    def normalize_qty(self, symbol: str, qty: float) -> dict:
+        filters = self.get_symbol_filters(symbol)
+        if not filters.get('ok'):
+            return filters
+        return {**filters, 'qty': self.round_down_qty(qty, float(filters.get('step_size', 0) or 0))}
+
     def place_market_buy_quote(self, symbol: str, usdt_amount: float):
         _assert_tiny_live_order_allowed()
         return self._signed_request('/api/v3/order', 'POST', {

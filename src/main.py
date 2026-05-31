@@ -20,6 +20,7 @@ from performance_tracker import PerformanceTracker
 from bounded_collector import BoundedCollector
 import control
 from session_analyzer import SessionAnalyzer
+from ws_market_data import WebSocketMarketData
 
 
 def _write_json(path: str, data) -> None:
@@ -76,6 +77,13 @@ def main():
     binance_pub  = BinancePublic()
     fx_oracle    = FxOracle(upbit_pub, binance_pub)
     quote_engine = QuoteEngine(upbit_pub, binance_pub, cfg.symbols)
+    ws_market_data = None
+    if cfg.use_websocket_market_data:
+        ws_market_data = WebSocketMarketData(
+            cfg.symbols, stale_quote_ms=cfg.stale_quote_ms,
+            rest_fallback_enabled=cfg.rest_fallback_enabled,
+        )
+        ws_market_data.start()
     arb_calc     = ArbCalculator()
     inv_mgr      = InventoryManager()
     risk_guard   = RiskGuard()
@@ -144,7 +152,10 @@ def main():
 
         # ── 호가 수집 ────────────────────────────────────────────────────
         try:
-            quotes = quote_engine.fetch_all()
+            quotes = (
+                ws_market_data.fetch_all(quote_engine)
+                if ws_market_data else quote_engine.fetch_all()
+            )
         except Exception as e:
             event_logger.log_error('quote_engine', e)
             quotes = {}
@@ -182,6 +193,9 @@ def main():
             calc_res['upbit_ts']    = upbit_q.get('ts')
             calc_res['binance_ts']  = binance_q.get('ts')
             q['calc'] = calc_res
+            q['quote_age_sec'] = round(max(
+                0, time.time() - min(upbit_q.get('ts', 0), binance_q.get('ts', 0))
+            ), 3)
 
             # surplus 통계 수집
             surplus = calc_res.get('best_net_surplus_bp', -9999)
@@ -260,6 +274,10 @@ def main():
             'p95_quote_latency_ms': _percentile(quote_lat_list, 95),
             'last_quote_age_sec':   round(max(0.0, now - last_quote_at), 2) if last_quote_at else None,
             'updated_at':           now,
+            'quote_source':         (
+                'ws' if quotes and all(q.get('source') == 'ws' for q in quotes.values())
+                else 'rest'
+            ),
         }
         perf_tracker.update_runtime_metrics(runtime_metrics)
         if args.until_stop and (now - last_console_print >= console_interval):
@@ -319,6 +337,8 @@ def main():
     # 종료 후: 세션 분석 리포트 자동 생성
     # ══════════════════════════════════════════════════════════════════════
     ended_at = time.time()
+    if ws_market_data:
+        ws_market_data.stop()
 
     if args.until_stop:
         control.finish_run(ended_at)

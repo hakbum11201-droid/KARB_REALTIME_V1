@@ -2,6 +2,8 @@
 
 ## Tiny-live safety boundary
 
+- Public WebSocket quotes keep only the latest top-of-book snapshot; raw tick append storage is disabled.
+- REST remains a fallback when WebSocket quotes are unavailable or stale.
 - Tiny-live is disabled and disarmed by default.
 - Only small Upbit Spot and Binance Spot order pairs are supported after explicit ARM.
 - Full live mode, withdrawals, wallet-address storage, transfers, futures, margin, P2P,
