@@ -1,3 +1,6 @@
 @echo off
-echo Stopping python processes...
-taskkill /IM python.exe /F
+echo =======================================================
+echo   DEPRECATED: Please use the STOP button in the UI.
+echo =======================================================
+echo.
+pause

@@ -1,10 +1,9 @@
 @echo off
-title KARB Dashboard
-cd /d C:\KARB_REALTIME_V1
-echo ============================================
-echo   KARB_REALTIME_V1 - Dashboard UI
-echo ============================================
+echo =======================================================
+echo   DEPRECATED: Please use LAUNCH_KARB.bat instead.
+echo =======================================================
 echo.
-echo   Open http://localhost:8000 in your browser
+echo   This file is kept for backward compatibility only.
+echo   All operations (START, STOP) are now done via UI.
 echo.
-python src\web_server.py --port 8000
+pause

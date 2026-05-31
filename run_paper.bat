@@ -1,14 +1,9 @@
 @echo off
-title KARB Paper Engine
-cd /d C:\KARB_REALTIME_V1
-echo ============================================
-echo   KARB_REALTIME_V1 - Paper Engine Start
-echo ============================================
+echo =======================================================
+echo   DEPRECATED: Please use LAUNCH_KARB.bat instead.
+echo =======================================================
 echo.
-echo   Mode: paper (--until-stop)
-echo   Stop: run STOP_PAPER.bat or UI STOP button
+echo   This file is kept for backward compatibility only.
+echo   All operations (START, STOP) are now done via UI.
 echo.
-python src\main.py --until-stop
-echo.
-echo   Engine stopped. Check reports\sessions\ for session report.
 pause

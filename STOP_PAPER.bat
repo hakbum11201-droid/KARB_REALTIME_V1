@@ -1,12 +1,11 @@
 @echo off
-cd /d C:\KARB_REALTIME_V1
-echo ============================================
-echo   KARB_REALTIME_V1 - Stop Requested
-echo ============================================
+echo =======================================================
+echo   DEPRECATED: Please use the STOP button in the UI.
+echo   Use this only in case of emergency.
+echo =======================================================
 echo.
+cd /d C:\KARB_REALTIME_V1
 python src\control.py stop
 echo.
 echo   Engine will finalize session report on next loop.
-echo   Do NOT close the engine window manually.
-echo.
 pause

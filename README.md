@@ -2,28 +2,21 @@
 
 Upbit ↔ Binance 실시간 김프(Kimchi Premium) 차익 계산 및 Paper/Live 운용 엔진.
 
-## 원클릭 Paper 운용
+## 공식 실행 방법 (UI 중심)
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  1. run_paper.bat 더블클릭 → Paper 엔진 연속 실행       │
-│  2. run_ui.bat 실행 → http://localhost:8000 대시보드     │
-│  3. 중단: STOP_PAPER.bat 또는 UI STOP 버튼 클릭         │
-│  4. 종료 후 reports/sessions/{run_id}_summary.txt 확인   │
-│  5. judgement가 PAPER_EDGE_PASS이면 tiny_live 검토       │
+│  1. LAUNCH_KARB.bat 더블클릭                            │
+│  2. 브라우저 UI 자동 실행 (http://localhost:8000)       │
+│  3. START PAPER 클릭                                    │
+│  4. 원하는 시간 운용                                    │
+│  5. STOP 클릭                                           │
+│  6. Session Summary에서 PAPER_EDGE_PASS/FAIL 확인       │
+│  7. tiny_live/live는 조건 충족 전 차단됨                │
 └─────────────────────────────────────────────────────────┘
 ```
 
-### 실행 흐름
-
-| 순서 | 방법 | 설명 |
-|---|---|---|
-| 1 | `run_paper.bat` 더블클릭 | `--until-stop` 모드로 paper 엔진 시작 |
-| 2 | `run_ui.bat` 실행 (선택) | 대시보드 http://localhost:8000 |
-| 3 | `STOP_PAPER.bat` 실행 또는 UI ⏹ STOP | graceful stop 요청 |
-| 4 | 엔진이 다음 루프에서 감지 → 안전 종료 | |
-| 5 | 세션 분석 리포트 자동 생성 | `reports/sessions/{run_id}_summary.txt` |
-| 6 | judgement 확인 | PASS / WEAK / FAIL / NOT_ENOUGH / ERROR |
+> **주의**: 기존 `run_paper.bat`, `run_ui.bat`, `stop.bat` 등은 더 이상 직접 사용하지 않습니다. 모든 조작은 브라우저 대시보드 UI에서 수행합니다.
 
 ### Judgement 기준
 
@@ -49,11 +42,13 @@ PASS 조건: net_pnl > 0, win_rate ≥ 65%, avg_pnl > 0, max_drawdown < daily_lo
 
 ```
 C:\KARB_REALTIME_V1\
-├── run_paper.bat          ← 원클릭 Paper 시작
-├── STOP_PAPER.bat         ← Graceful 정지
-├── run_ui.bat             ← 대시보드 시작
+├── LAUNCH_KARB.bat        ← 공식 실행 진입점
+├── app_launcher.py        ← 웹서버 구동 및 브라우저 오픈
+├── build_exe.bat          ← PyInstaller 빌드 스크립트
 ├── src/
-│   ├── main.py            # --once / --duration-sec / --until-stop
+│   ├── process_manager.py # 엔진 프로세스 제어 (UI -> 엔진)
+│   ├── web_server.py      # /api/engine/start, /api/engine/stop
+│   ├── main.py            # 실제 엔진 로직
 │   ├── control.py         # 세션 제어 (runtime/control.json)
 │   ├── session_analyzer.py# 종료 시 자동 분석 + judgement
 │   ├── paper_engine.py    # entry/exit/TP/SL/timeout
@@ -62,7 +57,6 @@ C:\KARB_REALTIME_V1\
 │   ├── performance_tracker.py
 │   ├── event_logger.py    # 조건부 기록 (폭증 방지)
 │   ├── arb_calculator.py  # Direction A/B
-│   ├── web_server.py      # /api/stop, /api/session/last
 │   └── ...
 ├── config/config.yaml
 ├── runtime/               # overwrite 전용 (Git 제외)
@@ -76,28 +70,22 @@ C:\KARB_REALTIME_V1\
 
 ```powershell
 # 1. 의존성
-pip install requests pyyaml python-dotenv
+pip install requests pyyaml python-dotenv psutil
 
 # 2. 문법 검사
 python -m compileall src\ -q
+python -m py_compile app_launcher.py
 
-# 3. Paper 원클릭 실행
-# run_paper.bat 더블클릭
-
-# 4. 대시보드
-# run_ui.bat 더블클릭 → http://localhost:8000
-
-# 5. 정지
-# STOP_PAPER.bat 더블클릭 또는 UI STOP 버튼
+# 3. 앱 실행
+# LAUNCH_KARB.bat 더블클릭
 ```
 
 ## API 키 보안
 
 > **API 키는 `.env.local` 또는 `.env`에만 저장. 코드/config.yaml에 절대 넣지 않는다.**
 
-- `.env.example` → `.env.local`로 복사 후 키 입력
-- 대시보드 → API Keys 탭에서 Set/Missing 확인
-- 키 값은 어디에도 출력/로그 없음
+- 대시보드 → API Keys 탭에서 키를 안전하게 입력하고 저장할 수 있습니다.
+- 키 값은 어디에도 평문으로 출력되거나 다시 표시되지 않습니다.
 
 가이드: [docs/SECURITY_KR.md](docs/SECURITY_KR.md)
 

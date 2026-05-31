@@ -30,11 +30,38 @@ function setConn(ok) {
   $('conn-label').textContent = ok ? '연결됨' : '연결 실패';
 }
 
-// ── STOP Button ─────────────────────────────────────────────────────────
-$('btn-stop').addEventListener('click', async () => {
+// ── Engine Controls ───────────────────────────────────────────────────────
+async function startEngine(mode) {
+  if (!confirm(`${mode.toUpperCase()} 모드로 엔진을 시작하시겠습니까?`)) return;
+  try {
+    const res = await fetch('/api/engine/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode })
+    });
+    const d = await res.json();
+    alert(d.message);
+    fetchData();
+  } catch { alert('엔진 시작 요청 실패'); }
+}
+
+$('btn-start-paper').addEventListener('click', () => startEngine('paper'));
+$('btn-start-tiny').addEventListener('click', () => startEngine('tiny_live'));
+$('btn-start-live').addEventListener('click', () => startEngine('live'));
+
+$('btn-stop-engine').addEventListener('click', async () => {
   if (!confirm('엔진을 정지하시겠습니까? 세션 리포트가 자동 생성됩니다.')) return;
   try {
-    const res = await fetch('/api/stop', {method:'POST'});
+    const res = await fetch('/api/engine/stop', { method: 'POST' });
+    const d = await res.json();
+    alert(d.message || 'Stop requested');
+    fetchData();
+  } catch { alert('연결 실패'); }
+});
+$('btn-stop').addEventListener('click', async () => {
+  // Graceful stop banner button
+  try {
+    const res = await fetch('/api/engine/stop', { method: 'POST' });
     const d = await res.json();
     alert(d.message || 'Stop requested');
   } catch { alert('연결 실패'); }
@@ -47,7 +74,7 @@ async function fetchData() {
     if (!res.ok) throw 0;
     const d = await res.json();
     setConn(true);
-    renderTopbar(d.state||{});
+    renderTopbar(d.state||{}, d.engine||{});
     renderBanner(d.state||{}, d.control||{});
     renderQuotes(d.quotes||{});
     $('last-update').textContent = new Date().toLocaleTimeString('ko-KR');
@@ -55,8 +82,20 @@ async function fetchData() {
 }
 
 // ── Topbar ──────────────────────────────────────────────────────────────
-function renderTopbar(s) {
-  $('stat-session').textContent = s.run_id ? s.run_id.slice(0,15) : '--';
+function renderTopbar(s, e) {
+  const isRunning = e.running;
+  const status = e.status || 'STOPPED';
+  $('stat-engine-status').textContent = status;
+  if (status === 'RUNNING') $('stat-engine-status').style.color = 'var(--accent-green)';
+  else if (status === 'STOP_PENDING') $('stat-engine-status').style.color = 'var(--accent-orange)';
+  else $('stat-engine-status').style.color = 'var(--text-muted)';
+
+  $('btn-start-paper').disabled = isRunning;
+  $('btn-start-tiny').disabled  = isRunning;
+  $('btn-start-live').disabled  = isRunning;
+  $('btn-stop-engine').disabled = !isRunning;
+
+  $('stat-session').textContent = e.run_id ? e.run_id.slice(0,15) : '--';
   $('stat-fx').textContent      = s.krw_usdt ? fmt(s.krw_usdt,1) : '--';
   $('stat-trades').textContent  = `${s.open_trades??'--'} / ${s.closed_trades??'--'}`;
   const pnl = Number(s.net_pnl_krw||0);

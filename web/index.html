@@ -42,13 +42,19 @@
     <header class="topbar">
       <h1 class="page-title" id="page-title">대시보드</h1>
       <div class="topbar-right">
+        <div class="engine-controls">
+          <button class="btn btn-paper" id="btn-start-paper">▶ PAPER</button>
+          <button class="btn btn-tiny" id="btn-start-tiny">▶ TINY LIVE</button>
+          <button class="btn btn-live" id="btn-start-live">▶ LIVE</button>
+          <button class="btn btn-stop" id="btn-stop-engine" disabled>⏹ STOP</button>
+        </div>
+        <div class="stat-pill" id="pill-engine">
+          <span class="pill-label">Engine</span>
+          <span class="pill-value" id="stat-engine-status">STOPPED</span>
+        </div>
         <div class="stat-pill" id="pill-session">
           <span class="pill-label">Session</span>
           <span class="pill-value" id="stat-session">--</span>
-        </div>
-        <div class="stat-pill fx">
-          <span class="pill-label">KRW/USDT</span>
-          <span class="pill-value" id="stat-fx">--</span>
         </div>
         <div class="stat-pill">
           <span class="pill-label">Open / Closed</span>

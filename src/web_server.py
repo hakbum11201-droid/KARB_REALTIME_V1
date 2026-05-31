@@ -26,6 +26,7 @@ LOGS_DIR    = os.path.normpath(os.path.join(BASE_DIR, '..', 'logs'))
 sys.path.insert(0, BASE_DIR)
 import secrets_manager
 import control as ctrl_module
+import process_manager
 
 
 def _read_json(path, default=None):
@@ -85,7 +86,10 @@ class KarbHandler(SimpleHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        if self.path == '/api/state':
+        if self.path == '/api/engine/status':
+            self._send_json(process_manager.get_engine_status())
+
+        elif self.path == '/api/state':
             self._send_json(_read_json(os.path.join(RUNTIME_DIR, 'latest_state.json')))
 
         elif self.path == '/api/data':
@@ -93,6 +97,7 @@ class KarbHandler(SimpleHTTPRequestHandler):
                 'state':   _read_json(os.path.join(RUNTIME_DIR, 'latest_state.json')),
                 'quotes':  _read_json(os.path.join(RUNTIME_DIR, 'latest_quotes.json')),
                 'control': ctrl_module.get_control_state(),
+                'engine':  process_manager.get_engine_status(),
             })
 
         elif self.path == '/api/perf':
@@ -125,7 +130,28 @@ class KarbHandler(SimpleHTTPRequestHandler):
             super().do_GET()
 
     def do_POST(self):
-        if self.path == '/api/stop':
+        if self.path == '/api/engine/start':
+            if not self._is_localhost():
+                self._send_403()
+                return
+            length = int(self.headers.get('Content-Length', 0))
+            body_bytes = self.rfile.read(length)
+            try:
+                body = json.loads(body_bytes.decode('utf-8'))
+            except Exception:
+                body = {}
+            mode = body.get('mode', 'paper')
+            result = process_manager.start_engine(mode)
+            self._send_json(result)
+
+        elif self.path == '/api/engine/stop':
+            if not self._is_localhost():
+                self._send_403()
+                return
+            result = process_manager.stop_engine()
+            self._send_json(result)
+
+        elif self.path == '/api/stop':
             if not self._is_localhost():
                 self._send_403()
                 return

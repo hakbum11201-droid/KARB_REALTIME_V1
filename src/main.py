@@ -36,7 +36,11 @@ def main():
     parser.add_argument('--duration-sec', type=int, default=0, help='Run for X seconds')
     parser.add_argument('--until-stop', action='store_true',
                         help='Run until STOP_PAPER.bat sets stop_requested')
+    parser.add_argument('--mode', type=str, default='', help='Override config mode (paper/tiny_live/live)')
     args = parser.parse_args()
+
+    if args.mode:
+        cfg.mode = args.mode
 
     print(f"[KARB] Mode: {cfg.mode.upper()}")
 
