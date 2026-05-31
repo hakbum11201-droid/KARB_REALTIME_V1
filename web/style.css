@@ -271,8 +271,75 @@ body {
 
 .loading-placeholder { grid-column:1/-1; text-align:center; color:var(--text-muted); padding:48px; font-size:14px; }
 
+/* ── STOP Button ─────────────────────────────────────── */
+.stop-btn {
+  padding: 8px 16px; border: 1px solid rgba(252,129,129,.4);
+  border-radius: var(--radius-sm); background: rgba(252,129,129,.08);
+  color: var(--accent-red); font-size: 12px; font-weight: 700;
+  font-family: var(--font-sans); cursor: pointer;
+  transition: background var(--transition), border-color var(--transition);
+  letter-spacing: .04em;
+}
+.stop-btn:hover { background: rgba(252,129,129,.2); border-color: var(--accent-red); }
+
+/* ── Session Banner ──────────────────────────────────── */
+.session-banner {
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 12px 18px; margin-bottom: 18px;
+  gap: 16px;
+}
+.sb-left, .sb-right { display: flex; align-items: center; gap: 12px; }
+.sb-status {
+  font-size: 11px; font-weight: 700; padding: 3px 10px;
+  border-radius: 999px; letter-spacing: .04em;
+}
+.sb-status.running { background: rgba(72,187,120,.15); color: var(--accent-green); }
+.sb-status.stopped { background: rgba(252,129,129,.1); color: var(--accent-red); }
+.sb-runid   { font-size: 12px; font-family: var(--font-mono); color: var(--text-secondary); }
+.sb-runtime { font-size: 13px; font-family: var(--font-mono); font-weight: 600; color: var(--text-primary); }
+.sb-reason  { font-size: 11px; font-family: var(--font-mono); color: var(--text-muted); padding: 2px 8px; background: rgba(255,255,255,.04); border-radius: 4px; }
+
+/* ── Session Report ──────────────────────────────────── */
+.session-report { }
+.sr-judgement {
+  padding: 20px 24px; border-radius: var(--radius);
+  margin-bottom: 20px; border: 1px solid var(--border);
+}
+.sr-judgement.judgement-pass { background: rgba(72,187,120,.08); border-color: rgba(72,187,120,.3); }
+.sr-judgement.judgement-weak { background: rgba(237,137,54,.08); border-color: rgba(237,137,54,.3); }
+.sr-judgement.judgement-fail { background: rgba(252,129,129,.08); border-color: rgba(252,129,129,.3); }
+.sr-judgement.judgement-info { background: rgba(99,179,237,.06); border-color: rgba(99,179,237,.2); }
+.sr-j-title { font-size: 18px; font-weight: 700; font-family: var(--font-mono); margin-bottom: 6px; }
+.judgement-pass .sr-j-title { color: var(--accent-green); }
+.judgement-weak .sr-j-title { color: var(--accent-orange); }
+.judgement-fail .sr-j-title { color: var(--accent-red); }
+.judgement-info .sr-j-title { color: var(--accent-blue); }
+.sr-j-msg { font-size: 13px; color: var(--text-secondary); line-height: 1.6; }
+
+.sr-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(145px, 1fr)); gap: 10px; }
+.sr-card {
+  background: var(--bg-card); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 12px 14px; text-align: center;
+}
+.sr-card.green { border-color: rgba(72,187,120,.3); }
+.sr-card.blue  { border-color: rgba(99,179,237,.3); }
+.sr-card.red   { border-color: rgba(252,129,129,.3); }
+.sr-label { font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 6px; }
+.sr-val   { font-size: 15px; font-weight: 600; font-family: var(--font-mono); color: var(--text-primary); }
+
+.reason-grid { display: flex; flex-direction: column; gap: 4px; }
+.reason-row {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 6px 12px; background: var(--bg-card); border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}
+.reason-name { font-size: 12px; font-family: var(--font-mono); color: var(--text-secondary); }
+.reason-cnt  { font-size: 13px; font-family: var(--font-mono); font-weight: 600; color: var(--text-primary); }
+
 /* ── Scrollbar ───────────────────────────────────────── */
 ::-webkit-scrollbar { width:6px; height:6px; }
 ::-webkit-scrollbar-track { background:transparent; }
 ::-webkit-scrollbar-thumb { background:var(--text-muted); border-radius:3px; }
 ::-webkit-scrollbar-thumb:hover { background:var(--text-secondary); }
+

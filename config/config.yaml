@@ -26,6 +26,7 @@ bounded_collector_enabled: false
 log_decisions_only_when_candidate: true
 decision_log_min_surplus_bp: 0
 state_write_interval_sec: 5
+console_summary_interval_sec: 15
 max_log_file_mb: 20
 log_retention_days: 14
 paper_initial_upbit_krw: 1000000
