@@ -10,126 +10,177 @@
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <div class="app">
-    <!-- Sidebar -->
-    <aside class="sidebar">
-      <div class="logo">
-        <div class="logo-icon">₿↔₩</div>
-        <div class="logo-text">
-          <span class="logo-title">KARB</span>
-          <span class="logo-sub">Realtime V1</span>
+<div class="app">
+  <!-- Sidebar -->
+  <aside class="sidebar">
+    <div class="logo">
+      <div class="logo-icon">₿↔₩</div>
+      <div class="logo-text">
+        <span class="logo-title">KARB</span>
+        <span class="logo-sub">Realtime V1</span>
+      </div>
+    </div>
+    <nav class="nav">
+      <button class="nav-item active" data-tab="dashboard">⬛ 대시보드</button>
+      <button class="nav-item" data-tab="trades">📋 거래 로그</button>
+      <button class="nav-item" data-tab="perf">📈 성과 분석</button>
+      <button class="nav-item" data-tab="keys">🔑 API Keys</button>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="connection-status">
+        <span class="conn-dot" id="conn-dot"></span>
+        <span id="conn-label">연결 중...</span>
+      </div>
+      <div class="last-update" id="last-update">--</div>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="main">
+    <!-- Topbar -->
+    <header class="topbar">
+      <h1 class="page-title" id="page-title">대시보드</h1>
+      <div class="topbar-right">
+        <div class="stat-pill">
+          <span class="pill-label">MODE</span>
+          <span class="pill-value" id="stat-mode">--</span>
+        </div>
+        <div class="stat-pill fx">
+          <span class="pill-label">KRW/USDT</span>
+          <span class="pill-value" id="stat-fx">--</span>
+        </div>
+        <div class="stat-pill">
+          <span class="pill-label">Open / Closed</span>
+          <span class="pill-value" id="stat-trades">-- / --</span>
+        </div>
+        <div class="stat-pill profit">
+          <span class="pill-label">Net PnL</span>
+          <span class="pill-value" id="stat-pnl">--</span>
+        </div>
+        <div class="stat-pill">
+          <span class="pill-label">Win Rate</span>
+          <span class="pill-value" id="stat-winrate">--</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Dashboard Tab -->
+    <section class="tab-content active" id="tab-dashboard">
+      <div class="section-label">실시간 호가 & 아비트라지 신호</div>
+      <div class="quotes-grid" id="quotes-grid">
+        <div class="loading-placeholder">엔진 연결 중...</div>
+      </div>
+    </section>
+
+    <!-- Trades Tab -->
+    <section class="tab-content" id="tab-trades">
+      <div class="section-label">최근 Paper Trade 기록 (EXIT 기준)</div>
+      <div class="table-wrapper">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Trade ID</th><th>심볼</th><th>방향</th><th>진입 시각</th>
+              <th>청산</th><th>보유(초)</th><th>Realized PnL</th>
+              <th>결과</th><th>이유</th>
+            </tr>
+          </thead>
+          <tbody id="trades-body">
+            <tr><td colspan="9" class="empty-row">데이터 없음</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Performance Tab -->
+    <section class="tab-content" id="tab-perf">
+      <div class="section-label">성과 요약</div>
+      <div class="perf-grid" id="perf-grid">
+        <div class="perf-card"><div class="perf-card-label">총 거래</div><div class="perf-card-value" id="p-total">--</div></div>
+        <div class="perf-card green"><div class="perf-card-label">Net PnL</div><div class="perf-card-value" id="p-net">--</div></div>
+        <div class="perf-card blue"><div class="perf-card-label">승률</div><div class="perf-card-value" id="p-winrate">--</div></div>
+        <div class="perf-card orange"><div class="perf-card-label">Clean Win</div><div class="perf-card-value" id="p-cleanwin">--</div></div>
+        <div class="perf-card"><div class="perf-card-label">평균 PnL</div><div class="perf-card-value" id="p-avgpnl">--</div></div>
+        <div class="perf-card red"><div class="perf-card-label">Max Drawdown</div><div class="perf-card-value" id="p-drawdown">--</div></div>
+        <div class="perf-card"><div class="perf-card-label">오늘 PnL</div><div class="perf-card-value" id="p-today">--</div></div>
+        <div class="perf-card"><div class="perf-card-label">Best Symbol</div><div class="perf-card-value" id="p-bestsym">--</div></div>
+      </div>
+      <div class="section-label" style="margin-top:2rem">승/패/타임아웃 분포</div>
+      <div class="donut-row" id="donut-row">
+        <div class="donut-bar-wrap">
+          <div class="donut-bar-label">WIN</div>
+          <div class="donut-bar green" id="bar-win" style="width:0%"></div>
+          <div class="donut-bar-pct" id="bar-win-pct">0%</div>
+        </div>
+        <div class="donut-bar-wrap">
+          <div class="donut-bar-label">LOSS</div>
+          <div class="donut-bar red" id="bar-loss" style="width:0%"></div>
+          <div class="donut-bar-pct" id="bar-loss-pct">0%</div>
+        </div>
+        <div class="donut-bar-wrap">
+          <div class="donut-bar-label">TIMEOUT</div>
+          <div class="donut-bar orange" id="bar-timeout" style="width:0%"></div>
+          <div class="donut-bar-pct" id="bar-timeout-pct">0%</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- API Keys Tab -->
+    <section class="tab-content" id="tab-keys">
+      <div class="section-label">API Key 관리</div>
+      <div class="keys-warning">
+        ⚠ 이 화면은 <strong>localhost 전용</strong>입니다. 키 값은 저장 후 다시 표시되지 않습니다.<br>
+        paper 모드는 키 없어도 실행 가능합니다. tiny_live/live 모드는 키가 필수입니다.
+      </div>
+
+      <div class="keys-status-grid" id="keys-status-grid">
+        <div class="key-status-card" id="ksc-UPBIT_ACCESS_KEY">
+          <div class="key-status-label">Upbit Access Key</div>
+          <div class="key-status-badge" id="badge-UPBIT_ACCESS_KEY">로딩 중</div>
+        </div>
+        <div class="key-status-card" id="ksc-UPBIT_SECRET_KEY">
+          <div class="key-status-label">Upbit Secret Key</div>
+          <div class="key-status-badge" id="badge-UPBIT_SECRET_KEY">로딩 중</div>
+        </div>
+        <div class="key-status-card" id="ksc-BINANCE_API_KEY">
+          <div class="key-status-label">Binance API Key</div>
+          <div class="key-status-badge" id="badge-BINANCE_API_KEY">로딩 중</div>
+        </div>
+        <div class="key-status-card" id="ksc-BINANCE_API_SECRET">
+          <div class="key-status-label">Binance API Secret</div>
+          <div class="key-status-badge" id="badge-BINANCE_API_SECRET">로딩 중</div>
         </div>
       </div>
 
-      <nav class="nav">
-        <button class="nav-item active" data-tab="dashboard" id="nav-dashboard">
-          <span class="nav-icon">⬛</span> 대시보드
-        </button>
-        <button class="nav-item" data-tab="trades" id="nav-trades">
-          <span class="nav-icon">📋</span> 거래 로그
-        </button>
-        <button class="nav-item" data-tab="perf" id="nav-perf">
-          <span class="nav-icon">📈</span> 성과 분석
-        </button>
-      </nav>
-
-      <div class="sidebar-footer">
-        <div class="connection-status" id="conn-status">
-          <span class="conn-dot"></span>
-          <span id="conn-label">연결 중...</span>
+      <div class="keys-form" id="keys-form">
+        <div class="form-section-label">신규 키 저장 (localhost에서만 가능)</div>
+        <div class="form-row">
+          <label for="inp-upbit-access">Upbit Access Key</label>
+          <input id="inp-upbit-access" type="password" placeholder="입력 후 저장 버튼 클릭" autocomplete="off">
         </div>
-        <div class="last-update" id="last-update">--</div>
+        <div class="form-row">
+          <label for="inp-upbit-secret">Upbit Secret Key</label>
+          <input id="inp-upbit-secret" type="password" placeholder="입력 후 저장 버튼 클릭" autocomplete="off">
+        </div>
+        <div class="form-row">
+          <label for="inp-binance-api">Binance API Key</label>
+          <input id="inp-binance-api" type="password" placeholder="입력 후 저장 버튼 클릭" autocomplete="off">
+        </div>
+        <div class="form-row">
+          <label for="inp-binance-secret">Binance API Secret</label>
+          <input id="inp-binance-secret" type="password" placeholder="입력 후 저장 버튼 클릭" autocomplete="off">
+        </div>
+        <div class="form-actions">
+          <button class="btn-save" id="btn-save-keys">💾 저장 (.env.local)</button>
+          <span class="save-result" id="save-result"></span>
+        </div>
       </div>
-    </aside>
 
-    <!-- Main Content -->
-    <main class="main">
-      <!-- Top Bar -->
-      <header class="topbar">
-        <div class="topbar-left">
-          <h1 class="page-title" id="page-title">대시보드</h1>
-        </div>
-        <div class="topbar-right">
-          <div class="stat-pill" id="pill-mode">
-            <span class="pill-label">MODE</span>
-            <span class="pill-value" id="stat-mode">--</span>
-          </div>
-          <div class="stat-pill fx" id="pill-fx">
-            <span class="pill-label">KRW/USDT</span>
-            <span class="pill-value" id="stat-fx">--</span>
-          </div>
-          <div class="stat-pill trades-count" id="pill-trades">
-            <span class="pill-label">Paper Trades</span>
-            <span class="pill-value" id="stat-paper-trades">--</span>
-          </div>
-          <div class="stat-pill profit" id="pill-profit">
-            <span class="pill-label">Latest PnL</span>
-            <span class="pill-value" id="stat-pnl">--</span>
-          </div>
-        </div>
-      </header>
-
-      <!-- Dashboard Tab -->
-      <section class="tab-content active" id="tab-dashboard">
-        <div class="section-label">실시간 호가 & 아비트라지 신호</div>
-        <div class="quotes-grid" id="quotes-grid">
-          <div class="loading-placeholder">데이터 로딩 중...</div>
-        </div>
-      </section>
-
-      <!-- Trades Tab -->
-      <section class="tab-content" id="tab-trades">
-        <div class="section-label">최근 Paper Trade 기록</div>
-        <div class="table-wrapper">
-          <table class="data-table" id="trades-table">
-            <thead>
-              <tr>
-                <th>시각</th>
-                <th>심볼</th>
-                <th>방향</th>
-                <th>김프 %</th>
-                <th>Gross Gap (KRW)</th>
-                <th>Net Profit (KRW)</th>
-                <th>수량</th>
-                <th>KRW/USDT</th>
-              </tr>
-            </thead>
-            <tbody id="trades-body">
-              <tr><td colspan="8" class="empty-row">거래 데이터 없음</td></tr>
-            </tbody>
-          </table>
-        </div>
-      </section>
-
-      <!-- Performance Tab -->
-      <section class="tab-content" id="tab-perf">
-        <div class="section-label">성과 요약</div>
-        <div class="perf-grid" id="perf-grid">
-          <div class="perf-card">
-            <div class="perf-card-label">총 Paper 거래</div>
-            <div class="perf-card-value" id="perf-count">--</div>
-          </div>
-          <div class="perf-card green">
-            <div class="perf-card-label">총 Net Profit</div>
-            <div class="perf-card-value" id="perf-total-net">--</div>
-          </div>
-          <div class="perf-card blue">
-            <div class="perf-card-label">평균 Net/trade</div>
-            <div class="perf-card-value" id="perf-avg-net">--</div>
-          </div>
-          <div class="perf-card orange">
-            <div class="perf-card-label">최근 Paper PnL</div>
-            <div class="perf-card-value" id="perf-latest-pnl">--</div>
-          </div>
-        </div>
-        <div class="section-label" style="margin-top:2rem">최근 신호 히스토그램</div>
-        <div class="histogram-container" id="histogram">
-          <div class="empty-row">데이터 없음</div>
-        </div>
-      </section>
-    </main>
-  </div>
-
-  <script src="app.js"></script>
+      <div class="keys-note">
+        저장 위치: <code>.env.local</code> (Git 제외됨) · 엔진 재시작 후 적용
+      </div>
+    </section>
+  </main>
+</div>
+<script src="app.js"></script>
 </body>
 </html>

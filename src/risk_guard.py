@@ -1,19 +1,126 @@
+"""
+risk_guard.py - 실전 RiskGuard.
+config.yaml의 모든 가드 조건을 실제로 적용한다.
+reason_no_trade는 명확한 코드로만 반환한다.
+"""
+import time
 from config import cfg
 
+
 class RiskGuard:
-    def check_trade(self, calc_result):
+    """
+    check_trade() 반환값:
+      True  – 진입 가능 (reason_no_trade = 'OK')
+      False – 진입 불가 (reason_no_trade = 구체적 사유)
+
+    사유 코드:
+      OK / LOW_SURPLUS / LOW_EXPECTED_PROFIT / STALE_QUOTE / WIDE_SPREAD
+      LOW_DEPTH / FX_UNTRUSTED / INVENTORY_SHORTAGE / COOLDOWN
+      DAILY_LOSS_LIMIT / MODE_GUARD
+    """
+
+    def __init__(self):
+        self._last_fail_time:    float = 0.0
+        self._consecutive_fails: int   = 0
+        self._daily_loss_krw:    float = 0.0
+        self._day_start:         float = time.time()
+
+    # ──────────────────────────────────────────────────────────────────────
+    # 공개 API
+    # ──────────────────────────────────────────────────────────────────────
+
+    def check_trade(self, calc_result: dict) -> bool:
         """
-        net_expected_profit_krw / best_net_surplus_bp 기준으로 진입 여부 판단.
-        expected_profit_krw는 참조하지 않는다.
+        calc_result를 읽어 진입 가능 여부를 판단한다.
+        calc_result['reason_no_trade']를 직접 수정한다.
         """
-        # 1. best_net_surplus_bp 검사 (양방향 중 최선이 기준 미달이면 거부)
-        if calc_result['best_net_surplus_bp'] < cfg.min_net_surplus_bp:
-            calc_result['reason_no_trade'] = 'LOW_SURPLUS'
+        self._reset_daily_if_needed()
+
+        def reject(reason: str) -> bool:
+            calc_result['reason_no_trade'] = reason
             return False
 
-        # 2. net_expected_profit_krw 검사 (순수익 기준, gross 아님)
-        if calc_result['net_expected_profit_krw'] < cfg.min_expected_profit_krw:
-            calc_result['reason_no_trade'] = 'LOW_EXPECTED_PROFIT'
+        # 1. MODE_GUARD: enable_live_trading이 false인데 live 모드면 차단
+        if cfg.mode in ('tiny_live', 'live') and not cfg.enable_live_trading:
+            return reject('MODE_GUARD')
+
+        # 2. FX 신뢰성 – calc_result에 fx_ok 필드가 있으면 참조
+        if calc_result.get('fx_status') not in (None, 'OK'):
+            return reject('FX_UNTRUSTED')
+
+        # 3. STALE_QUOTE – 호가 타임스탬프 검사
+        now_ms = time.time() * 1000
+        for side in ('upbit_ts', 'binance_ts'):
+            ts = calc_result.get(side)
+            if ts is not None:
+                age_ms = now_ms - ts * 1000
+                if age_ms > cfg.stale_quote_ms:
+                    return reject('STALE_QUOTE')
+
+        # 4. WIDE_SPREAD – Upbit/Binance 스프레드 검사
+        u_bid, u_ask = calc_result.get('upbit_bid'), calc_result.get('upbit_ask')
+        b_bid, b_ask = calc_result.get('binance_bid'), calc_result.get('binance_ask')
+        if u_bid and u_ask and u_bid > 0:
+            u_spread_bp = (u_ask - u_bid) / u_bid * 10000
+            if u_spread_bp > cfg.max_spread_bp:
+                return reject('WIDE_SPREAD')
+        if b_bid and b_ask and b_bid > 0:
+            b_spread_bp = (b_ask - b_bid) / b_bid * 10000
+            if b_spread_bp > cfg.max_spread_bp:
+                return reject('WIDE_SPREAD')
+
+        # 5. LOW_DEPTH – fillable qty 검사
+        max_qty = calc_result.get('max_fillable_qty', 0)
+        # 목표 수량: max_one_trade_krw / Upbit ask
+        if u_ask and u_ask > 0:
+            target_qty = cfg.max_one_trade_krw / u_ask
+            if max_qty < target_qty / cfg.min_depth_multiplier:
+                return reject('LOW_DEPTH')
+
+        # 6. LOW_SURPLUS
+        if calc_result.get('best_net_surplus_bp', -9999) < cfg.min_net_surplus_bp:
+            return reject('LOW_SURPLUS')
+
+        # 7. LOW_EXPECTED_PROFIT
+        if calc_result.get('net_expected_profit_krw', 0) < cfg.min_expected_profit_krw:
+            return reject('LOW_EXPECTED_PROFIT')
+
+        # 8. INVENTORY_SHORTAGE – 외부에서 주입된 경우
+        if calc_result.get('reason_no_trade') == 'INVENTORY_SHORTAGE':
             return False
 
+        # 9. COOLDOWN – 최근 실패 후 쿨다운 중
+        if time.time() - self._last_fail_time < cfg.cooldown_sec:
+            return reject('COOLDOWN')
+
+        # 10. DAILY_LOSS_LIMIT
+        if self._daily_loss_krw >= cfg.daily_loss_limit_krw:
+            return reject('DAILY_LOSS_LIMIT')
+
+        # ── 통과 ──────────────────────────────────────────────────────────
+        self._consecutive_fails = 0
+        calc_result['reason_no_trade'] = 'OK'
         return True
+
+    def record_trade_result(self, pnl_krw: float) -> None:
+        """trade 결과(pnl)를 기록한다. 손실 누적 및 쿨다운 업데이트."""
+        if pnl_krw < 0:
+            self._daily_loss_krw += abs(pnl_krw)
+            self._consecutive_fails += 1
+            if self._consecutive_fails >= cfg.consecutive_fail_limit:
+                self._last_fail_time = time.time()
+        else:
+            self._consecutive_fails = 0
+
+    # ──────────────────────────────────────────────────────────────────────
+    # 내부 헬퍼
+    # ──────────────────────────────────────────────────────────────────────
+
+    def _reset_daily_if_needed(self) -> None:
+        """자정 지나면 일일 손실 초기화."""
+        import datetime
+        now = datetime.datetime.now()
+        start = datetime.datetime.fromtimestamp(self._day_start)
+        if now.date() > start.date():
+            self._daily_loss_krw = 0.0
+            self._day_start = time.time()

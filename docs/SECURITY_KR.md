@@ -1,102 +1,130 @@
 # KARB_REALTIME_V1 보안 가이드
 
-## 1. API 키 관리 원칙
+## 핵심 원칙
 
-| 항목 | 규칙 |
-|---|---|
-| 키 저장 위치 | `.env` 파일 또는 시스템 환경변수 |
-| `config.yaml` | API 키 절대 포함 금지 |
-| 소스 코드 | 하드코딩 절대 금지 |
-| Git 커밋 | 실제 키가 포함된 파일 커밋 절대 금지 |
-| 로그/print | 키 값 노출 절대 금지 |
+1. **API 키는 `.env.local` 또는 `.env` 파일에만 저장한다.**
+2. **`config.yaml`에는 절대 키를 넣지 않는다.**
+3. **키 값은 절대 코드, 로그, UI에 출력하지 않는다.**
+4. **`.env.local`, `.env.*`, `secrets*`, `*_key*`, `*_secret*`는 Git에 절대 포함하지 않는다.**
+5. **`.env.example`은 실제 키 없이 형식만 제공하며 Git에 포함 가능하다.**
 
 ---
 
-## 2. .env 파일 설정 방법
+## API 키 설정 방법
 
-```bash
-# Windows
-copy .env.example .env
+### 1단계: .env.local 파일 생성
 
-# Linux / macOS
-cp .env.example .env
+```powershell
+copy .env.example .env.local
 ```
 
-복사 후 `.env` 파일을 편집하여 실제 API 키를 입력한다.  
-`.env` 파일은 `.gitignore`에 의해 Git 추적에서 제외된다.
+### 2단계: .env.local에 실제 키 입력
+
+```env
+UPBIT_ACCESS_KEY=실제_업비트_액세스키
+UPBIT_SECRET_KEY=실제_업비트_시크릿키
+BINANCE_API_KEY=실제_바이낸스_API키
+BINANCE_API_SECRET=실제_바이낸스_시크릿
+```
+
+### 3단계: 대시보드 UI에서 키 관리 (선택)
+
+브라우저에서 `http://localhost:8000` → **API Keys 탭**
+- 키 설정 여부(Set/Missing)만 표시됨
+- 키 값은 재표시되지 않음
+- localhost 접속에서만 저장 가능
+- 저장 후 입력 필드 자동 초기화
 
 ---
 
-## 3. GitHub 업로드 금지 항목
+## 모드별 키 요구사항
 
-아래 파일들은 절대로 GitHub(또는 다른 원격 저장소)에 푸시하지 않는다.
+| 모드 | Upbit 키 | Binance 키 | 설명 |
+|---|---|---|---|
+| `paper` | 불필요 | 불필요 | 가상 거래 |
+| `tiny_live` | **필수** | **필수** | 소량 실거래 |
+| `live` | **필수** | **필수** | 풀사이즈 실거래 |
 
-```
+`tiny_live` / `live` 모드에서 키가 없으면 엔진이 즉시 종료됩니다.
+
+---
+
+## .gitignore 필수 항목
+
+```gitignore
+# API 키 및 환경변수 파일
 .env
-.env.*           # .env.example 제외
+.env.*
+.env.local
+!.env.example
 secrets*
 *_key*
 *_secret*
+
+# 런타임 / 로그
 logs/
 runtime/
 *.log
 *.jsonl
 *.sqlite
 *.db
+
+# Python
+__pycache__/
+*.pyc
+.venv/
 ```
 
-> **[!CAUTION]**  
-> `git add .` 을 사용할 경우 실수로 키 파일이 포함될 수 있다.  
-> 항상 `git add <파일명>` 으로 개별 추가하거나, `git status`로 목록을 먼저 확인한다.
-
 ---
 
-## 4. 모드별 키 요구사항
+## secrets_manager.py 보안 설계
 
-| 모드 | Upbit 키 | Binance 키 | 설명 |
-|---|---|---|---|
-| `paper` | 불필요 | 불필요 | 실제 주문 없음, 시뮬레이션만 |
-| `tiny_live` | 필수 | 필수 | 소액 실거래, 키 없으면 즉시 종료 |
-| `live` | 필수 | 필수 | 실거래, 키 없으면 즉시 종료 |
-
-`src/secrets_manager.py`의 `assert_live_credentials_available(mode)` 함수가  
-`tiny_live` / `live` 진입 시 자동으로 키 존재 여부를 검증한다.
-
----
-
-## 5. 키 유출 시 즉시 조치 방법
-
-키가 GitHub 등 외부에 노출된 것이 확인된 경우 아래 순서로 즉시 조치한다.
-
-### Step 1 — 거래소에서 즉시 키 폐기
-- **Upbit**: [https://upbit.com/mypage/open_api_management](https://upbit.com/mypage/open_api_management) → 해당 키 삭제
-- **Binance**: [https://www.binance.com/en/my/settings/api-management](https://www.binance.com/en/my/settings/api-management) → 해당 키 삭제
-
-### Step 2 — 새 키 발급
-기존 키를 삭제한 후 새 키를 발급하여 `.env`에 업데이트한다.
-
-### Step 3 — Git 히스토리 정리
-커밋에 키가 포함된 경우 `git filter-repo` 또는 `BFG Repo-Cleaner`로 히스토리를 정리한다.
-
-```bash
-# BFG 예시 (jar 파일 별도 다운로드 필요)
-java -jar bfg.jar --replace-text secrets.txt my-repo.git
-git reflog expire --expire=now --all
-git gc --prune=now --aggressive
-git push --force
+```
+secrets_manager.py
+├── _get_env(key)          → 환경변수 읽기 (값 출력 금지)
+├── _require_env(key)      → 없으면 RuntimeError (값 노출 금지)
+├── get_upbit_credentials()→ (access_key, secret_key) 반환
+├── get_binance_credentials()→ (api_key, api_secret) 반환
+├── assert_live_credentials_available(mode) → paper 통과, live 검증
+├── get_key_status()       → {KEY: "Set"/"Missing"} (값 없음)
+└── save_keys(...)         → .env.local에 저장, 값 응답 없음
 ```
 
-### Step 4 — 원격 저장소 확인
-GitHub의 경우 Secret Scanning 알림을 확인하고, 필요 시 저장소를 Private으로 전환한다.
+**절대 금지:**
+- `print(access_key)` 형태의 키 출력
+- 키 값을 `decisions.jsonl`, `errors.log`에 기록
+- API 응답 JSON에 키 값 포함
+- 키를 `config.yaml`에 저장
 
 ---
 
-## 6. 코드 리뷰 체크리스트
+## web_server.py 보안 설계
 
-PR/커밋 전 아래 항목을 반드시 확인한다.
+- `/api/keys/status`: **127.0.0.1 / ::1 접속만 허용**
+- `/api/keys/save`: **127.0.0.1 / ::1 접속만 허용**
+- 저장 성공 응답에 키 값 포함하지 않음
+- 저장 후 UI 입력 필드 자동 초기화
+- 외부 접속 시 `403 Forbidden` 반환
 
-- [ ] `config.yaml`에 API 키가 없는가?
-- [ ] 소스 코드에 하드코딩된 키 문자열이 없는가?
-- [ ] `git diff --cached`에 키 값이 포함되지 않는가?
-- [ ] `.env` 파일이 `git status`에 표시되지 않는가?
-- [ ] 로그나 print 구문에서 키 변수를 출력하지 않는가?
+---
+
+## 5일 Paper 검증 시 주의사항
+
+Paper 검증 기간 중:
+- `config.yaml`의 `mode: paper` 유지
+- `enable_live_trading: false` 유지
+- 키를 입력하지 않아도 엔진 동작
+- `logs/paper_trades.jsonl`에 ENTRY/EXIT 이벤트만 기록
+- `runtime/performance_summary.json`으로 성과 확인
+- `decisions.jsonl`은 조건부 기록 (폭증 없음)
+
+---
+
+## 보안 체크리스트
+
+- [ ] `.env.local`이 `.gitignore`에 포함되어 있는가?
+- [ ] `git status`에 `.env.local`이 표시되지 않는가?
+- [ ] `config.yaml`에 키 관련 값이 없는가?
+- [ ] 소스코드에 `YOUR_*` 이외의 실제 키가 없는가?
+- [ ] `logs/`, `runtime/`이 Git에 포함되지 않는가?
+- [ ] UI에서 키 값이 재표시되지 않는가?

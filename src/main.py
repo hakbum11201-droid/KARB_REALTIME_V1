@@ -1,8 +1,8 @@
 import argparse
-import time
 import json
 import os
 import sys
+import time
 
 from config import cfg
 from secrets_manager import assert_live_credentials_available
@@ -19,27 +19,31 @@ from performance_tracker import PerformanceTracker
 from bounded_collector import BoundedCollector
 
 
+def _write_json(path: str, data: dict) -> None:
+    """overwrite 전용. append 금지."""
+    try:
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+
 def main():
     parser = argparse.ArgumentParser(description="KARB_REALTIME_V1 Engine")
     parser.add_argument('--once', action='store_true', help='Run once and exit')
     parser.add_argument('--duration-sec', type=int, default=0, help='Run for X seconds')
     args = parser.parse_args()
 
-    print(f"[KARB] Starting in mode: {cfg.mode.upper()}")
+    print(f"[KARB] Mode: {cfg.mode.upper()}")
 
-    # ----------------------------------------------------------------
-    # Startup guard: tiny_live / live 모드에서 자격증명 없으면 즉시 중단
-    # paper 모드에서는 키 없어도 통과
-    # ----------------------------------------------------------------
+    # ── 모드 가드 ─────────────────────────────────────────────────────────
     try:
         assert_live_credentials_available(cfg.mode)
     except RuntimeError as e:
         print(f"[STARTUP ERROR] {e}")
         sys.exit(1)
 
-    # ----------------------------------------------------------------
-    # 컴포넌트 초기화
-    # ----------------------------------------------------------------
+    # ── 컴포넌트 초기화 ───────────────────────────────────────────────────
     upbit_pub    = UpbitPublic()
     binance_pub  = BinancePublic()
     fx_oracle    = FxOracle(upbit_pub, binance_pub)
@@ -47,111 +51,147 @@ def main():
     arb_calc     = ArbCalculator()
     inv_mgr      = InventoryManager()
     risk_guard   = RiskGuard()
-    paper_eng    = PaperEngine()
+    paper_eng    = PaperEngine(inventory_manager=inv_mgr)
     event_logger = EventLogger()
     perf_tracker = PerformanceTracker()
     collector    = BoundedCollector()
 
-    # runtime 디렉터리 보장
+    # ── runtime 디렉터리 ──────────────────────────────────────────────────
     base_dir     = os.path.dirname(os.path.abspath(__file__))
     runtime_dir  = os.path.normpath(os.path.join(base_dir, '..', 'runtime'))
     os.makedirs(runtime_dir, exist_ok=True)
-    state_path   = os.path.join(runtime_dir, 'state.json')
+    state_path   = os.path.join(runtime_dir, 'latest_state.json')
     quotes_path  = os.path.join(runtime_dir, 'latest_quotes.json')
 
-    start_time = time.time()
+    start_time         = time.time()
+    last_state_write   = 0.0
+    krw_usdt           = None
+    fx_status          = "INIT"
 
     while True:
         loop_start = time.time()
 
-        # ---- FX 환율 조회 ----
-        krw_usdt, fx_status = fx_oracle.get_krw_usdt_rate()
+        # ── FX 환율 ───────────────────────────────────────────────────────
+        try:
+            krw_usdt, fx_status = fx_oracle.get_krw_usdt_rate()
+        except Exception as e:
+            event_logger.log_error('fx_oracle', e)
+            fx_status = "ERROR"
+            krw_usdt  = None
+
         if fx_status != "OK" or not krw_usdt:
-            print(f"[FX] Error: {fx_status}. Skipping loop.")
-        else:
+            if args.once:
+                print(f"[FX] {fx_status} – 종료")
+                break
+            sleep_time = cfg.loop_interval_sec - (time.time() - loop_start)
+            if sleep_time > 0:
+                time.sleep(sleep_time)
+            continue
+
+        # ── 호가 수집 ─────────────────────────────────────────────────────
+        try:
             quotes = quote_engine.fetch_all()
+        except Exception as e:
+            event_logger.log_error('quote_engine', e)
+            quotes = {}
 
-            for sym, q in quotes.items():
-                upbit_q   = q['upbit']
-                binance_q = q['binance']
+        for sym, q in quotes.items():
+            upbit_q   = q['upbit']
+            binance_q = q['binance']
 
-                # BoundedCollector에 tick 적재 (메모리 바운드)
+            # BoundedCollector tick 적재
+            if cfg.bounded_collector_enabled:
                 collector.push(sym, {'upbit': upbit_q, 'binance': binance_q, 'symbol': sym})
 
-                # ---- 차익 계산 ----
+            # ── 차익 계산 ──────────────────────────────────────────────────
+            try:
                 calc_res = arb_calc.calculate(sym, upbit_q, binance_q, krw_usdt)
-                q['calc'] = calc_res
+            except Exception as e:
+                event_logger.log_error('arb_calc', e)
+                continue
 
-                # ---- 리스크 가드 ----
-                is_safe = risk_guard.check_trade(calc_res)
+            # FX 상태를 calc_res에 주입 (RiskGuard FX 검사용)
+            calc_res['fx_status'] = fx_status
+            # 호가 타임스탬프 주입 (STALE_QUOTE 검사용)
+            calc_res['upbit_ts']   = upbit_q.get('ts')
+            calc_res['binance_ts'] = binance_q.get('ts')
 
-                # ---- 이벤트 기록 (바운드 로거) ----
-                event_logger.log_decision(calc_res)
+            q['calc'] = calc_res
 
-                # ---- --once 콘솔 요약 ----
-                if args.once:
-                    kimp  = calc_res['kimchi_premium_pct']
-                    surp  = calc_res['best_net_surplus_bp']
-                    net   = calc_res['net_expected_profit_krw']
-                    gross = calc_res['gross_gap_krw']
-                    dirn  = calc_res['best_direction']
-                    reason = calc_res['reason_no_trade']
-                    go_str = "GO" if is_safe else f"NO-GO [{reason}]"
+            # ── RiskGuard ─────────────────────────────────────────────────
+            is_safe = risk_guard.check_trade(calc_res)
+
+            # ── 조건부 이벤트 로그 ────────────────────────────────────────
+            event_logger.log_decision(calc_res)
+
+            # ── --once 콘솔 요약 ─────────────────────────────────────────
+            if args.once:
+                reason = calc_res.get('reason_no_trade', '')
+                print(
+                    f"  [{sym}] Kimp: {calc_res['kimchi_premium_pct']:+.2f}% | "
+                    f"Dir: {calc_res['best_direction']} | "
+                    f"Net Surplus: {calc_res['best_net_surplus_bp']:.1f} bp | "
+                    f"Gross: {calc_res['gross_gap_krw']:,.0f} KRW | "
+                    f"Net: {calc_res['net_expected_profit_krw']:,.0f} KRW | "
+                    f"{'GO' if is_safe else f'NO-GO [{reason}]'}"
+                )
+
+            # ── Paper 진입 ────────────────────────────────────────────────
+            if is_safe and cfg.mode == 'paper':
+                trade = paper_eng.try_entry(calc_res)
+                if trade and not args.once:
                     print(
-                        f"  [{sym}] Kimp: {kimp:+.2f}% | Dir: {dirn} | "
-                        f"Net Surplus: {surp:.1f} bp | "
-                        f"Gross: {gross:,.0f} KRW | Net: {net:,.0f} KRW | {go_str}"
+                        f"[{sym}] PAPER ENTRY | Dir: {trade['best_direction']} | "
+                        f"Net: {trade['net_expected_profit_krw']:,.0f} KRW"
                     )
 
-                # ----------------------------------------------------------------
-                # 진입 분기
-                # paper 모드: execution_engine 경로 없음
-                # tiny_live / live: 미구현 (execution_engine에 추후 추가)
-                # ----------------------------------------------------------------
-                if is_safe:
-                    if cfg.mode == 'paper':
-                        trade = paper_eng.execute(calc_res)
-                        perf_tracker.record(trade)
-                        if not args.once:
-                            print(
-                                f"[{sym}] PAPER | Dir: {trade['best_direction']} | "
-                                f"Net: {trade['net_expected_profit_krw']:,.0f} KRW"
-                            )
-                    elif cfg.mode in ('tiny_live', 'live'):
-                        # 실제 주문 로직 미구현 – execution_engine 통합 후 활성화
-                        print(f"[{sym}] [{cfg.mode.upper()}] Execution not yet implemented.")
-                    else:
-                        print(f"[WARN] Unknown mode: {cfg.mode}. No action taken.")
+            elif is_safe and cfg.mode in ('tiny_live', 'live'):
+                print(f"[{sym}] [{cfg.mode.upper()}] Execution not yet implemented.")
 
-            # ---- runtime 파일 업데이트 ----
-            perf_summary = perf_tracker.summary()
-            try:
-                with open(quotes_path, 'w', encoding='utf-8') as f:
-                    json.dump(quotes, f, ensure_ascii=False)
-            except Exception:
-                pass
+        # ── Paper 청산 체크 (매 루프) ─────────────────────────────────────
+        if cfg.mode == 'paper':
+            closed = paper_eng.check_exits(quotes, krw_usdt)
+            for ct in closed:
+                perf_tracker.record_exit(ct)
+                risk_guard.record_trade_result(ct['realized_pnl_krw'])
+                if not args.once:
+                    print(
+                        f"[{ct['symbol']}] PAPER EXIT | {ct['exit_reason']} | "
+                        f"PnL: {ct['realized_pnl_krw']:+,.0f} KRW | "
+                        f"{'WIN' if ct['win'] else 'LOSS'}"
+                    )
 
-            state = {
-                'mode': cfg.mode,
-                'krw_usdt': krw_usdt,
-                'paper_trade_count': perf_summary['trade_count'],
-                'latest_paper_pnl': perf_summary.get('recent10_avg_net_krw', 0),
-                'total_net_profit_krw': perf_summary['total_net_profit_krw'],
-                'win_rate_pct': perf_summary['win_rate_pct'],
-                'collector_stats': collector.stats(),
-                'latest_update': time.time(),
-            }
-            try:
-                with open(state_path, 'w', encoding='utf-8') as f:
-                    json.dump(state, f, ensure_ascii=False)
-            except Exception:
-                pass
+        # ── PerformanceTracker 갱신 ───────────────────────────────────────
+        perf_tracker.update_open_count(paper_eng.open_count())
 
-        # ---- 종료 조건 ----
+        # ── runtime 파일 overwrite (state_write_interval_sec 주기) ────────
+        now = time.time()
+        if now - last_state_write >= cfg.state_write_interval_sec:
+            perf_summary = perf_tracker.summary()   # performance_summary.json도 내부에서 write
+            _write_json(quotes_path, quotes)
+            _write_json(state_path, {
+                'mode':           cfg.mode,
+                'krw_usdt':       krw_usdt,
+                'fx_status':      fx_status,
+                'symbols':        list(quotes.keys()),
+                'open_trades':    paper_eng.open_count(),
+                'closed_trades':  paper_eng.closed_count(),
+                'net_pnl_krw':    perf_summary.get('net_pnl_krw', 0),
+                'win_rate':       perf_summary.get('win_rate', 0),
+                'today_pnl_krw':  perf_summary.get('today_pnl_krw', 0),
+                'updated_at':     now,
+            })
+            last_state_write = now
+
+        # ── 종료 조건 ────────────────────────────────────────────────────
         if args.once:
             perf_summary = perf_tracker.summary()
-            print(f"\n[KARB] --once 완료: {perf_summary['trade_count']} paper trades | "
-                  f"Total Net: {perf_summary['total_net_profit_krw']:,.0f} KRW")
+            print(
+                f"\n[KARB] --once 완료 | Open: {paper_eng.open_count()} | "
+                f"Closed: {paper_eng.closed_count()} | "
+                f"Net PnL: {perf_summary.get('net_pnl_krw', 0):,.0f} KRW | "
+                f"Win Rate: {perf_summary.get('win_rate', 0):.1f}%"
+            )
             break
 
         elapsed = time.time() - start_time
