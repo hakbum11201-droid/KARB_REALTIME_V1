@@ -23,6 +23,8 @@ const on = (id, event, handler) => { const el=$(id); if (el) el.addEventListener
 let latestState = {};
 let latestEngine = {};
 let latestControl = {};
+let latestPerformance = {};
+let latestLimits = {};
 let lastSummaryFetchAt = 0;
 
 const durationText = seconds => {
@@ -117,9 +119,12 @@ async function fetchData() {
     latestState = d.state||{};
     latestEngine = d.engine||{};
     latestControl = d.control||{};
+    latestPerformance = d.performance||{};
+    latestLimits = d.limits||{};
     renderTopbar(d.state||{}, d.engine||{});
     renderBanner(d.state||{}, d.control||{});
     renderTelemetry(d.state||{}, d.engine||{}, d.control||{});
+    renderPaperProfitSummary(d.performance||{}, d.limits||{});
     renderQuotes(d.quotes||{});
     setText('last-update', new Date().toLocaleTimeString('ko-KR'));
     if (missingElements.size) {
@@ -132,6 +137,63 @@ async function fetchData() {
     setConn(false);
     showUiError(error);
   }
+}
+
+function tinyLiveReadiness(perf, limits) {
+  const closed = Number(perf.closed_trade_count||0);
+  const net = Number(perf.net_pnl_krw||0);
+  const winRate = Number(perf.win_rate||0);
+  const avg = Number(perf.avg_pnl_krw||0);
+  const drawdown = Number(perf.max_drawdown_krw||0);
+  const lossLimit = Number(limits.daily_loss_limit_krw||0);
+  const judgement = perf.judgement || currentPaperJudgement(perf);
+  const reasons = [];
+  if (!closed) return { ready: false, reasons: ['NO_CLOSED_TRADES'], judgement };
+  if (closed < 10) reasons.push('NOT_ENOUGH_TRADES');
+  if (net <= 0) reasons.push('NEGATIVE_PNL');
+  if (winRate < 65) reasons.push('LOW_WIN_RATE');
+  if (avg <= 0) reasons.push('NEGATIVE_AVG_PNL');
+  if (lossLimit && drawdown >= lossLimit) reasons.push('HIGH_DRAWDOWN');
+  if (!['PAPER_EDGE_PASS','PAPER_EDGE_WEAK'].includes(judgement) && !reasons.includes(judgement)) reasons.push(judgement);
+  return { ready: reasons.length === 0, reasons, judgement };
+}
+
+function currentPaperJudgement(perf) {
+  const closed = Number(perf.closed_trade_count||0);
+  if (closed < 10) return 'NOT_ENOUGH_TRADES';
+  if (Number(perf.net_pnl_krw||0) <= 0) return 'PAPER_EDGE_FAIL';
+  return 'PAPER_EDGE_WEAK';
+}
+
+function renderPaperProfitSummary(perf, limits) {
+  const paper_net_pnl = Number(perf.net_pnl_krw||0);
+  const closed = Number(perf.closed_trade_count||0);
+  const open = Number(perf.open_trade_count||0);
+  const avg = Number(perf.avg_pnl_krw||0);
+  const drawdown = Number(perf.max_drawdown_krw||0);
+  const readiness = tinyLiveReadiness(perf, limits);
+  setText('paper-net-pnl', `${paper_net_pnl>=0?'+':''}${fmt(paper_net_pnl)} KRW`);
+  setClass('paper-net-pnl', `paper-pnl ${closed ? (paper_net_pnl>=0?'positive':'negative') : 'no-trades'}`);
+  setText('paper-trade-count', fmt(perf.paper_trade_count));
+  setText('paper-trades', `${closed} closed / ${open} open`);
+  setText('paper-win-rate', `${Number(perf.win_rate||0).toFixed(1)}%`);
+  setText('paper-avg-pnl', `${avg>=0?'+':''}${fmt(avg)} KRW`);
+  setText('paper-max-dd', `${drawdown ? '-' : ''}${fmt(drawdown)} KRW`);
+  setText('paper-judgement', readiness.judgement);
+  setClass('paper-judgement', `judgement ${judgementClass(readiness.judgement)}`);
+  setText('paper-summary-note', closed ? `${closed} closed paper trades` : 'no trades yet');
+  const ready = $('paper-tiny-ready');
+  if (ready) {
+    ready.className = `tiny-ready ${readiness.ready?'yes':'no'}`;
+    ready.innerHTML = `<span>TINY LIVE READY</span><strong>${readiness.ready?'YES':'NO'}</strong>`;
+  }
+  setText('paper-tiny-reasons', readiness.ready ? 'DISPLAY CHECK PASSED' : readiness.reasons.join(' / '));
+}
+
+function judgementClass(judgement) {
+  return judgement==='PAPER_EDGE_PASS' ? 'pass'
+    : judgement==='PAPER_EDGE_WEAK' ? 'weak'
+    : judgement==='PAPER_EDGE_FAIL' ? 'fail' : 'not-enough';
 }
 
 function showStopping() {
@@ -222,6 +284,7 @@ function renderQuotes(quotes) {
     const q=quotes[sym]||{}, up=q.upbit||{}, bn=q.binance||{}, c=q.calc||{};
     const kimp=Number(c.kimchi_premium_pct||0), surplus=Number(c.best_net_surplus_bp||0);
     const net=Number(c.net_expected_profit_krw||0);
+    const threshold_gap = Number(latestLimits.min_net_surplus_bp||0) - surplus;
     const qty=Number(c.max_fillable_qty||0), dir=c.best_direction||'--';
     const reason=c.reason_no_trade||'', isGo=reason==='OK';
     const ub=fmt(up.bid||0), ua=fmt(up.ask||0);
@@ -249,6 +312,7 @@ function renderQuotes(quotes) {
         <span class="verdict-badge ${isGo?'go-badge':'nogo-badge'}">${isGo?'✓ GO':'✗ NO-GO'}</span>
         <span class="qc-reason ${reasonClass}">${reason||'--'}</span>
       </div>
+      <div class="qc-threshold ${isGo?'met':'short'}">${isGo?'Threshold met':threshold_gap>0?`기준까지 ${threshold_gap.toFixed(1)} bp 부족`:`기준 surplus 충족 / ${reason||'NO-GO'} 확인`}</div>
     </div>`;
   }).join('');
 }
@@ -377,6 +441,7 @@ function renderSessionReport(r) {
       <div class="sr-card"><div class="sr-label">Quotes</div><div class="sr-val">${fmt(r.quote_count)}</div></div>
       <div class="sr-card"><div class="sr-label">Candidates</div><div class="sr-val">${fmt(r.candidate_count)}</div></div>
       <div class="sr-card"><div class="sr-label">Entries</div><div class="sr-val">${r.paper_entry_count}</div></div>
+      <div class="sr-card"><div class="sr-label">Closed Trades</div><div class="sr-val">${fmt(r.closed_trade_count)}</div></div>
       <div class="sr-card green"><div class="sr-label">Net PnL</div><div class="sr-val" style="color:${pnlC(net)}">${net>=0?'+':''}${fmt(net)} ₩</div></div>
       <div class="sr-card blue"><div class="sr-label">Win Rate</div><div class="sr-val">${Number(r.win_rate||0).toFixed(1)}%</div></div>
       <div class="sr-card"><div class="sr-label">Clean Win</div><div class="sr-val">${Number(r.clean_win_ratio||0).toFixed(1)}%</div></div>

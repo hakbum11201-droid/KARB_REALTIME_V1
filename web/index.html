@@ -104,6 +104,28 @@
           <div><span>P95 quote</span><strong id="metric-p95-quote">--</strong></div>
         </div>
       </div>
+      <div class="paper-profit-summary">
+        <div class="paper-summary-header">
+          <div>
+            <div class="section-label">Paper Profit Summary</div>
+            <div class="paper-summary-note" id="paper-summary-note">no trades yet</div>
+          </div>
+          <div class="tiny-ready no" id="paper-tiny-ready">
+            <span>Tiny Live Ready</span>
+            <strong>NO</strong>
+          </div>
+        </div>
+        <div class="paper-summary-grid">
+          <div class="paper-summary-main"><span>Paper PnL</span><strong id="paper-net-pnl">0 KRW</strong></div>
+          <div><span>Paper Trades</span><strong id="paper-trade-count">0</strong></div>
+          <div><span>Trades</span><strong id="paper-trades">0 closed / 0 open</strong></div>
+          <div><span>Win Rate</span><strong id="paper-win-rate">0.0%</strong></div>
+          <div><span>Avg PnL</span><strong id="paper-avg-pnl">0 KRW</strong></div>
+          <div><span>Max DD</span><strong id="paper-max-dd">0 KRW</strong></div>
+          <div><span>Judgement</span><strong class="judgement not-enough" id="paper-judgement">NOT_ENOUGH_TRADES</strong></div>
+        </div>
+        <div class="tiny-ready-reasons" id="paper-tiny-reasons">NO_CLOSED_TRADES</div>
+      </div>
       <div class="section-label">실시간 호가 & 아비트라지 신호</div>
       <div class="quotes-grid" id="quotes-grid">
         <div class="loading-placeholder">엔진 연결 중...</div>
@@ -156,7 +178,7 @@
 
     <!-- Session Report Tab -->
     <section class="tab-content" id="tab-session">
-      <div class="section-label">마지막 세션 리포트</div>
+      <div class="section-label">Session Summary</div>
       <div class="session-report" id="session-report">
         <div class="empty-row">세션 리포트 없음 – 엔진 종료 후 자동 생성됩니다</div>
       </div>

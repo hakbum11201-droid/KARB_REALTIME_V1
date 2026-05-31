@@ -27,6 +27,7 @@ sys.path.insert(0, BASE_DIR)
 import secrets_manager
 import control as ctrl_module
 import process_manager
+from config import cfg
 
 
 def _read_json(path, default=None):
@@ -96,6 +97,11 @@ class KarbHandler(SimpleHTTPRequestHandler):
             self._send_json({
                 'state':   _read_json(os.path.join(RUNTIME_DIR, 'state.json')),
                 'quotes':  _read_json(os.path.join(RUNTIME_DIR, 'latest_quotes.json')),
+                'performance': _read_json(os.path.join(RUNTIME_DIR, 'performance_summary.json')),
+                'limits': {
+                    'min_net_surplus_bp': cfg.min_net_surplus_bp,
+                    'daily_loss_limit_krw': cfg.daily_loss_limit_krw,
+                },
                 'control': ctrl_module.get_control_state(),
                 'engine':  process_manager.get_engine_status(),
             })

@@ -291,6 +291,32 @@ body {
   background: var(--bg-card); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 14px 18px; margin-bottom: 18px;
 }
+.paper-profit-summary {
+  background:linear-gradient(135deg,rgba(99,179,237,.10),rgba(26,31,54,.96));
+  border:1px solid rgba(99,179,237,.28); border-radius:var(--radius);
+  padding:18px 20px; margin-bottom:18px;
+}
+.paper-summary-header { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:14px; }
+.paper-summary-header .section-label { margin-bottom:5px; color:var(--accent-blue); }
+.paper-summary-note { color:var(--text-muted); font-size:12px; }
+.paper-summary-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(135px,1fr)); gap:10px; }
+.paper-summary-grid div { display:flex; flex-direction:column; gap:5px; padding:10px 12px; background:rgba(255,255,255,.035); border-radius:var(--radius-sm); }
+.paper-summary-grid span { color:var(--text-muted); font-size:10px; text-transform:uppercase; letter-spacing:.06em; }
+.paper-summary-grid strong { color:var(--text-primary); font-family:var(--font-mono); font-size:15px; }
+.paper-summary-grid .paper-summary-main strong { font-size:22px; }
+.paper-pnl.positive { color:var(--accent-green); }
+.paper-pnl.negative { color:var(--accent-red); }
+.paper-pnl.no-trades { color:var(--text-muted); }
+.tiny-ready { display:flex; flex-direction:column; align-items:flex-end; gap:4px; padding:8px 12px; border-radius:var(--radius-sm); }
+.tiny-ready span { font-size:10px; letter-spacing:.08em; text-transform:uppercase; }
+.tiny-ready strong { font-family:var(--font-mono); font-size:21px; }
+.tiny-ready.yes { color:var(--accent-green); background:rgba(72,187,120,.12); }
+.tiny-ready.no { color:var(--accent-orange); background:rgba(237,137,54,.12); }
+.tiny-ready-reasons { color:var(--text-secondary); font-family:var(--font-mono); font-size:11px; margin-top:12px; }
+.judgement.pass { color:var(--accent-green)!important; }
+.judgement.weak { color:var(--accent-yellow)!important; }
+.judgement.fail { color:var(--accent-red)!important; }
+.judgement.not-enough { color:var(--text-muted)!important; }
 .runtime-primary { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
 .heartbeat, .live-dot {
   width:9px; height:9px; border-radius:50%; display:inline-block; background:var(--text-muted);
@@ -318,6 +344,9 @@ body {
 .qc-reason.reason-warning { color:var(--accent-orange); }
 .qc-reason.reason-danger { color:var(--accent-red); }
 .qc-reason.reason-ok { color:var(--accent-green); }
+.qc-threshold { font-size:11px; font-family:var(--font-mono); margin-top:10px; }
+.qc-threshold.met { color:var(--accent-green); }
+.qc-threshold.short { color:var(--accent-yellow); }
 .dashboard-summary { margin-top:18px; }
 .summary-reasons { display:flex; gap:6px; flex-wrap:wrap; margin-top:12px; }
 .summary-reasons span { color:var(--text-secondary); background:rgba(255,255,255,.04); border-radius:6px; padding:4px 8px; font-size:11px; font-family:var(--font-mono); }
@@ -358,12 +387,12 @@ body {
   margin-bottom: 20px; border: 1px solid var(--border);
 }
 .sr-judgement.judgement-pass { background: rgba(72,187,120,.08); border-color: rgba(72,187,120,.3); }
-.sr-judgement.judgement-weak { background: rgba(237,137,54,.08); border-color: rgba(237,137,54,.3); }
+.sr-judgement.judgement-weak { background: rgba(246,224,94,.08); border-color: rgba(246,224,94,.3); }
 .sr-judgement.judgement-fail { background: rgba(252,129,129,.08); border-color: rgba(252,129,129,.3); }
 .sr-judgement.judgement-info { background: rgba(99,179,237,.06); border-color: rgba(99,179,237,.2); }
 .sr-j-title { font-size: 18px; font-weight: 700; font-family: var(--font-mono); margin-bottom: 6px; }
 .judgement-pass .sr-j-title { color: var(--accent-green); }
-.judgement-weak .sr-j-title { color: var(--accent-orange); }
+.judgement-weak .sr-j-title { color: var(--accent-yellow); }
 .judgement-fail .sr-j-title { color: var(--accent-red); }
 .judgement-info .sr-j-title { color: var(--accent-blue); }
 .sr-j-msg { font-size: 13px; color: var(--text-secondary); line-height: 1.6; }
