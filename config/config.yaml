@@ -1,39 +1,53 @@
 mode: paper
 enable_live_trading: false
+
 symbols: [BTC, ETH, XRP, DOGE, SOL]
+
 loop_interval_sec: 1
+
 upbit_fee_bp: 5
 binance_fee_bp: 10
 slippage_bp: 5
 fx_error_bp: 5
 risk_buffer_bp: 10
+
 min_net_surplus_bp: 35
 min_expected_profit_krw: 1000
+
 max_position_krw: 100000
 max_one_trade_krw: 50000
+
 min_depth_multiplier: 2.0
 max_spread_bp: 20
 stale_quote_ms: 1500
 max_latency_ms: 800
+
 cooldown_sec: 10
 daily_loss_limit_krw: 30000
 consecutive_fail_limit: 3
+
 paper_timeout_sec: 300
 paper_take_profit_bp: 20
 paper_stop_loss_bp: 20
+
 raw_save_enabled: false
 bounded_collector_enabled: false
+
 log_decisions_only_when_candidate: true
 decision_log_min_surplus_bp: 0
 state_write_interval_sec: 5
 console_summary_interval_sec: 15
 max_log_file_mb: 20
 log_retention_days: 14
+
 paper_initial_upbit_krw: 1000000
 paper_initial_binance_usdt: 700
+
+# paper 검증용 가상 코인 재고
+# 실제 보유량이 아니라 양방향 김프/역김프 검증을 위한 paper inventory임
 paper_initial_coin_qty:
-  BTC: 0
-  ETH: 0
-  XRP: 0
-  DOGE: 0
-  SOL: 0
+  BTC: 0.002
+  ETH: 0.05
+  XRP: 300
+  DOGE: 1000
+  SOL: 3
