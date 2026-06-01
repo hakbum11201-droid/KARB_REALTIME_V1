@@ -437,7 +437,7 @@ function renderTradeTable(trades) {
     const et=t.entry_time?new Date(t.entry_time*1000).toLocaleTimeString('ko-KR'):'--';
     const xt=t.exit_time?new Date(t.exit_time*1000).toLocaleTimeString('ko-KR'):'--';
     return `<tr>
-      <td>${(t.trade_id||'').slice(0,8)}</td><td>${t.symbol||'--'}</td>
+      <td>${(t.trade_id||'').slice(0,8)}</td><td><span class="pair-badge ${pairMeta(t.pair_id||'UPBIT_BINANCE').badge}">${esc(t.pair_id||'UPBIT_BINANCE')}</span> ${t.symbol||'--'}</td>
       <td class="${dc}">${t.best_direction||'--'}</td><td>${et}</td><td>${xt}</td>
       <td>${t.holding_sec!=null?Number(t.holding_sec).toFixed(0)+'s':'--'}</td>
       <td style="color:${pnlC(pnl)}">${pnl>=0?'+':''}${fmt(pnl)} ₩</td>

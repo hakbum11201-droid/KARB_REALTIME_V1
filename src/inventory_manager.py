@@ -12,11 +12,14 @@ from config import cfg
 class InventoryManager:
     def __init__(self):
         # paper 초기 잔고 (config 기반)
-        self._paper_upbit_krw:  float = float(cfg.paper_initial_upbit_krw)
-        self._paper_binance_usdt: float = float(cfg.paper_initial_binance_usdt)
-        self._paper_coin_qty: dict[str, float] = {
+        initial_coins = {
             sym: float(cfg.paper_initial_coin_qty.get(sym, 0))
             for sym in cfg.symbols
+        }
+        self._paper_inventory = {
+            'UPBIT': {'KRW': float(cfg.paper_initial_upbit_krw), 'coins': copy.copy(initial_coins)},
+            'BINANCE': {'USDT': float(cfg.paper_initial_binance_usdt), 'coins': copy.copy(initial_coins)},
+            'BITHUMB': {'KRW': float(cfg.paper_initial_upbit_krw), 'coins': copy.copy(initial_coins)},
         }
 
     # ──────────────────────────────────────────────────────────────────────
@@ -25,10 +28,12 @@ class InventoryManager:
 
     def paper_snapshot(self) -> dict:
         """현재 paper 잔고 스냅샷 반환."""
+        venues = copy.deepcopy(self._paper_inventory)
         return {
-            'upbit_krw':     self._paper_upbit_krw,
-            'binance_usdt':  self._paper_binance_usdt,
-            'coin_qty':      copy.copy(self._paper_coin_qty),
+            'venues': venues,
+            'upbit_krw': venues['UPBIT']['KRW'],
+            'binance_usdt': venues['BINANCE']['USDT'],
+            'coin_qty': copy.copy(venues['UPBIT']['coins']),
         }
 
     def inventory_summary(self, quotes: dict | None = None, mode: str = 'paper') -> dict:
@@ -62,8 +67,8 @@ class InventoryManager:
             snap = {
                 'upbit_krw': paper['upbit_krw'],
                 'binance_usdt': paper['binance_usdt'],
-                'upbit_coin_qty': paper['coin_qty'],
-                'binance_coin_qty': paper['coin_qty'],
+                'upbit_coin_qty': paper['venues']['UPBIT']['coins'],
+                'binance_coin_qty': paper['venues']['BINANCE']['coins'],
             }
         symbols = []
         trade_krw = float(min(cfg.max_one_trade_krw, cfg.max_position_krw))
@@ -199,8 +204,10 @@ class InventoryManager:
         """Return read-only Upbit/Bithumb domestic KRW inventory sufficiency."""
         opportunities = opportunities or []
         if mode == 'paper':
-            upbit_balances = {'KRW': self._paper_upbit_krw, **self._paper_coin_qty}
-            bithumb_balances = {'KRW': self._paper_upbit_krw, **self._paper_coin_qty}
+            upbit = self._paper_inventory['UPBIT']
+            bithumb = self._paper_inventory['BITHUMB']
+            upbit_balances = {'KRW': upbit['KRW'], **upbit['coins']}
+            bithumb_balances = {'KRW': bithumb['KRW'], **bithumb['coins']}
             blockers, source = [], 'paper_config_inventory'
         else:
             from bithumb_private import BithumbPrivateClient
@@ -284,19 +291,34 @@ class InventoryManager:
 
     def check_paper_entry(
         self, symbol: str, direction: str, qty: float, krw_usdt: float,
-        upbit_ask: float, binance_ask: float,
+        upbit_ask: float, binance_ask: float = 0,
+        pair_id: str = 'UPBIT_BINANCE', bithumb_ask: float = 0,
+        upbit_bid: float = 0, binance_bid: float = 0, bithumb_bid: float = 0,
+        fee_krw: float = 0,
     ) -> str:
         """
         반환:
           'OK'                 – 진입 가능
           'INVENTORY_SHORTAGE' – 잔고 부족
         """
-        if direction == 'A':
+        if pair_id == 'UPBIT_BITHUMB' and direction == 'UPBIT_BITHUMB_A':
+            if (
+                self._coin('UPBIT', symbol) < qty
+                or self._paper_inventory['BITHUMB']['KRW'] < qty * bithumb_ask
+            ):
+                return 'INVENTORY_SHORTAGE'
+        elif pair_id == 'UPBIT_BITHUMB' and direction == 'UPBIT_BITHUMB_B':
+            if (
+                self._coin('BITHUMB', symbol) < qty
+                or self._paper_inventory['UPBIT']['KRW'] < qty * upbit_ask
+            ):
+                return 'INVENTORY_SHORTAGE'
+        elif direction == 'A':
             # Upbit SELL (coin qty 필요) + Binance BUY (USDT 필요)
             need_coin  = qty
             need_usdt  = qty * binance_ask
-            have_coin  = self._paper_coin_qty.get(symbol, 0.0)
-            have_usdt  = self._paper_binance_usdt
+            have_coin  = self._coin('UPBIT', symbol)
+            have_usdt  = self._paper_inventory['BINANCE']['USDT']
             if have_coin < need_coin or have_usdt < need_usdt:
                 return 'INVENTORY_SHORTAGE'
 
@@ -304,8 +326,8 @@ class InventoryManager:
             # Upbit BUY (KRW 필요) + Binance SELL (coin qty 필요)
             need_krw   = qty * upbit_ask
             need_coin  = qty
-            have_krw   = self._paper_upbit_krw
-            have_coin  = self._paper_coin_qty.get(symbol, 0.0)
+            have_krw   = self._paper_inventory['UPBIT']['KRW']
+            have_coin  = self._coin('BINANCE', symbol)
             if have_krw < need_krw or have_coin < need_coin:
                 return 'INVENTORY_SHORTAGE'
 
@@ -317,36 +339,99 @@ class InventoryManager:
 
     def apply_paper_entry(
         self, symbol: str, direction: str, qty: float, krw_usdt: float,
-        upbit_ask: float, binance_ask: float,
-    ) -> None:
+        upbit_ask: float, binance_ask: float = 0,
+        pair_id: str = 'UPBIT_BINANCE', bithumb_ask: float = 0,
+        upbit_bid: float = 0, binance_bid: float = 0, bithumb_bid: float = 0,
+        fee_krw: float = 0,
+    ) -> dict:
         """진입 시 paper 잔고를 가상 차감한다."""
-        if direction == 'A':
-            self._paper_coin_qty[symbol] = self._paper_coin_qty.get(symbol, 0.0) - qty
-            self._paper_binance_usdt    -= qty * binance_ask
+        before = self.paper_snapshot()['venues']
+        if pair_id == 'UPBIT_BITHUMB' and direction == 'UPBIT_BITHUMB_A':
+            self._add_coin('UPBIT', symbol, -qty)
+            self._paper_inventory['BITHUMB']['KRW'] -= qty * bithumb_ask
+            self._paper_inventory['UPBIT']['KRW'] += qty * upbit_bid
+            self._add_coin('BITHUMB', symbol, qty)
+        elif pair_id == 'UPBIT_BITHUMB' and direction == 'UPBIT_BITHUMB_B':
+            self._add_coin('BITHUMB', symbol, -qty)
+            self._paper_inventory['UPBIT']['KRW'] -= qty * upbit_ask
+            self._paper_inventory['BITHUMB']['KRW'] += qty * bithumb_bid
+            self._add_coin('UPBIT', symbol, qty)
+        elif direction == 'A':
+            self._add_coin('UPBIT', symbol, -qty)
+            self._paper_inventory['BINANCE']['USDT'] -= qty * binance_ask
+            self._paper_inventory['UPBIT']['KRW'] += qty * upbit_bid
+            self._add_coin('BINANCE', symbol, qty)
         elif direction == 'B':
-            self._paper_upbit_krw                        -= qty * upbit_ask
-            self._paper_coin_qty[symbol] = self._paper_coin_qty.get(symbol, 0.0) - qty
+            self._paper_inventory['UPBIT']['KRW'] -= qty * upbit_ask
+            self._add_coin('BINANCE', symbol, -qty)
+            self._add_coin('UPBIT', symbol, qty)
+            self._paper_inventory['BINANCE']['USDT'] += qty * binance_bid
+        self._paper_inventory['UPBIT']['KRW'] -= fee_krw
+        return self._inventory_delta(before)
 
     def apply_paper_exit(
         self, symbol: str, direction: str, qty: float,
         realized_pnl_krw: float, krw_usdt: float,
-        exit_upbit_bid: float, exit_binance_bid: float,
-    ) -> None:
+        exit_upbit_bid: float, exit_binance_bid: float = 0,
+        pair_id: str = 'UPBIT_BINANCE', exit_bithumb_bid: float = 0,
+        exit_upbit_ask: float = 0, exit_binance_ask: float = 0,
+        exit_bithumb_ask: float = 0,
+        fee_krw: float = 0,
+    ) -> dict:
         """
         청산 시 paper 잔고를 가상 복구/정산한다.
         순익 realized_pnl_krw를 KRW 잔고에 반영한다.
         """
-        if direction == 'A':
+        before = self.paper_snapshot()['venues']
+        if pair_id == 'UPBIT_BITHUMB' and direction == 'UPBIT_BITHUMB_A':
+            self._paper_inventory['UPBIT']['KRW'] -= qty * exit_upbit_ask
+            self._add_coin('UPBIT', symbol, qty)
+            self._add_coin('BITHUMB', symbol, -qty)
+            self._paper_inventory['BITHUMB']['KRW'] += qty * exit_bithumb_bid
+        elif pair_id == 'UPBIT_BITHUMB' and direction == 'UPBIT_BITHUMB_B':
+            self._paper_inventory['BITHUMB']['KRW'] -= qty * exit_bithumb_ask
+            self._add_coin('BITHUMB', symbol, qty)
+            self._add_coin('UPBIT', symbol, -qty)
+            self._paper_inventory['UPBIT']['KRW'] += qty * exit_upbit_bid
+        elif direction == 'A':
             # Binance에서 산 코인 복구, Upbit 매도 KRW 입금
-            self._paper_coin_qty[symbol] = self._paper_coin_qty.get(symbol, 0.0) + qty
-            self._paper_upbit_krw       += qty * exit_upbit_bid
+            self._paper_inventory['UPBIT']['KRW'] -= qty * exit_upbit_ask
+            self._add_coin('UPBIT', symbol, qty)
+            self._add_coin('BINANCE', symbol, -qty)
+            self._paper_inventory['BINANCE']['USDT'] += qty * exit_binance_bid
         elif direction == 'B':
             # Upbit에서 산 코인 복구, Binance 매도 USDT 입금
-            self._paper_coin_qty[symbol] = self._paper_coin_qty.get(symbol, 0.0) + qty
-            self._paper_binance_usdt    += qty * exit_binance_bid
+            self._add_coin('UPBIT', symbol, -qty)
+            self._paper_inventory['UPBIT']['KRW'] += qty * exit_upbit_bid
+            self._paper_inventory['BINANCE']['USDT'] -= qty * exit_binance_ask
+            self._add_coin('BINANCE', symbol, qty)
 
         # 순수익(양수)/손실(음수) 반영
-        self._paper_upbit_krw += realized_pnl_krw
+        self._paper_inventory['UPBIT']['KRW'] -= fee_krw
+        return self._inventory_delta(before)
+
+    def _coin(self, venue: str, symbol: str) -> float:
+        return float(self._paper_inventory[venue]['coins'].get(symbol, 0.0))
+
+    def _add_coin(self, venue: str, symbol: str, qty: float) -> None:
+        coins = self._paper_inventory[venue]['coins']
+        coins[symbol] = float(coins.get(symbol, 0.0)) + qty
+
+    def _inventory_delta(self, before: dict) -> dict:
+        after = self.paper_snapshot()['venues']
+        delta = {}
+        for venue, balances in after.items():
+            previous = before[venue]
+            delta[venue] = {
+                key: value - previous.get(key, 0.0)
+                for key, value in balances.items() if key != 'coins'
+            }
+            delta[venue]['coins'] = {
+                symbol: qty - previous['coins'].get(symbol, 0.0)
+                for symbol, qty in balances['coins'].items()
+                if qty != previous['coins'].get(symbol, 0.0)
+            }
+        return delta
 
     # ──────────────────────────────────────────────────────────────────────
     # Live interface (미구현)
@@ -360,10 +445,14 @@ class InventoryManager:
         """하위 호환 인터페이스 유지."""
         if exchange == 'upbit':
             if asset == 'KRW':
-                return self._paper_upbit_krw >= required_amount
-            return self._paper_coin_qty.get(asset, 0.0) >= required_amount
+                return self._paper_inventory['UPBIT']['KRW'] >= required_amount
+            return self._coin('UPBIT', asset) >= required_amount
         elif exchange == 'binance':
             if asset == 'USDT':
-                return self._paper_binance_usdt >= required_amount
-            return self._paper_coin_qty.get(asset, 0.0) >= required_amount
+                return self._paper_inventory['BINANCE']['USDT'] >= required_amount
+            return self._coin('BINANCE', asset) >= required_amount
+        elif exchange == 'bithumb':
+            if asset == 'KRW':
+                return self._paper_inventory['BITHUMB']['KRW'] >= required_amount
+            return self._coin('BITHUMB', asset) >= required_amount
         return False

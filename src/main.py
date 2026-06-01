@@ -377,9 +377,14 @@ def main():
             elif is_safe and cfg.mode in ('tiny_live', 'live'):
                 print(f"  [{sym}] [{cfg.mode.upper()}] Execution not yet implemented.")
 
+        domestic_quotes = {'UPBIT_BITHUMB': {}}
         if cfg.upbit_bithumb_paper_enabled:
             for sym, q in quotes.items():
                 bithumb_q = bithumb_quotes.get(sym, {})
+                domestic_quotes['UPBIT_BITHUMB'][sym] = {
+                    'upbit': q.get('upbit', {}),
+                    'bithumb': bithumb_q,
+                }
                 domestic = arb_calc.calculate_domestic_krw(sym, q.get('upbit', {}), bithumb_q)
                 domestic_history = quote_history.setdefault(f'UPBIT_BITHUMB:{sym}', deque(maxlen=120))
                 domestic_history.append({'upbit': q.get('upbit', {}), 'bithumb': bithumb_q, '_ts': time.time()})
@@ -420,6 +425,16 @@ def main():
                     'go_no_go': 'GO' if domestic_safe else 'NO-GO',
                     'quote_source': 'rest',
                 })
+                if domestic_safe and cfg.mode == 'paper':
+                    trade = paper_eng.try_entry(domestic)
+                    if trade:
+                        paper_entry_count += 1
+                        if not args.once:
+                            print(
+                                f"  [UPBIT_BITHUMB:{sym}] PAPER ENTRY | "
+                                f"Dir: {trade['best_direction']} | "
+                                f"Net: {trade['net_expected_profit_krw']:,.0f} KRW"
+                            )
                 if args.once:
                     print(
                         f"  [UPBIT_BITHUMB:{sym}] Dir: {domestic.get('best_direction') or '--'} | "
@@ -431,14 +446,15 @@ def main():
 
         # ── Paper 청산 체크 ───────────────────────────────────────────────
         if cfg.mode == 'paper':
-            closed = paper_eng.check_exits(quotes, krw_usdt)
+            closed = paper_eng.check_exits(quotes, krw_usdt, domestic_quotes=domestic_quotes)
             for ct in closed:
                 paper_exit_count += 1
                 perf_tracker.record_exit(ct)
                 risk_guard.record_trade_result(ct['realized_pnl_krw'])
                 if not args.once:
                     print(
-                        f"  [{ct['symbol']}] PAPER EXIT | {ct['exit_reason']} | "
+                        f"  [{ct.get('pair_id', 'UPBIT_BINANCE')}:{ct['symbol']}] "
+                        f"PAPER EXIT | {ct['exit_reason']} | "
                         f"PnL: {ct['realized_pnl_krw']:+,.0f} KRW | "
                         f"{'WIN' if ct['win'] else 'LOSS'}"
                     )

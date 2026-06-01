@@ -229,7 +229,14 @@ API keys alone never enable an order. If `PARTIAL_RISK` appears, stop new entrie
 - `max_fillable_qty_raw` is the raw top-of-book depth limit.
 - `effective_qty` is the final calculation quantity after applying both raw depth and the configured one-order KRW amount.
 - Expected profit, selected notional, and selected required assets use `effective_qty`.
-- Long paper-run opportunity evaluation now reports order-sized quantities. Paper entry/exit wiring is unchanged by this calculation-only update.
+- Long paper-run opportunity evaluation now reports order-sized quantities.
+
+## Domestic KRW paper execution
+
+- `UPBIT_BITHUMB` opportunities now enter and exit through the paper engine when their existing paper guards return `OK`.
+- Paper inventory is tracked separately for Upbit, Binance, and Bithumb. Each paper entry and exit records venue balance deltas.
+- Domestic exits use the matching Upbit and Bithumb quotes and preserve `pair_id` in recent closed trades.
+- Pair-specific performance rollups are still a later reporting step. Live and tiny-live execution behavior is unchanged.
 
 ## REST fallback load guards
 

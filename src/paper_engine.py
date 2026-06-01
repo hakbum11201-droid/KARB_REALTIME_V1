@@ -43,32 +43,53 @@ class PaperEngine:
         if calc_result.get('reason_no_trade') != 'OK':
             return None
 
-        sym  = calc_result['symbol']
+        sym = calc_result['symbol']
         dirn = calc_result['best_direction']
+        pair_id = calc_result.get('pair_id', 'UPBIT_BINANCE')
 
         # 조건 2: 같은 symbol/direction의 open이 있으면 스킵
         for t in self._open_trades.values():
-            if t['symbol'] == sym and t['best_direction'] == dirn:
+            if t['symbol'] == sym and t.get('pair_id', 'UPBIT_BINANCE') == pair_id:
                 return None
 
-        qty = calc_result['max_fillable_qty']
+        qty = float(calc_result.get('selected_qty', calc_result.get('max_fillable_qty', 0)) or 0)
+        if qty <= 0:
+            return None
+        fees_bp = cfg.upbit_fee_bp + (
+            cfg.bithumb_fee_bp if pair_id == 'UPBIT_BITHUMB' else cfg.binance_fee_bp
+        )
+        selected_notional_krw = float(calc_result.get('selected_notional_krw', 0) or 0)
+        entry_fee_krw = selected_notional_krw * fees_bp / 10000
 
         # 조건 3: InventoryManager 검사 (주입된 경우)
         if self._inv is not None:
             status = self._inv.check_paper_entry(
                 symbol=sym, direction=dirn, qty=qty,
-                krw_usdt=calc_result['krw_usdt'],
+                pair_id=pair_id,
+                krw_usdt=calc_result.get('krw_usdt', 0),
                 upbit_ask=calc_result['upbit_ask'],
-                binance_ask=calc_result['binance_ask'],
+                binance_ask=calc_result.get('binance_ask', 0),
+                bithumb_ask=calc_result.get('bithumb_ask', 0),
+                upbit_bid=calc_result.get('upbit_bid', 0),
+                binance_bid=calc_result.get('binance_bid', 0),
+                bithumb_bid=calc_result.get('bithumb_bid', 0),
+                fee_krw=entry_fee_krw,
             )
             if status != 'OK':
                 return None
-            self._inv.apply_paper_entry(
+            inventory_delta = self._inv.apply_paper_entry(
                 symbol=sym, direction=dirn, qty=qty,
-                krw_usdt=calc_result['krw_usdt'],
+                pair_id=pair_id,
+                krw_usdt=calc_result.get('krw_usdt', 0),
                 upbit_ask=calc_result['upbit_ask'],
-                binance_ask=calc_result['binance_ask'],
+                binance_ask=calc_result.get('binance_ask', 0),
+                bithumb_ask=calc_result.get('bithumb_ask', 0),
+                upbit_bid=calc_result.get('upbit_bid', 0),
+                binance_bid=calc_result.get('binance_bid', 0),
+                bithumb_bid=calc_result.get('bithumb_bid', 0),
             )
+        else:
+            inventory_delta = {}
 
         trade_id = str(uuid.uuid4())[:12]
         trade = {
@@ -76,21 +97,36 @@ class PaperEngine:
             'event':                 'ENTRY',
             'status':                'OPEN',
             'entry_time':            time.time(),
+            'pair_id':               pair_id,
+            'strategy_type':         calc_result.get('strategy_type', 'CROSS_BORDER_SPOT'),
             'symbol':                sym,
             'best_direction':        dirn,
+            'direction':             dirn,
+            'selected_qty':          qty,
+            'selected_notional_krw': selected_notional_krw,
+            'selected_required_assets': calc_result.get('selected_required_assets', {}),
+            'entry_buy_price_krw':   calc_result.get('selected_buy_price_krw', 0),
+            'entry_sell_price_krw':  calc_result.get('selected_sell_price_krw', 0),
+            'entry_fee_krw':         entry_fee_krw,
+            'venues':                ['UPBIT', 'BITHUMB'] if pair_id == 'UPBIT_BITHUMB' else ['UPBIT', 'BINANCE'],
+            'inventory_delta':       inventory_delta,
+            'expected_net_profit_krw': calc_result['net_expected_profit_krw'],
+            'entry_reason':          calc_result.get('reason_no_trade', ''),
             # 진입 호가 스냅샷
             'entry_upbit_bid':       calc_result['upbit_bid'],
             'entry_upbit_ask':       calc_result['upbit_ask'],
-            'entry_binance_bid':     calc_result['binance_bid'],
-            'entry_binance_ask':     calc_result['binance_ask'],
-            'entry_krw_usdt':        calc_result['krw_usdt'],
+            'entry_binance_bid':     calc_result.get('binance_bid'),
+            'entry_binance_ask':     calc_result.get('binance_ask'),
+            'entry_bithumb_bid':     calc_result.get('bithumb_bid'),
+            'entry_bithumb_ask':     calc_result.get('bithumb_ask'),
+            'entry_krw_usdt':        calc_result.get('krw_usdt'),
             # 계산 결과
             'best_net_surplus_bp':   calc_result['best_net_surplus_bp'],
             'net_expected_profit_krw': calc_result['net_expected_profit_krw'],
-            'gross_gap_krw':         calc_result['gross_gap_krw'],
+            'gross_gap_krw':         calc_result.get('gross_gap_krw', 0),
             'max_fillable_qty':      qty,
             # 비용 분해
-            'fees_bp': cfg.upbit_fee_bp + cfg.binance_fee_bp,
+            'fees_bp':               fees_bp,
             'slippage_bp':           cfg.slippage_bp,
             'fx_error_bp':           cfg.fx_error_bp,
             'risk_buffer_bp':        cfg.risk_buffer_bp,
@@ -103,7 +139,9 @@ class PaperEngine:
     # Exit check (매 루프마다 호출)
     # ──────────────────────────────────────────────────────────────────────
 
-    def check_exits(self, current_quotes: dict, krw_usdt: float) -> list[dict]:
+    def check_exits(
+        self, current_quotes: dict, krw_usdt: float, domestic_quotes: dict | None = None
+    ) -> list[dict]:
         """
         open trade 전체를 검사하여 TP/SL/TIMEOUT 조건 충족 시 청산.
         current_quotes: { sym: { 'upbit': {...}, 'binance': {...} } }
@@ -113,7 +151,11 @@ class PaperEngine:
         for trade_id in list(self._open_trades.keys()):
             trade = self._open_trades[trade_id]
             sym   = trade['symbol']
-            q     = current_quotes.get(sym)
+            pair_id = trade.get('pair_id', 'UPBIT_BINANCE')
+            if pair_id == 'UPBIT_BITHUMB':
+                q = (domestic_quotes or {}).get('UPBIT_BITHUMB', {}).get(sym)
+            else:
+                q = current_quotes.get(sym)
             if not q:
                 continue
 
@@ -121,18 +163,26 @@ class PaperEngine:
             if exit_trade:
                 del self._open_trades[trade_id]
                 self._closed_trades.append(exit_trade)
-                self._append_log(exit_trade)
 
                 if self._inv is not None:
-                    self._inv.apply_paper_exit(
+                    inventory_delta = self._inv.apply_paper_exit(
                         symbol=sym,
                         direction=trade['best_direction'],
                         qty=trade['max_fillable_qty'],
                         realized_pnl_krw=exit_trade['realized_pnl_krw'],
+                        pair_id=pair_id,
                         krw_usdt=krw_usdt,
                         exit_upbit_bid=q['upbit']['bid'],
-                        exit_binance_bid=q['binance']['bid'],
+                        exit_binance_bid=q.get('binance', {}).get('bid', 0),
+                        exit_bithumb_bid=q.get('bithumb', {}).get('bid', 0),
+                        exit_upbit_ask=q['upbit']['ask'],
+                        exit_binance_ask=q.get('binance', {}).get('ask', 0),
+                        exit_bithumb_ask=q.get('bithumb', {}).get('ask', 0),
+                        fee_krw=float(trade.get('selected_notional_krw', 0) or 0)
+                        * trade['fees_bp'] / 10000,
                     )
+                    exit_trade['exit_inventory_delta'] = inventory_delta
+                self._append_log(exit_trade)
                 closed.append(exit_trade)
         return closed
 
@@ -152,6 +202,8 @@ class PaperEngine:
 
         u_bid = quote['upbit']['bid']
         u_ask = quote['upbit']['ask']
+        if trade.get('pair_id', 'UPBIT_BINANCE') == 'UPBIT_BITHUMB':
+            return self._evaluate_domestic_exit(trade, quote, now, holding_sec, qty)
         b_bid = quote['binance']['bid']
         b_ask = quote['binance']['ask']
 
@@ -211,6 +263,53 @@ class PaperEngine:
             'exit_krw_usdt':    krw_usdt,
             'win':              win,
             'clean_win':        clean_win,
+        }
+
+    def _evaluate_domestic_exit(
+        self, trade: dict, quote: dict, now: float, holding_sec: float, qty: float
+    ) -> dict | None:
+        u_bid, u_ask = quote['upbit']['bid'], quote['upbit']['ask']
+        h_bid, h_ask = quote['bithumb']['bid'], quote['bithumb']['ask']
+        direction = trade['best_direction']
+        entry_buy = float(trade.get('entry_buy_price_krw', 0) or 0)
+        entry_sell = float(trade.get('entry_sell_price_krw', 0) or 0)
+        exit_buy, exit_sell = (
+            (u_ask, h_bid) if direction == 'UPBIT_BITHUMB_A' else (h_ask, u_bid)
+        )
+        exit_fee_krw = qty * exit_buy * trade['fees_bp'] / 10000
+        realized_pnl_krw = (
+            qty * ((entry_sell - entry_buy) + (exit_sell - exit_buy))
+            - float(trade.get('entry_fee_krw', 0) or 0)
+            - exit_fee_krw
+        )
+        notional = float(trade.get('selected_notional_krw', 0) or 0)
+        realized_bp = realized_pnl_krw / notional * 10000 if notional else 0.0
+        exit_reason = None
+        if holding_sec >= cfg.paper_timeout_sec:
+            exit_reason = 'TIMEOUT'
+        tp_threshold_krw = trade['net_expected_profit_krw'] * (
+            1 + cfg.paper_take_profit_bp / 10000
+        )
+        if exit_reason is None and realized_pnl_krw >= tp_threshold_krw:
+            exit_reason = 'TP'
+        sl_threshold_krw = trade['net_expected_profit_krw'] * (
+            cfg.paper_stop_loss_bp / 10000
+        )
+        if exit_reason is None and realized_pnl_krw <= -sl_threshold_krw:
+            exit_reason = 'SL'
+        if exit_reason is None:
+            return None
+        win = realized_pnl_krw > 0
+        return {
+            **trade,
+            'event': 'EXIT', 'status': 'CLOSED', 'exit_time': now,
+            'exit_reason': exit_reason, 'holding_sec': round(holding_sec, 2),
+            'realized_pnl_krw': round(realized_pnl_krw, 2),
+            'realized_bp': round(realized_bp, 4),
+            'exit_upbit_bid': u_bid, 'exit_upbit_ask': u_ask,
+            'exit_bithumb_bid': h_bid, 'exit_bithumb_ask': h_ask,
+            'exit_krw_usdt': None, 'win': win,
+            'clean_win': win and exit_reason == 'TP',
         }
 
     # ──────────────────────────────────────────────────────────────────────

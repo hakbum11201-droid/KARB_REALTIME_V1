@@ -345,6 +345,8 @@ class KarbHandler(SimpleHTTPRequestHandler):
             perf = _read_json(os.path.join(RUNTIME_DIR, 'performance_summary.json'))
             recent = _read_jsonl_tail(os.path.join(LOGS_DIR, 'paper_trades.jsonl'), 100)
             exits = [r for r in recent if r.get('event') == 'EXIT'][-20:]
+            for trade in exits:
+                trade.setdefault('pair_id', 'UPBIT_BINANCE')
             self._send_json({'performance': perf, 'recent_trades': exits})
 
         elif self.path == '/api/performance':
@@ -412,6 +414,8 @@ class KarbHandler(SimpleHTTPRequestHandler):
         elif self.path == '/api/trades/recent':
             recent = _read_jsonl_tail(os.path.join(LOGS_DIR, 'paper_trades.jsonl'), 100)
             exits = [r for r in recent if r.get('event') == 'EXIT'][-20:]
+            for trade in exits:
+                trade.setdefault('pair_id', 'UPBIT_BINANCE')
             self._send_json({'trades': exits})
 
         elif self.path == '/api/session/last':

@@ -38,6 +38,7 @@ class PerformanceTracker:
 
     def record_exit(self, trade: dict) -> None:
         """closed trade(EXIT 이벤트)를 기록하고 성과를 갱신한다."""
+        trade.setdefault('pair_id', 'UPBIT_BINANCE')
         self._closed.append(trade)
 
         import datetime
