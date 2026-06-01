@@ -231,3 +231,11 @@ API keys alone never enable an order. If `PARTIAL_RISK` appears, stop new entrie
 - Dashboard telemetry shows throttle count, `429` count, active backoff exchanges, REST fallback count, and skipped fallback count.
 - Loop and quote P95 percentiles are refreshed on a configured interval instead of sorting samples every loop.
 - This monitoring change does not modify order execution, live-order gates, withdrawal policy, or risk thresholds.
+
+## Emergency Close Once
+
+- `PARTIAL_RISK` still disarms tiny-live and blocks new entries until operator review and manual clear.
+- Emergency recovery is Spot-only and optional. `emergency_liquidation_enabled=false` and `emergency_auto_execute=false` remain the defaults.
+- A preview can show either `COMPLETE_MISSING_LEG` or `REVERT_FILLED_LEG`, exposure, failed leg, filled leg, and the manual action without placing an order.
+- An emergency Spot close is permitted only after separate approval enables both emergency gates and every freshness, inventory, order-size, slippage, and ledger guard passes.
+- Each plan allows at most one emergency attempt. Failed or repeated recovery orders remain blocked.

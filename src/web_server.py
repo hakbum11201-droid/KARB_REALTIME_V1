@@ -471,6 +471,12 @@ class KarbHandler(SimpleHTTPRequestHandler):
             except Exception as exc:
                 self._send_json({'ok': False, 'error': type(exc).__name__, 'blockers': ['MANUAL_CLEAR_FAILED'], 'warnings': []}, 400)
 
+        elif self.path == '/api/emergency/preview':
+            if not self._is_localhost():
+                self._send_403()
+                return
+            self._send_guarded_json(tiny_live_executor.preview_emergency)
+
         elif self.path == '/api/engine/start':
             if not self._is_localhost():
                 self._send_403()

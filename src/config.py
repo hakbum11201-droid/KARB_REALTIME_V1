@@ -92,6 +92,10 @@ class Config:
     @property
     def emergency_max_attempts_per_day(self): return self.get('emergency_max_attempts_per_day', 2)
     @property
+    def emergency_require_fresh_quote(self): return self.get('emergency_require_fresh_quote', True)
+    @property
+    def emergency_one_attempt_per_plan(self): return self.get('emergency_one_attempt_per_plan', True)
+    @property
     def order_tracker_enabled(self): return self.get('order_tracker_enabled', True)
     @property
     def order_tracker_recent_max_items(self): return self.get('order_tracker_recent_max_items', 100)

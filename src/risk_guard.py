@@ -14,6 +14,8 @@ LIVE_BLOCKER_CODES = (
     'MAX_TRADES_LIMIT', 'COOLDOWN', 'PARTIAL_RISK_ACTIVE',
     'CONFIG_LIVE_DISABLED', 'ORDER_TRACKER_ACTIVE', 'EMERGENCY_PENDING',
     'EMERGENCY_FAILED', 'ORDER_LEDGER_UNSYNCED', 'EMERGENCY_DISABLED',
+    'EMERGENCY_REQUIRED', 'EMERGENCY_AUTO_EXECUTE_DISABLED',
+    'EMERGENCY_ATTEMPTED_ALREADY',
     'EMERGENCY_LIMIT_EXCEEDED', 'EMERGENCY_SLIPPAGE_TOO_HIGH',
     'PAIR_DISABLED', 'BITHUMB_KEY_MISSING', 'BITHUMB_PRIVATE_DISABLED',
     'BITHUMB_LIVE_DISABLED', 'UPBIT_BITHUMB_LIVE_DISABLED',
@@ -56,6 +58,28 @@ class RiskGuard:
             'upbit_krw': float(calc_result.get('required_upbit_balance_krw', 0) or 0),
             'binance_usdt': float(calc_result.get('required_binance_balance_usdt', 0) or 0),
         }
+
+    @staticmethod
+    def live_order_blockers(order_tracker_state: dict) -> list[str]:
+        """Block fresh entries while a partial-risk ledger needs operator review."""
+        if not order_tracker_state:
+            return []
+        blockers = []
+        status = order_tracker_state.get('status')
+        emergency_required = bool(order_tracker_state.get('emergency_required'))
+        if status == 'PARTIAL_RISK' or emergency_required:
+            blockers.append('EMERGENCY_REQUIRED')
+        if emergency_required and not cfg.emergency_liquidation_enabled:
+            blockers.append('EMERGENCY_DISABLED')
+        if emergency_required and not cfg.emergency_auto_execute:
+            blockers.append('EMERGENCY_AUTO_EXECUTE_DISABLED')
+        if emergency_required and order_tracker_state.get('emergency_attempted'):
+            blockers.append('EMERGENCY_ATTEMPTED_ALREADY')
+        if status in ('EMERGENCY_PENDING', 'EMERGENCY_FAILED'):
+            blockers.append(status)
+        if status == 'EMERGENCY_FAILED':
+            blockers.append('EMERGENCY_FAILED')
+        return list(dict.fromkeys(blockers))
 
     # ──────────────────────────────────────────────────────────────────────
     # 공개 API

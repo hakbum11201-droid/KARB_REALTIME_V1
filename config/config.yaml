@@ -35,6 +35,8 @@ emergency_strategy: COMPLETE_MISSING_LEG
 emergency_max_order_krw: 20000
 emergency_max_slippage_bp: 20
 emergency_max_attempts_per_day: 2
+emergency_require_fresh_quote: true
+emergency_one_attempt_per_plan: true
 order_tracker_enabled: true
 order_tracker_recent_max_items: 100
 enabled_strategy_pairs:

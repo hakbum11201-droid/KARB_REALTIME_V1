@@ -147,6 +147,7 @@ def _base_blockers(pair_id='UPBIT_BINANCE') -> list[str]:
             blockers.append('ORDER_TRACKER_ACTIVE')
         if tracker_state.get('emergency_required') and not tracker_state.get('emergency_done'):
             blockers.append('PARTIAL_RISK_ACTIVE')
+        blockers.extend(RiskGuard.live_order_blockers(tracker_state))
     return _unique(blockers)
 
 
@@ -387,6 +388,18 @@ class TinyLiveExecutor:
         )
         return {'ok': True, **status, 'order_tracker': tracker_state}
 
+    def preview_emergency(self) -> dict:
+        tracker_state = self.tracker.to_dict()
+        last_order = _read_json(ORDER_FILE)
+        last_preflight = _read_json(PREFLIGHT_FILE)
+        plan = last_order.get('plan') or last_preflight.get('plan') or {}
+        preview = self.emergency.preview(tracker_state, plan)
+        if tracker_state.get('emergency_required'):
+            tracker_state = self.tracker.set_emergency_preview(
+                {'plan': preview.get('emergency_plan', {})}, preview['manual_action']
+            )
+        return {**preview, 'order_tracker': tracker_state}
+
     def execute_once(self, pair_id=None, plan=None) -> dict:
         status = _status()
         if not status.get('armed'):
@@ -516,13 +529,22 @@ class TinyLiveExecutor:
             if cfg.order_tracker_enabled:
                 self.tracker.mark_partial_risk(manual_action)
             emergency_check = self.emergency.can_execute_emergency(self.tracker.to_dict(), plan)
-            if cfg.order_tracker_enabled and emergency_check.get('ready'):
-                self.tracker.mark_emergency_attempted()
-            emergency_result = self.emergency.execute_emergency(
-                self.tracker.to_dict(), plan, check=emergency_check
-            )
-            if cfg.order_tracker_enabled and emergency_check.get('ready'):
-                self.tracker.mark_emergency_result(emergency_result.get('ok', False), emergency_result.get('error', ''))
+            if cfg.order_tracker_enabled:
+                self.tracker.set_emergency_preview(emergency_check, manual_action)
+            emergency_result = {
+                'ok': False, 'status': 'EMERGENCY_PENDING',
+                'blockers': emergency_check['blockers'],
+                'emergency_plan': emergency_check['plan'],
+                'suggested_manual_action': manual_action,
+            }
+            if emergency_check.get('ready') and cfg.emergency_auto_execute:
+                if cfg.order_tracker_enabled:
+                    self.tracker.mark_emergency_attempted(emergency_check['plan'])
+                emergency_result = self.emergency.execute_emergency_once(
+                    self.tracker.to_dict(), plan, check=emergency_check
+                )
+                if cfg.order_tracker_enabled:
+                    self.tracker.mark_emergency_result(emergency_result.get('ok', False), emergency_result)
             next_status = _write_status(
                 armed=False, status='PARTIAL_RISK', partial_risk=True,
                 blockers=['PARTIAL_RISK_ACTIVE'], last_error='PARTIAL_RISK',

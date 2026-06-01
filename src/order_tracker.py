@@ -81,8 +81,11 @@ class OrderTracker:
             'left_leg': _leg(left_venue, left_side, qty, plan.get('order_krw', 0)),
             'right_leg': _leg(right_venue, right_side, qty, plan.get('order_usdt') or plan.get('order_krw', 0)),
             'net_filled_qty': 0.0, 'exposure_qty': 0.0, 'exposure_side': 'FLAT',
+            'exposure_notional_krw': 0.0, 'failed_leg': '', 'filled_leg': '',
             'emergency_required': False, 'emergency_attempted': False, 'emergency_done': False,
-            'suggested_manual_action': '',
+            'emergency_strategy': cfg.emergency_strategy, 'emergency_status': 'NOT_REQUIRED',
+            'emergency_order_ids': [], 'emergency_result': {},
+            'emergency_manual_action': '', 'suggested_manual_action': '',
         }
         self._event('START_PLAN')
         self.save()
@@ -157,11 +160,24 @@ class OrderTracker:
             float(left.get('filled_qty', 0) or 0), float(right.get('filled_qty', 0) or 0)), 12)
         self.state['exposure_qty'] = round(abs(signed), 12)
         self.state['exposure_side'] = 'LONG' if signed > 0 else 'SHORT' if signed < 0 else 'FLAT'
+        filled_leg = max((left, right), key=lambda leg: float(leg.get('filled_qty', 0) or 0))
+        failed_leg = min((left, right), key=lambda leg: float(leg.get('filled_qty', 0) or 0))
+        self.state['filled_leg'] = filled_leg.get('venue', '') if self.state['exposure_qty'] else ''
+        self.state['failed_leg'] = failed_leg.get('venue', '') if self.state['exposure_qty'] else ''
+        self.state['exposure_notional_krw'] = round(
+            self.state['exposure_qty'] * float(filled_leg.get('avg_price', 0) or 0), 2
+        )
         if self.is_partial_risk():
             self.state['status'] = 'PARTIAL_RISK'
             self.state['emergency_required'] = True
+            self.state['emergency_status'] = 'EMERGENCY_REQUIRED'
         elif all(leg.get('status') == 'FILLED' for leg in (left, right)):
             self.state['status'] = 'FILLED'
+            self.state['emergency_required'] = False
+            self.state['emergency_status'] = 'NOT_REQUIRED'
+            self.state['failed_leg'] = ''
+            self.state['filled_leg'] = ''
+            self.state['exposure_notional_krw'] = 0.0
         self.state['updated_at'] = time.time()
         return self.to_dict()
 
@@ -186,11 +202,13 @@ class OrderTracker:
         self.state['status'] = 'PARTIAL_RISK'
         self.state['emergency_required'] = True
         self.state['suggested_manual_action'] = suggested_manual_action
+        self.state['emergency_manual_action'] = suggested_manual_action
+        self.state['emergency_status'] = 'EMERGENCY_REQUIRED'
         self._event('PARTIAL_RISK')
         self.save()
         return self.to_dict()
 
-    def mark_emergency_attempted(self) -> dict:
+    def mark_emergency_attempted(self, emergency_plan=None) -> dict:
         today = time.strftime('%Y-%m-%d')
         if self.state.get('emergency_attempt_date') != today:
             self.state['emergency_attempts_today'] = 0
@@ -198,15 +216,37 @@ class OrderTracker:
         self.state['emergency_attempted'] = True
         self.state['emergency_attempts_today'] = int(self.state.get('emergency_attempts_today', 0) or 0) + 1
         self.state['emergency_attempt_date'] = today
+        self.state['emergency_status'] = 'EMERGENCY_PENDING'
+        self.state['emergency_strategy'] = (emergency_plan or {}).get('strategy', cfg.emergency_strategy)
         self._event('EMERGENCY_ATTEMPTED')
         self.save()
         return self.to_dict()
 
-    def mark_emergency_result(self, ok: bool, detail='') -> dict:
+    def mark_emergency_result(self, ok: bool, result=None) -> dict:
+        result = result or {}
         self.state['status'] = 'EMERGENCY_DONE' if ok else 'EMERGENCY_FAILED'
+        self.state['emergency_status'] = self.state['status']
         self.state['emergency_done'] = bool(ok)
         self.state['emergency_required'] = not ok
-        self._event(self.state['status'], detail=str(detail))
+        self.state['emergency_result'] = _sanitize(result)
+        response = result.get('response', {})
+        order_id = str(response.get('exchange_order_id') or '')
+        if order_id:
+            self.state['emergency_order_ids'] = [*self.state.get('emergency_order_ids', []), order_id]
+        self._event(self.state['status'], detail=str(result.get('error', '')))
+        self.save()
+        return self.to_dict()
+
+    def set_emergency_preview(self, check: dict, manual_action: str) -> dict:
+        plan = check.get('plan') or {}
+        self.state['emergency_required'] = True
+        self.state['emergency_strategy'] = plan.get('strategy', cfg.emergency_strategy)
+        self.state['emergency_status'] = 'EMERGENCY_REQUIRED'
+        self.state['emergency_manual_action'] = manual_action
+        self.state['suggested_manual_action'] = manual_action
+        if float(plan.get('order_krw', 0) or 0) > 0:
+            self.state['exposure_notional_krw'] = round(float(plan.get('order_krw', 0) or 0), 2)
+        self._event('EMERGENCY_PREVIEW')
         self.save()
         return self.to_dict()
 
@@ -219,6 +259,7 @@ class OrderTracker:
         self.state = {
             **self.state, 'status': 'DISARMED', 'updated_at': time.time(),
             'emergency_required': False, 'emergency_done': True,
+            'emergency_status': 'MANUALLY_CLEARED',
             'suggested_manual_action': f'Manually cleared after operator review: {reason.strip()}',
         }
         self.save()

@@ -192,6 +192,14 @@ Paper 검증 기간 중:
 - Keep `emergency_liquidation_enabled=false` and `emergency_auto_execute=false` unless a separate review explicitly approves a recovery attempt.
 - A partial fill immediately blocks new entries. Check Upbit fills, Binance fills, and both balances before resolving exposure manually.
 - Automatic repeated recovery orders are prohibited. `MANUAL CLEAR PARTIAL RISK` records the operator reason after manual review; it does not place an order.
+
+## Emergency Close Once
+
+- `emergency_liquidation_enabled=false` and `emergency_auto_execute=false` are mandatory defaults.
+- `PARTIAL_RISK` requires manual inspection first. New entries remain blocked until the operator resolves Spot exposure and records manual clear.
+- Preview returns a proposed single Spot recovery plan only. It never places an order.
+- A separately approved emergency close requires both emergency gates and all freshness, inventory, size, slippage, and one-attempt-per-plan guards.
+- Withdrawal, deposit, wallet address, travel-rule automation, Futures, Margin, P2P, and internal transfer remain prohibited.
 ## Iceberg placeholder 안전 정책
 
 - Iceberg 설정은 향후 대규모 주문 검토를 위한 표시 전용 placeholder입니다.

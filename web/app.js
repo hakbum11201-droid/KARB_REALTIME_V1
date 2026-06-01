@@ -854,7 +854,12 @@ function renderOrderTracker(tracker={}, emergency={}) {
       [`${binance.venue||'Right'} Leg`, binance.status||'--'], ['Net Filled Qty', fmt(tracker.net_filled_qty,8)],
       ['Exposure Qty', `${fmt(tracker.exposure_qty,8)} ${tracker.exposure_side||''}`],
       ['Partial Risk', String(tracker.status==='PARTIAL_RISK')], ['Emergency Required', String(Boolean(tracker.emergency_required))],
+      ['Exposure Side', tracker.exposure_side||'FLAT'], ['Exposure Notional KRW', `${fmt(tracker.exposure_notional_krw)} KRW`],
+      ['Failed Leg', tracker.failed_leg||'--'], ['Filled Leg', tracker.filled_leg||'--'],
+      ['Strategy', tracker.emergency_strategy||emergency.strategy||'COMPLETE_MISSING_LEG'],
+      ['Emergency Status', tracker.emergency_status||emergency.emergency_status||'NOT_REQUIRED'],
       ['Emergency Attempted', String(Boolean(tracker.emergency_attempted))], ['Emergency Enabled', String(Boolean(emergency.enabled))],
+      ['Auto Execute OFF', String(!emergency.auto_execute)], ['One Attempt Per Plan', String(Boolean(emergency.one_attempt_per_plan))],
     ];
     grid.innerHTML=fields.map(([label,value])=>`<div><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`).join('');
   }
@@ -863,7 +868,7 @@ function renderOrderTracker(tracker={}, emergency={}) {
     ? 'PARTIAL_RISK: new entries blocked. Inspect Upbit fills, Binance fills, and both balances. Resolve Spot exposure manually before clearing.'
     : '');
   setClass('order-tracker-warning', `tiny-live-warning ${partial?'visible':''}`);
-  setText('order-tracker-action', tracker.suggested_manual_action||emergency.suggested_manual_action||'No manual action required.');
+  setText('order-tracker-action', `Manual Action: ${tracker.emergency_manual_action||tracker.suggested_manual_action||emergency.suggested_manual_action||'No manual action required.'}`);
 }
 
 // Live Guard and Execution Plan render read-only safety state from the API.
