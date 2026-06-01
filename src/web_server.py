@@ -17,6 +17,7 @@ import json
 import os
 import sys
 import argparse
+import time
 
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 WEB_DIR     = os.path.normpath(os.path.join(BASE_DIR, '..', 'web'))
@@ -60,6 +61,57 @@ def _read_jsonl_tail(path, n=50):
         return []
 
 
+def _live_readiness_payload():
+    readiness = get_tiny_live_readiness()
+    quotes = _read_json(os.path.join(RUNTIME_DIR, 'latest_quotes.json'))
+    newest_quote = max((float(item.get('timestamp', 0) or 0) for item in quotes.values()), default=0)
+    quote_age_ms = max(0, (time.time() - newest_quote) * 1000) if newest_quote else None
+    inventory = readiness.get('inventory') or {}
+    blockers = readiness.get('blockers', [])
+    readiness['live_guard'] = {
+        'mode': cfg.mode,
+        'enable_live_trading': cfg.enable_live_trading,
+        'tiny_live_enabled': cfg.tiny_live_enabled,
+        'live_order_enabled': cfg.live_order_enabled,
+        'live_mode_enabled': cfg.live_mode_enabled,
+        'withdrawals_enabled': cfg.withdrawals_enabled,
+        'futures_hedge_enabled': cfg.futures_hedge_enabled,
+        'manual_rebalance_only': cfg.manual_rebalance_only,
+        'paper_pass': 'PAPER_PASS_REQUIRED' not in blockers,
+        'key_status': readiness.get('key_status', {}),
+        'inventory_status': 'OK' if inventory and not inventory.get('blockers') else 'BLOCKED',
+        'quote_freshness': 'OK' if quote_age_ms is not None and quote_age_ms <= cfg.stale_quote_ms else 'STALE',
+        'quote_age_ms': quote_age_ms,
+        'min_order_status': 'OK' if cfg.tiny_live_order_krw >= 5000 else 'BLOCKED',
+    }
+    return readiness
+
+
+def _with_plan_quote_source(payload):
+    plan = payload.get('plan') if isinstance(payload, dict) else None
+    if not plan or plan.get('quote_source'):
+        return payload
+    quotes = _read_json(os.path.join(RUNTIME_DIR, 'latest_quotes.json'))
+    quote = quotes.get(plan.get('symbol'), {})
+    plan['quote_source'] = quote.get('source') or quote.get('upbit', {}).get('source') or quote.get('binance', {}).get('source') or 'unknown'
+    return payload
+
+
+def _preflight_payload():
+    return _with_plan_quote_source(create_preflight_plan())
+
+
+def _last_plan_payload():
+    return _with_plan_quote_source(_read_json(os.path.join(RUNTIME_DIR, 'tiny_live_last_preflight.json')))
+
+
+def _tiny_live_status_payload():
+    status = tiny_live_executor.status()
+    if status.get('last_preflight'):
+        status['last_preflight'] = _with_plan_quote_source(status['last_preflight'])
+    return status
+
+
 class KarbHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=WEB_DIR, **kwargs)
@@ -80,11 +132,18 @@ class KarbHandler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def _send_403(self):
-        self._send_json({'error': 'localhost only'}, 403)
+        self._send_json({'ok': False, 'error': 'localhost only', 'blockers': [], 'warnings': []}, 403)
 
-    def _send_executor_action(self, action):
+    def _send_guarded_json(self, action):
         try:
-            self._send_json(action())
+            data = action()
+            if not isinstance(data, dict):
+                data = {'result': data}
+            data.setdefault('ok', bool(data.get('ready', True)))
+            data.setdefault('error', '')
+            data.setdefault('blockers', [])
+            data.setdefault('warnings', [])
+            self._send_json(data)
         except Exception as exc:
             self._send_json({
                 'ok': False,
@@ -133,16 +192,16 @@ class KarbHandler(SimpleHTTPRequestHandler):
             self._send_json(get_inventory_summary())
 
         elif self.path == '/api/live/readiness':
-            self._send_json(get_tiny_live_readiness())
+            self._send_guarded_json(_live_readiness_payload)
 
         elif self.path == '/api/execution/preflight':
-            self._send_executor_action(create_preflight_plan)
+            self._send_guarded_json(_preflight_payload)
 
         elif self.path == '/api/execution/last-plan':
-            self._send_json(_read_json(os.path.join(RUNTIME_DIR, 'tiny_live_last_preflight.json')))
+            self._send_guarded_json(_last_plan_payload)
 
         elif self.path == '/api/tiny-live/status':
-            self._send_json(tiny_live_executor.status())
+            self._send_guarded_json(_tiny_live_status_payload)
 
         elif self.path == '/api/trades/recent':
             recent = _read_jsonl_tail(os.path.join(LOGS_DIR, 'paper_trades.jsonl'), 100)
@@ -169,25 +228,25 @@ class KarbHandler(SimpleHTTPRequestHandler):
             if not self._is_localhost():
                 self._send_403()
                 return
-            self._send_executor_action(create_preflight_plan)
+            self._send_guarded_json(_preflight_payload)
 
         elif self.path == '/api/tiny-live/arm':
             if not self._is_localhost():
                 self._send_403()
                 return
-            self._send_executor_action(tiny_live_executor.arm)
+            self._send_guarded_json(tiny_live_executor.arm)
 
         elif self.path == '/api/tiny-live/disarm':
             if not self._is_localhost():
                 self._send_403()
                 return
-            self._send_executor_action(tiny_live_executor.disarm)
+            self._send_guarded_json(tiny_live_executor.disarm)
 
         elif self.path == '/api/tiny-live/execute-once':
             if not self._is_localhost():
                 self._send_403()
                 return
-            self._send_executor_action(tiny_live_executor.execute_once)
+            self._send_guarded_json(tiny_live_executor.execute_once)
 
         elif self.path == '/api/engine/start':
             if not self._is_localhost():

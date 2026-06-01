@@ -4,6 +4,7 @@
  * STOP 버튼, 세션 배너, 세션 리포트 표시
  */
 const POLL_MS = 3000;
+const TINY_LIVE_ACTION_LABELS = { arm:'ARM TINY LIVE', disarm:'DISARM', 'execute-once':'EXECUTE ONCE' };
 const missingElements = new Set();
 const $ = id => {
   const el = document.getElementById(id);
@@ -15,6 +16,7 @@ const $ = id => {
 };
 const fmt  = (n, d=0) => Number(n||0).toLocaleString('ko-KR',{maximumFractionDigits:d});
 const pnlC = n => n >= 0 ? 'var(--accent-green)' : 'var(--accent-red)';
+const esc = value => String(value??'--').replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
 const setText = (id, value) => { const el=$(id); if (el) el.textContent=value; };
 const setClass = (id, value) => { const el=$(id); if (el) el.className=value; };
 const setStyle = (id, name, value) => { const el=$(id); if (el) el.style[name]=value; };
@@ -487,19 +489,20 @@ async function fetchKeyStatus() {
 
 async function fetchInventory() {
   try {
-    const [inventoryRes, readinessRes, statusRes] = await Promise.all([
+    const [inventoryRes, readinessRes, statusRes, planRes] = await Promise.all([
       fetch('/api/inventory'),
       fetch('/api/live/readiness'),
       fetch('/api/tiny-live/status'),
+      fetch('/api/execution/last-plan'),
     ]);
-    if (!inventoryRes.ok || !readinessRes.ok || !statusRes.ok) return;
-    renderInventory(await inventoryRes.json(), await readinessRes.json(), await statusRes.json());
+    if (!inventoryRes.ok || !readinessRes.ok || !statusRes.ok || !planRes.ok) return;
+    renderInventory(await inventoryRes.json(), await readinessRes.json(), await statusRes.json(), await planRes.json());
   } catch (error) {
     console.error('[fetchInventory] failed', error);
   }
 }
 
-function renderInventory(inventory, readiness, tinyStatus={}) {
+function renderInventory(inventory, readiness, tinyStatus={}, lastPreflight={}) {
   const balances = inventory.balances||{};
   const upbit = balances.upbit||{}, binance = balances.binance||{};
   const symbols = inventory.symbols||[];
@@ -515,41 +518,107 @@ function renderInventory(inventory, readiness, tinyStatus={}) {
   setText('inventory-blockers', readiness.blockers?.length
     ? `Blockers: ${readiness.blockers.join(' / ')}`
     : 'No blockers. Manual review is still required.');
-  setText('tiny-live-status', tinyStatus.status||'DISARMED');
-  setClass('tiny-live-status', `tiny-live-status ${(tinyStatus.armed?'armed':'disarmed')}`);
-  setText('tiny-live-limits', `Order ${fmt(readiness.limits?.tiny_live_order_krw)} KRW / Max ${fmt(readiness.limits?.tiny_live_max_order_krw)} KRW`);
-  const last = tinyStatus.last_order?.status || tinyStatus.last_preflight?.blockers?.join(' / ') || 'No preflight result.';
-  setText('tiny-live-result', `Last result: ${last}`);
-  const partialRisk = tinyStatus.partial_risk || tinyStatus.status==='PARTIAL_RISK';
-  setText('tiny-live-warning', partialRisk ? 'PARTIAL_RISK: manual review required. New entries are blocked.' : '');
-  setClass('tiny-live-warning', `tiny-live-warning ${partialRisk?'visible':''}`);
-  const plan = tinyStatus.last_preflight?.plan||{};
-  setText('execution-plan', plan.plan_id
-    ? `Execution Plan ${plan.plan_id.slice(0,8)} | ${plan.symbol} ${plan.direction_label} | ${plan.upbit_side}/${plan.binance_side} | ${fmt(plan.order_krw)} KRW | ${fmt(plan.quote_age_ms,0)}ms | ${plan.preflight_status}`
-    : 'Execution Plan: no preflight yet.');
-  setDisabled('btn-tiny-execute', !tinyStatus.armed || !readiness.ready || partialRisk);
+  renderTinyLivePanel(readiness, tinyStatus);
+  renderLiveGuard(readiness.live_guard||{}, readiness);
+  renderExecutionPlan(lastPreflight.plan || tinyStatus.last_preflight?.plan || {});
   const grid = $('inventory-grid');
   if (!grid) return;
   grid.innerHTML = symbols.map(row => `
     <div class="inventory-card ${row.status==='OK'?'ok':'shortage'}">
-      <div class="inventory-symbol">${row.symbol}</div>
+      <div class="inventory-symbol">${esc(row.symbol)}</div>
       <div class="inventory-qty">Upbit ${fmt(row.upbit_coin_qty,6)} / Binance ${fmt(row.binance_coin_qty,6)}</div>
       <div class="inventory-directions">
         <span class="${row.direction_a_possible?'ok':'no'}">Direction A ${row.direction_a_possible?'YES':'NO'}</span>
         <span class="${row.direction_b_possible?'ok':'no'}">Direction B ${row.direction_b_possible?'YES':'NO'}</span>
       </div>
-      <div class="inventory-missing">A missing: ${(row.missing_for_a||[]).join(', ')||'none'}</div>
-      <div class="inventory-missing">B missing: ${(row.missing_for_b||[]).join(', ')||'none'}</div>
-      <div class="inventory-manual">Manual Rebalance: ${row.recommended_manual_action}</div>
+      <div class="inventory-missing">A missing: ${(row.missing_for_a||[]).map(esc).join(', ')||'none'}</div>
+      <div class="inventory-missing">B missing: ${(row.missing_for_b||[]).map(esc).join(', ')||'none'}</div>
+      <div class="inventory-manual">Manual Rebalance: ${esc(row.recommended_manual_action)}</div>
     </div>`).join('') || '<div class="empty-row">Inventory unavailable. Review blockers.</div>';
+}
+
+function renderTinyLivePanel(readiness, tinyStatus={}) {
+  const status = tinyStatus.status||'DISARMED';
+  const partialRisk = tinyStatus.partial_risk || status==='PARTIAL_RISK';
+  setText('tiny-live-status', status);
+  setClass('tiny-live-status', `tiny-live-status ${partialRisk?'danger':tinyStatus.armed?'armed':'disarmed'}`);
+  setText('tiny-live-armed', String(Boolean(tinyStatus.armed)));
+  setText('tiny-live-partial-risk', String(Boolean(partialRisk)));
+  setText('tiny-live-trade-count', fmt(tinyStatus.trade_count));
+  setText('tiny-live-daily-loss', `${fmt(tinyStatus.daily_loss_krw)} KRW`);
+  setText('tiny-live-limits', `Order ${fmt(readiness.limits?.tiny_live_order_krw)} KRW / Max ${fmt(readiness.limits?.tiny_live_max_order_krw)} KRW`);
+  const last = tinyStatus.last_order?.status || tinyStatus.last_preflight?.blockers?.join(' / ') || 'No preflight result.';
+  setText('tiny-live-result', `Last result: ${last}`);
+  setText('tiny-live-next-action', readiness.next_action||'Review blockers before arming.');
+  setText('tiny-live-blockers', readiness.blockers?.length ? `Blockers: ${readiness.blockers.join(' / ')}` : 'Blockers: none');
+  setText('tiny-live-warnings', readiness.warnings?.length ? `Warnings: ${readiness.warnings.join(' / ')}` : 'Warnings: none');
+  setText('tiny-live-warning', partialRisk
+    ? 'PARTIAL_RISK: new entries blocked. Check Upbit fills, Binance fills, and both balances. DISARM after manual cleanup. Automatic unwind is not implemented.'
+    : '');
+  setClass('tiny-live-warning', `tiny-live-warning ${partialRisk?'visible':''}`);
+  setDisabled('btn-tiny-execute', !tinyStatus.armed || !readiness.ready || partialRisk);
+}
+
+// Live Guard and Execution Plan render read-only safety state from the API.
+function renderLiveGuard(guard, readiness) {
+  const keyStatus = guard.key_status||readiness.key_status||{};
+  const keysOk = Object.values(keyStatus).length>0 && Object.values(keyStatus).every(value=>value==='Set');
+  const fields = [
+    ['Mode', guard.mode, guard.mode==='tiny_live'],
+    ['Enable live trading', guard.enable_live_trading, guard.enable_live_trading],
+    ['Tiny live enabled', guard.tiny_live_enabled, guard.tiny_live_enabled],
+    ['Live order enabled', guard.live_order_enabled, guard.live_order_enabled],
+    ['Live mode enabled', guard.live_mode_enabled, guard.live_mode_enabled],
+    ['Withdrawals disabled', !guard.withdrawals_enabled, !guard.withdrawals_enabled],
+    ['Futures hedge disabled', !guard.futures_hedge_enabled, !guard.futures_hedge_enabled],
+    ['Manual rebalance only', guard.manual_rebalance_only, guard.manual_rebalance_only],
+    ['Paper pass', guard.paper_pass, guard.paper_pass],
+    ['Keys', keysOk?'SET':'MISSING', keysOk],
+    ['Inventory', guard.inventory_status||'BLOCKED', guard.inventory_status==='OK'],
+    ['Quote freshness', `${guard.quote_freshness||'STALE'}${guard.quote_age_ms==null?'':` ${fmt(guard.quote_age_ms,0)}ms`}`, guard.quote_freshness==='OK'],
+    ['Min order', guard.min_order_status||'BLOCKED', guard.min_order_status==='OK'],
+  ];
+  const grid = $('live-guard-grid');
+  if (!grid) return;
+  grid.innerHTML = fields.map(([label,value,ok]) => `
+    <div class="guard-item ${ok?'ok':'blocked'}">
+      <span>${esc(label)}</span><strong>${esc(value)}</strong>
+    </div>`).join('');
+}
+
+function renderExecutionPlan(plan={}) {
+  const el = $('execution-plan');
+  if (!el) return;
+  if (!plan.plan_id) {
+    el.textContent = 'Execution Plan: no preflight yet.';
+    return;
+  }
+  const fields = [
+    ['Plan ID', plan.plan_id], ['Symbol', plan.symbol], ['Direction', plan.direction],
+    ['Direction Label', plan.direction_label], ['Upbit Side', plan.upbit_side],
+    ['Binance Side', plan.binance_side], ['Order KRW', `${fmt(plan.order_krw)} KRW`],
+    ['Order USDT', `${fmt(plan.order_usdt,4)} USDT`], ['Qty', fmt(plan.qty,8)],
+    ['Normalized Qty', fmt(plan.normalized_qty,8)], ['Upbit Expected', fmt(plan.upbit_expected_price,2)],
+    ['Binance Expected', fmt(plan.binance_expected_price,8)], ['Quote Source', plan.quote_source||'--'],
+    ['Quote Age', `${fmt(plan.quote_age_ms,0)} ms`], ['Net Surplus', `${fmt(plan.best_net_surplus_bp,1)} bp`],
+    ['Expected Profit', `${fmt(plan.expected_net_profit_krw)} KRW`], ['Preflight', plan.preflight_status],
+    ['Executable', String(Boolean(plan.executable))],
+  ];
+  el.innerHTML = `
+    <div class="execution-plan-grid">${fields.map(([label,value])=>`<div><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`).join('')}</div>
+    <div class="execution-plan-list">Blockers: ${(plan.blockers||[]).map(esc).join(' / ')||'none'}</div>
+    <div class="execution-plan-list">Warnings: ${(plan.warnings||[]).map(esc).join(' / ')||'none'}</div>`;
 }
 
 async function tinyLiveAction(action) {
   if (action === 'execute-once' && !confirm('Execute one guarded tiny-live Spot order pair?')) return;
   try {
+    const label = TINY_LIVE_ACTION_LABELS[action]||action;
     const res = await fetch(`/api/tiny-live/${action}`, { method:'POST' });
     const data = await res.json();
-    setText('tiny-live-result', data.ok ? `Last result: ${data.status}` : `Blocked: ${(data.blockers||[]).join(' / ')}`);
+    setText('tiny-live-result', data.ok
+      ? `${label}: ${data.status}`
+      : `${label} blocked: ${(data.blockers||[]).join(' / ')||data.error||'UNKNOWN_ERROR'}`);
     fetchInventory();
   } catch (error) {
     console.error('[tinyLiveAction] failed', error);

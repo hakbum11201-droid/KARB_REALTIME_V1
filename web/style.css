@@ -379,13 +379,37 @@ body {
 .tiny-live-panel-title { color:var(--text-primary); font-weight:700; margin-bottom:8px; }
 .tiny-live-badges, .tiny-live-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
 .tiny-live-badges span { color:var(--accent-green); background:rgba(72,187,120,.12); border-radius:999px; padding:3px 7px; font-size:10px; font-weight:700; }
+.tiny-live-overview { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:8px; margin-top:12px; }
+.tiny-live-overview div { display:flex; flex-direction:column; gap:4px; background:rgba(255,255,255,.035); border-radius:var(--radius-sm); padding:9px; }
+.tiny-live-overview span { color:var(--text-muted); font-size:10px; text-transform:uppercase; letter-spacing:.06em; }
+.tiny-live-overview strong { color:var(--text-primary); font-family:var(--font-mono); font-size:12px; }
 .tiny-live-status { display:inline-block; margin-top:10px; padding:5px 8px; border-radius:var(--radius-sm); font-family:var(--font-mono); font-weight:700; }
 .tiny-live-status.armed { color:var(--accent-green); background:rgba(72,187,120,.12); }
 .tiny-live-status.disarmed { color:var(--accent-orange); background:rgba(237,137,54,.12); }
+.tiny-live-status.danger { color:var(--accent-red); background:rgba(252,129,129,.12); }
 .tiny-live-limits, .tiny-live-result { color:var(--text-secondary); font-family:var(--font-mono); font-size:11px; margin-top:8px; }
+.tiny-live-next-action, .tiny-live-blockers, .tiny-live-warnings { color:var(--text-secondary); font-family:var(--font-mono); font-size:11px; margin-top:7px; line-height:1.5; }
+.tiny-live-blockers { color:var(--accent-orange); }
 .execution-plan { color:var(--text-secondary); background:rgba(255,255,255,.03); border-radius:var(--radius-sm); padding:8px; font-family:var(--font-mono); font-size:11px; margin-top:8px; line-height:1.5; }
 .tiny-live-warning { display:none; color:var(--accent-red); background:rgba(252,129,129,.12); border:1px solid rgba(252,129,129,.35); border-radius:var(--radius-sm); padding:8px; font-weight:700; font-size:11px; margin-top:8px; }
 .tiny-live-warning.visible { display:block; }
+.live-guard-panel, .execution-plan-panel { background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:14px; margin:14px 0; }
+.live-guard-grid, .execution-plan-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(145px,1fr)); gap:8px; }
+.guard-item, .execution-plan-grid div { display:flex; flex-direction:column; gap:4px; padding:9px; border-radius:var(--radius-sm); background:rgba(255,255,255,.035); }
+.guard-item span, .execution-plan-grid span { color:var(--text-muted); font-size:10px; text-transform:uppercase; letter-spacing:.06em; }
+.guard-item strong, .execution-plan-grid strong { color:var(--text-primary); font-family:var(--font-mono); font-size:12px; }
+.guard-item.ok { border:1px solid rgba(72,187,120,.28); }
+.guard-item.ok strong { color:var(--accent-green); }
+.guard-item.blocked { border:1px solid rgba(237,137,54,.28); }
+.guard-item.blocked strong { color:var(--accent-orange); }
+.execution-direction-guide { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0; }
+.execution-direction-guide span { color:var(--accent-blue); background:rgba(99,179,237,.1); border-radius:999px; padding:4px 8px; font-family:var(--font-mono); font-size:10px; }
+.execution-plan-list { color:var(--text-secondary); margin-top:8px; line-height:1.5; overflow-wrap:anywhere; }
+.key-permission-guide { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:12px; margin-bottom:20px; }
+.key-permission-guide div { display:flex; flex-direction:column; gap:6px; background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:14px; }
+.key-permission-guide strong { color:var(--accent-green); font-size:12px; }
+.key-permission-guide strong.forbidden { color:var(--accent-red); margin-top:5px; }
+.key-permission-guide span { color:var(--text-secondary); font-size:11px; line-height:1.5; }
 
 /* ── STOP Button ─────────────────────────────────────── */
 .stop-btn {

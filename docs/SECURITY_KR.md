@@ -175,3 +175,6 @@ Paper 검증 기간 중:
 - Any one-sided failure or partial fill records `PARTIAL_RISK`, disarms execution, and blocks new entries.
 - There is no automatic unwind order. Operators must inspect balances and orders manually.
 - Never grant withdrawal permission. Futures, Margin, P2P, internal transfer, wallet address storage, and travel-rule automation are prohibited.
+- Keep `tiny_live_order_krw` small and review the `Execution Plan` before every intentional `EXECUTE ONCE`.
+- Restrict API keys by IP where possible. Use read and Spot order permissions only.
+- Treat `PARTIAL_RISK` as an immediate stop condition: inspect both exchange fills and balances, then disarm manually.

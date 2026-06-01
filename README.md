@@ -153,3 +153,12 @@ python -m py_compile app_launcher.py
 - A one-sided failure or partial fill sets `PARTIAL_RISK`, disarms the executor, and blocks new entries.
 - Automatic unwind orders are intentionally disabled. Resolve partial exposure manually.
 - Withdrawal, wallet, transfer, Futures, Margin, and P2P features are intentionally absent.
+
+### Tiny Live panel
+
+1. Open `Inventory / Rebalance` and review the `Live Guard` blockers.
+2. Enable all three configuration gates only after paper validation: `enable_live_trading=true`, `tiny_live_enabled=true`, and `live_order_enabled=true`.
+3. Click `ARM TINY LIVE`, review the generated `Execution Plan`, then use `EXECUTE ONCE` only for an intentional single guarded Spot order pair.
+4. Click `DISARM` after the check. `DISARM` is always available.
+
+API keys alone never enable an order. If `PARTIAL_RISK` appears, stop new entries, inspect both exchange fills and balances manually, then disarm. Automatic unwind is intentionally absent.

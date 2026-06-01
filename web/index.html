@@ -197,20 +197,42 @@
       </div>
       <div class="inventory-blockers" id="inventory-blockers">Loading blockers...</div>
       <div class="tiny-live-panel">
-        <div class="tiny-live-panel-title">Tiny Live Spot Execution</div>
+        <div class="tiny-live-panel-title">Tiny Live</div>
         <div class="tiny-live-badges">
           <span>Withdrawals Disabled</span><span>Manual Rebalance Only</span>
         </div>
-        <div class="tiny-live-status" id="tiny-live-status">DISARMED</div>
+        <div class="tiny-live-overview">
+          <div><span>Status</span><strong class="tiny-live-status disarmed" id="tiny-live-status">DISARMED</strong></div>
+          <div><span>Armed</span><strong id="tiny-live-armed">false</strong></div>
+          <div><span>Partial Risk</span><strong id="tiny-live-partial-risk">false</strong></div>
+          <div><span>Trades Today</span><strong id="tiny-live-trade-count">0</strong></div>
+          <div><span>Daily Loss</span><strong id="tiny-live-daily-loss">0 KRW</strong></div>
+        </div>
         <div class="tiny-live-limits" id="tiny-live-limits">Loading limits...</div>
         <div class="tiny-live-result" id="tiny-live-result">No preflight result.</div>
+        <div class="tiny-live-next-action" id="tiny-live-next-action">Review blockers before arming.</div>
+        <div class="tiny-live-blockers" id="tiny-live-blockers">Blockers: loading...</div>
+        <div class="tiny-live-warnings" id="tiny-live-warnings">Warnings: loading...</div>
         <div class="tiny-live-warning" id="tiny-live-warning"></div>
-        <div class="execution-plan" id="execution-plan">Execution Plan: no preflight yet.</div>
         <div class="tiny-live-actions">
           <button class="btn btn-tiny" id="btn-tiny-arm">ARM TINY LIVE</button>
           <button class="btn btn-stop" id="btn-tiny-disarm">DISARM</button>
           <button class="btn btn-live" id="btn-tiny-execute" disabled>EXECUTE ONCE</button>
         </div>
+      </div>
+      <div class="live-guard-panel">
+        <div class="tiny-live-panel-title">Live Guard</div>
+        <div class="live-guard-grid" id="live-guard-grid">
+          <div class="empty-row">Loading Live Guard...</div>
+        </div>
+      </div>
+      <div class="execution-plan-panel">
+        <div class="tiny-live-panel-title">Execution Plan</div>
+        <div class="execution-direction-guide">
+          <span>A_KIMCHI = Upbit SELL / Binance BUY</span>
+          <span>B_REVERSE_KIMCHI = Upbit BUY / Binance SELL</span>
+        </div>
+        <div class="execution-plan" id="execution-plan">Execution Plan: no preflight yet.</div>
       </div>
       <div class="inventory-grid" id="inventory-grid">
         <div class="empty-row">Loading Inventory / Rebalance guide...</div>
@@ -223,6 +245,20 @@
       <div class="keys-warning">
         ⚠ <strong>localhost 전용</strong>. 키 값은 저장 후 다시 표시되지 않습니다.
         paper 모드는 키 없이 동작. tiny_live/live는 키 필수.
+      </div>
+      <div class="key-permission-guide">
+        <div>
+          <strong>Upbit allowed</strong>
+          <span>Balance read / Order read / Order create</span>
+          <strong class="forbidden">Upbit forbidden</strong>
+          <span>Withdraw create / Withdraw read / Withdraw address management</span>
+        </div>
+        <div>
+          <strong>Binance allowed</strong>
+          <span>Spot account read / Spot trade / Order read</span>
+          <strong class="forbidden">Binance forbidden</strong>
+          <span>Withdrawals / Futures / Margin / P2P / Internal transfer</span>
+        </div>
       </div>
       <div class="keys-status-grid">
         <div class="key-status-card"><div class="key-status-label">Upbit Access</div><div class="key-status-badge" id="badge-UPBIT_ACCESS_KEY">--</div></div>
