@@ -171,3 +171,11 @@ API keys alone never enable an order. If `PARTIAL_RISK` appears, stop new entrie
 - During a long paper run, watch runtime, loop count, quote count, decision count, candidate count, OK signals, top NO-GO reasons, maximum surplus, best symbol, quote age, and P95 loop/quote latency.
 - Session summaries include WS ratio, REST fallback count, stale quote count, signal counts, surplus statistics, network health, trading quality, and final judgement.
 - Tiny-live ordering remains blocked by default. Monitoring changes do not enable live orders.
+
+## Order tracker and emergency scaffold
+
+- `OrderTracker` records each tiny-live plan and its Upbit/Binance Spot legs in overwrite-only runtime snapshots. Duplicate fill updates replace leg values instead of adding them again.
+- Any one-sided failure, timeout, or partial fill becomes `PARTIAL_RISK`. The executor disarms and blocks new entries until an operator reviews both exchanges and resolves any remaining Spot exposure.
+- `EmergencyLiquidator` is a guarded scaffold only. `emergency_liquidation_enabled=false` and `emergency_auto_execute=false` are the defaults, so it returns a manual action guide instead of placing an order.
+- `MANUAL CLEAR PARTIAL RISK` records an operator-provided reason and returns the tracker to `DISARMED`. It never places an order.
+- Withdrawal, wallet-address, transfer, Futures, Margin, and P2P features remain intentionally absent.

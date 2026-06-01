@@ -22,6 +22,14 @@ rest_fallback_enabled: true
 block_new_entries_on_partial_risk: true
 order_ttl_sec: 1.5
 min_fill_ratio: 0.8
+emergency_liquidation_enabled: false
+emergency_auto_execute: false
+emergency_strategy: COMPLETE_MISSING_LEG
+emergency_max_order_krw: 20000
+emergency_max_slippage_bp: 20
+emergency_max_attempts_per_day: 2
+order_tracker_enabled: true
+order_tracker_recent_max_items: 100
 
 symbols: [BTC, ETH, XRP, DOGE, SOL]
 

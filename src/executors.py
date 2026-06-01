@@ -10,7 +10,9 @@ from datetime import date
 from config import cfg
 from exchange_clients import BinanceSpotPrivateClient, UpbitPrivateClient
 from execution_plan import ExecutionPlan
+from emergency_liquidator import EmergencyLiquidator
 from inventory_manager import InventoryManager
+from order_tracker import ACTIVE_STATUSES, BLOCKING_STATUSES, OrderTracker
 from risk_guard import RiskGuard
 from secrets_manager import get_api_permission_policy, get_key_status
 
@@ -117,6 +119,15 @@ def _base_blockers() -> list[str]:
         blockers.append('MAX_TRADES_LIMIT')
     if float(status.get('daily_loss_krw', 0) or 0) >= cfg.tiny_live_daily_loss_limit_krw:
         blockers.append('DAILY_LOSS_LIMIT')
+    if cfg.order_tracker_enabled:
+        tracker_state = OrderTracker().to_dict()
+        tracker_status = tracker_state.get('status')
+        if tracker_status in BLOCKING_STATUSES:
+            blockers.append(tracker_status)
+        elif tracker_status in ACTIVE_STATUSES:
+            blockers.append('ORDER_TRACKER_ACTIVE')
+        if tracker_state.get('emergency_required') and not tracker_state.get('emergency_done'):
+            blockers.append('PARTIAL_RISK_ACTIVE')
     return _unique(blockers)
 
 
@@ -254,6 +265,10 @@ def create_preflight_plan() -> dict:
 
 
 class TinyLiveExecutor:
+    def __init__(self):
+        self.tracker = OrderTracker()
+        self.emergency = EmergencyLiquidator()
+
     def preflight(self, plan=None) -> dict:
         return create_preflight_plan()
 
@@ -272,7 +287,21 @@ class TinyLiveExecutor:
         return {'ok': True, **status}
 
     def status(self) -> dict:
-        return {**_status(), 'last_preflight': _read_json(PREFLIGHT_FILE), 'last_order': _read_json(ORDER_FILE)}
+        return {
+            **_status(), 'last_preflight': _read_json(PREFLIGHT_FILE), 'last_order': _read_json(ORDER_FILE),
+            'order_tracker': self.tracker.to_dict(), 'emergency': self.emergency.status(self.tracker.to_dict()),
+        }
+
+    def manual_clear_partial_risk(self, reason: str) -> dict:
+        tracker_state = self.tracker.to_dict()
+        if tracker_state.get('status') not in BLOCKING_STATUSES and not tracker_state.get('emergency_required'):
+            return {'ok': False, 'error': 'PARTIAL_RISK_NOT_ACTIVE', 'blockers': ['PARTIAL_RISK_NOT_ACTIVE']}
+        tracker_state = self.tracker.manual_clear(reason)
+        status = _write_status(
+            armed=False, status='DISARMED', partial_risk=False, blockers=[], last_error='',
+            warnings=['MANUAL_CLEAR_RECORDED'],
+        )
+        return {'ok': True, **status, 'order_tracker': tracker_state}
 
     def execute_once(self, plan=None) -> dict:
         status = _status()
@@ -303,6 +332,8 @@ class TinyLiveExecutor:
             blockers = _unique(blockers)
             _write_status(status='BLOCKED', blockers=blockers, last_error='EXECUTION_GUARD_BLOCKED')
             return {'ok': False, 'status': 'BLOCKED', 'blockers': blockers, 'plan': plan}
+        if cfg.order_tracker_enabled:
+            self.tracker.start_plan(plan)
         status = _write_status(status='EXECUTING', blockers=[], last_error='')
         symbol, direction = plan['symbol'], plan['direction']
         upbit, binance = UpbitPrivateClient(), BinanceSpotPrivateClient()
@@ -323,40 +354,68 @@ class TinyLiveExecutor:
                 name = pending[future]
                 try:
                     results[name] = future.result()
+                    if cfg.order_tracker_enabled:
+                        self.tracker.mark_submitted(name, results[name])
                 except Exception as exc:
                     errors[name] = f'{type(exc).__name__}: {exc}'
+                    if cfg.order_tracker_enabled:
+                        self.tracker.mark_failed(name, errors[name])
         fills = {}
-        if not errors:
-            try:
-                upbit_order_id = results['upbit'].get('uuid')
-                binance_order_id = results['binance'].get('orderId')
-                if not upbit_order_id or binance_order_id is None:
-                    raise ValueError('ORDER_ID_MISSING')
-                with ThreadPoolExecutor(max_workers=2) as pool:
-                    pending = {
-                        pool.submit(upbit.wait_order_filled, upbit_order_id, cfg.order_ttl_sec): 'upbit',
-                        pool.submit(binance.wait_order_filled, symbol, binance_order_id, cfg.order_ttl_sec): 'binance',
-                    }
-                    for future in as_completed(pending):
-                        name = pending[future]
-                        try:
-                            fills[name] = future.result()
-                        except Exception as exc:
-                            errors[name] = f'{type(exc).__name__}: {exc}'
-            except Exception as exc:
-                errors['fill_check'] = f'{type(exc).__name__}: {exc}'
+        wait_calls = {}
+        upbit_order_id = results.get('upbit', {}).get('uuid')
+        binance_order_id = results.get('binance', {}).get('orderId')
+        if results.get('upbit'):
+            if upbit_order_id:
+                wait_calls['upbit'] = lambda: upbit.wait_order_filled(upbit_order_id, cfg.order_ttl_sec)
+            else:
+                errors['upbit_fill_check'] = 'ValueError: ORDER_ID_MISSING'
+        if results.get('binance'):
+            if binance_order_id is not None:
+                wait_calls['binance'] = lambda: binance.wait_order_filled(symbol, binance_order_id, cfg.order_ttl_sec)
+            else:
+                errors['binance_fill_check'] = 'ValueError: ORDER_ID_MISSING'
+        if wait_calls:
+            if cfg.order_tracker_enabled:
+                for name in wait_calls:
+                    self.tracker.mark_waiting_fill(name)
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                pending = {pool.submit(call): name for name, call in wait_calls.items()}
+                for future in as_completed(pending):
+                    name = pending[future]
+                    try:
+                        fills[name] = future.result()
+                        if cfg.order_tracker_enabled:
+                            self.tracker.mark_filled(name, fills[name])
+                            if not fills[name].get('filled'):
+                                self.tracker.mark_timeout(name)
+                    except Exception as exc:
+                        errors[name] = f'{type(exc).__name__}: {exc}'
+                        if cfg.order_tracker_enabled:
+                            self.tracker.mark_failed(name, errors[name])
         filled = (
             not errors and len(fills) == 2
             and all(item.get('filled') and float(item.get('fill_ratio', 0) or 0) >= cfg.min_fill_ratio
                     for item in fills.values())
         )
         partial = not filled and (bool(results) or any(float(item.get('fill_ratio', 0) or 0) > 0 for item in fills.values()))
+        manual_action = self.emergency.manual_action(self.tracker.to_dict())
+        emergency_result = {}
         if filled:
             next_status = _write_status(
                 status='FILLED', trade_count=int(status.get('trade_count', 0)) + 1,
                 blockers=[], last_error='',
             )
         elif partial:
+            if cfg.order_tracker_enabled:
+                self.tracker.mark_partial_risk(manual_action)
+            emergency_check = self.emergency.can_execute_emergency(self.tracker.to_dict(), plan)
+            if cfg.order_tracker_enabled and emergency_check.get('ready'):
+                self.tracker.mark_emergency_attempted()
+            emergency_result = self.emergency.execute_emergency(
+                self.tracker.to_dict(), plan, check=emergency_check
+            )
+            if cfg.order_tracker_enabled and emergency_check.get('ready'):
+                self.tracker.mark_emergency_result(emergency_result.get('ok', False), emergency_result.get('error', ''))
             next_status = _write_status(
                 armed=False, status='PARTIAL_RISK', partial_risk=True,
                 blockers=['PARTIAL_RISK_ACTIVE'], last_error='PARTIAL_RISK',
@@ -366,10 +425,9 @@ class TinyLiveExecutor:
         output = {
             'ok': filled, 'status': next_status['status'], 'plan': plan, 'results': results,
             'fills': fills, 'errors': errors, 'partial_risk': bool(next_status.get('partial_risk')),
-            'suggested_manual_action': (
-                'Stop new entries and manually inspect both exchange orders and balances. Automatic unwind is disabled.'
-                if partial else ''
-            ),
+            'order_tracker': self.tracker.to_dict() if cfg.order_tracker_enabled else {},
+            'emergency': emergency_result,
+            'suggested_manual_action': manual_action if partial else '',
         }
         _write_json(ORDER_FILE, output)
         return output

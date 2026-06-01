@@ -133,6 +133,19 @@ def _last_session_payload():
     }
 
 
+def _order_tracker_status_payload():
+    return {'ok': True, 'error': '', 'blockers': [], 'order_tracker': tiny_live_executor.tracker.to_dict()}
+
+
+def _order_tracker_recent_payload():
+    return {'ok': True, 'error': '', 'blockers': [], 'events': tiny_live_executor.tracker.recent()}
+
+
+def _emergency_status_payload():
+    tracker = tiny_live_executor.tracker.to_dict()
+    return {'ok': True, 'error': '', 'blockers': [], 'emergency': tiny_live_executor.emergency.status(tracker)}
+
+
 class KarbHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=WEB_DIR, **kwargs)
@@ -230,6 +243,15 @@ class KarbHandler(SimpleHTTPRequestHandler):
         elif self.path == '/api/tiny-live/status':
             self._send_guarded_json(_tiny_live_status_payload)
 
+        elif self.path == '/api/order-tracker/status':
+            self._send_guarded_json(_order_tracker_status_payload)
+
+        elif self.path == '/api/order-tracker/recent':
+            self._send_guarded_json(_order_tracker_recent_payload)
+
+        elif self.path == '/api/emergency/status':
+            self._send_guarded_json(_emergency_status_payload)
+
         elif self.path == '/api/trades/recent':
             recent = _read_jsonl_tail(os.path.join(LOGS_DIR, 'paper_trades.jsonl'), 100)
             exits = [r for r in recent if r.get('event') == 'EXIT'][-20:]
@@ -274,6 +296,21 @@ class KarbHandler(SimpleHTTPRequestHandler):
                 self._send_403()
                 return
             self._send_guarded_json(tiny_live_executor.execute_once)
+
+        elif self.path == '/api/emergency/manual-clear':
+            if not self._is_localhost():
+                self._send_403()
+                return
+            length = int(self.headers.get('Content-Length', 0))
+            try:
+                body = json.loads(self.rfile.read(length).decode('utf-8')) if length else {}
+                reason = str(body.get('reason', '')).strip()
+                if not reason:
+                    self._send_json({'ok': False, 'error': 'CLEARING_REASON_REQUIRED', 'blockers': ['CLEARING_REASON_REQUIRED'], 'warnings': []}, 400)
+                    return
+                self._send_guarded_json(lambda: tiny_live_executor.manual_clear_partial_risk(reason))
+            except Exception as exc:
+                self._send_json({'ok': False, 'error': type(exc).__name__, 'blockers': ['MANUAL_CLEAR_FAILED'], 'warnings': []}, 400)
 
         elif self.path == '/api/engine/start':
             if not self._is_localhost():

@@ -641,6 +641,31 @@ function renderTinyLivePanel(readiness, tinyStatus={}) {
     : '');
   setClass('tiny-live-warning', `tiny-live-warning ${partialRisk?'visible':''}`);
   setDisabled('btn-tiny-execute', !tinyStatus.armed || !readiness.ready || partialRisk);
+  renderOrderTracker(tinyStatus.order_tracker||{}, tinyStatus.emergency||{});
+}
+
+function renderOrderTracker(tracker={}, emergency={}) {
+  const grid = $('order-tracker-grid');
+  if (!grid) return;
+  if (!tracker.plan_id) {
+    grid.innerHTML='<div class="empty-row">No tracked tiny-live order.</div>';
+  } else {
+    const upbit=tracker.upbit_leg||{}, binance=tracker.binance_leg||{};
+    const fields = [
+      ['Status', tracker.status], ['Plan ID', tracker.plan_id], ['Upbit Leg', upbit.status||'--'],
+      ['Binance Leg', binance.status||'--'], ['Net Filled Qty', fmt(tracker.net_filled_qty,8)],
+      ['Exposure Qty', `${fmt(tracker.exposure_qty,8)} ${tracker.exposure_side||''}`],
+      ['Partial Risk', String(tracker.status==='PARTIAL_RISK')], ['Emergency Required', String(Boolean(tracker.emergency_required))],
+      ['Emergency Attempted', String(Boolean(tracker.emergency_attempted))], ['Emergency Enabled', String(Boolean(emergency.enabled))],
+    ];
+    grid.innerHTML=fields.map(([label,value])=>`<div><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`).join('');
+  }
+  const partial=tracker.status==='PARTIAL_RISK'||tracker.status==='EMERGENCY_PENDING'||tracker.status==='EMERGENCY_FAILED';
+  setText('order-tracker-warning', partial
+    ? 'PARTIAL_RISK: new entries blocked. Inspect Upbit fills, Binance fills, and both balances. Resolve Spot exposure manually before clearing.'
+    : '');
+  setClass('order-tracker-warning', `tiny-live-warning ${partial?'visible':''}`);
+  setText('order-tracker-action', tracker.suggested_manual_action||emergency.suggested_manual_action||'No manual action required.');
 }
 
 // Live Guard and Execution Plan render read-only safety state from the API.
@@ -712,6 +737,21 @@ async function tinyLiveAction(action) {
 on('btn-tiny-arm', 'click', () => tinyLiveAction('arm'));
 on('btn-tiny-disarm', 'click', () => tinyLiveAction('disarm'));
 on('btn-tiny-execute', 'click', () => tinyLiveAction('execute-once'));
+on('btn-manual-clear', 'click', async () => {
+  if (!confirm('Manual clear does not place an order. Continue only after checking both exchanges and resolving any Spot exposure.')) return;
+  const reason = prompt('Enter the manual clearing reason:');
+  if (!reason?.trim()) return;
+  try {
+    const res = await fetch('/api/emergency/manual-clear', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({reason:reason.trim()}),
+    });
+    const data = await res.json();
+    setText('tiny-live-result', data.ok ? 'MANUAL CLEAR recorded: DISARMED' : `MANUAL CLEAR blocked: ${data.error||'UNKNOWN_ERROR'}`);
+    fetchInventory();
+  } catch (error) {
+    console.error('[Emergency manual clear] failed', error);
+  }
+});
 
 on('btn-save-keys', 'click', async () => {
   const body = {

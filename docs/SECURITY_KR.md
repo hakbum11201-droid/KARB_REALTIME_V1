@@ -178,3 +178,10 @@ Paper 검증 기간 중:
 - Keep `tiny_live_order_krw` small and review the `Execution Plan` before every intentional `EXECUTE ONCE`.
 - Restrict API keys by IP where possible. Use read and Spot order permissions only.
 - Treat `PARTIAL_RISK` as an immediate stop condition: inspect both exchange fills and balances, then disarm manually.
+
+## Partial-risk recovery scaffold
+
+- Emergency recovery is Spot-only. Withdrawal, wallet-address, transfer, Futures, Margin, and P2P APIs must not be added.
+- Keep `emergency_liquidation_enabled=false` and `emergency_auto_execute=false` unless a separate review explicitly approves a recovery attempt.
+- A partial fill immediately blocks new entries. Check Upbit fills, Binance fills, and both balances before resolving exposure manually.
+- Automatic repeated recovery orders are prohibited. `MANUAL CLEAR PARTIAL RISK` records the operator reason after manual review; it does not place an order.

@@ -65,6 +65,22 @@ class Config:
     def order_ttl_sec(self): return self.get('order_ttl_sec', 1.5)
     @property
     def min_fill_ratio(self): return self.get('min_fill_ratio', 0.8)
+    @property
+    def emergency_liquidation_enabled(self): return self.get('emergency_liquidation_enabled', False)
+    @property
+    def emergency_auto_execute(self): return self.get('emergency_auto_execute', False)
+    @property
+    def emergency_strategy(self): return self.get('emergency_strategy', 'COMPLETE_MISSING_LEG')
+    @property
+    def emergency_max_order_krw(self): return self.get('emergency_max_order_krw', 20000)
+    @property
+    def emergency_max_slippage_bp(self): return self.get('emergency_max_slippage_bp', 20)
+    @property
+    def emergency_max_attempts_per_day(self): return self.get('emergency_max_attempts_per_day', 2)
+    @property
+    def order_tracker_enabled(self): return self.get('order_tracker_enabled', True)
+    @property
+    def order_tracker_recent_max_items(self): return self.get('order_tracker_recent_max_items', 100)
 
     # ── 심볼 / 루프 ────────────────────────────────────────────
     @property
