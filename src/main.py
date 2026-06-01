@@ -98,10 +98,13 @@ def main():
     os.makedirs(runtime_dir, exist_ok=True)
     state_path   = os.path.join(runtime_dir, 'state.json')
     quotes_path  = os.path.join(runtime_dir, 'latest_quotes.json')
+    telemetry_path = os.path.join(runtime_dir, 'telemetry.json')
+    decisions_path = os.path.join(runtime_dir, 'latest_decisions.json')
 
     # ── 세션 통계 누적기 ──────────────────────────────────────────────────
     start_time         = started_at
     last_state_write   = 0.0
+    last_telemetry_write = 0.0
     last_console_print = 0.0
     console_interval   = cfg.get('console_summary_interval_sec', 15)
     krw_usdt           = None
@@ -114,14 +117,16 @@ def main():
     paper_exit_count  = 0
     error_count      = 0
     reason_counts:   dict[str, int] = {}
-    surplus_bp_list: list[float]    = []
+    surplus_bp_list: deque[float]   = deque(maxlen=1000)
     loop_lat_list:   deque[float]   = deque(maxlen=1000)
     quote_lat_list:  deque[float]   = deque(maxlen=1000)
     latest_reason    = ''
     last_quote_at    = 0.0
-
-    # bounded: 최근 1000건만 보존 (무한 리스트 방지)
-    MAX_SURPLUS_SAMPLES = 1000
+    latest_decision_at = 0.0
+    decisions = deque(maxlen=cfg.decision_log_max_items)
+    signal_counts: dict[str, int] = {}
+    symbol_surplus_max: dict[str, float] = {}
+    quote_source_counts = {'ws': 0, 'rest': 0}
 
     while True:
         loop_start = time.time()
@@ -170,6 +175,8 @@ def main():
             upbit_q   = q['upbit']
             binance_q = q['binance']
             quote_count += 1
+            quote_source = q.get('source', 'rest')
+            quote_source_counts[quote_source if quote_source in quote_source_counts else 'rest'] += 1
 
             # latency 추적
             u_lat = upbit_q.get('latency_ms', 0)
@@ -199,8 +206,7 @@ def main():
 
             # surplus 통계 수집
             surplus = calc_res.get('best_net_surplus_bp', -9999)
-            if len(surplus_bp_list) < MAX_SURPLUS_SAMPLES:
-                surplus_bp_list.append(surplus)
+            surplus_bp_list.append(surplus)
 
             if surplus > best_surplus_this_loop:
                 best_surplus_this_loop = surplus
@@ -215,6 +221,29 @@ def main():
 
             if is_safe:
                 candidate_count += 1
+                signal_counts[sym] = signal_counts.get(sym, 0) + 1
+
+            symbol_surplus_max[sym] = max(symbol_surplus_max.get(sym, -9999.0), surplus)
+            decision_time = time.time()
+            latest_decision_at = decision_time
+            decisions.append({
+                'time': decision_time,
+                'symbol': sym,
+                'direction': calc_res.get('best_direction', ''),
+                'direction_label': (
+                    'A_KIMCHI' if calc_res.get('best_direction') == 'A'
+                    else 'B_REVERSE_KIMCHI' if calc_res.get('best_direction') == 'B'
+                    else ''
+                ),
+                'best_net_surplus_bp': surplus,
+                'expected_net_profit_krw': calc_res.get('net_expected_profit_krw', 0),
+                'reason_no_trade': reason,
+                'threshold_gap_bp': round(max(0, cfg.min_net_surplus_bp - surplus), 4),
+                'quote_source': q.get('source', 'rest'),
+                'quote_age_ms': round(float(q.get('quote_age_sec', 0) or 0) * 1000, 2),
+                'go_no_go': 'GO' if is_safe else 'NO-GO',
+                'blockers': [] if is_safe else [reason],
+            })
 
             event_logger.log_decision(calc_res)
 
@@ -265,6 +294,23 @@ def main():
 
         # ── --until-stop 콘솔 요약 (간격별) ───────────────────────────────
         now = time.time()
+        ws_metrics = ws_market_data.metrics() if ws_market_data else {
+            'ws_connected': False,
+            'ws_symbols_ok': 0,
+            'rest_fallback_count': 0,
+            'quote_stale_count': 0,
+            'quote_source_summary': {'ws': 0, 'rest': len(quotes), 'stale': 0},
+            'symbols': [{
+                'symbol': sym,
+                'quote_source': q.get('source', 'rest'),
+                'quote_age_ms': round(float(q.get('quote_age_sec', 0) or 0) * 1000, 2),
+                'upbit_source': q.get('upbit', {}).get('source', 'rest'),
+                'binance_source': q.get('binance', {}).get('source', 'rest'),
+                'stale': float(q.get('quote_age_sec', 0) or 0) * 1000 > cfg.stale_quote_ms,
+            } for sym, q in quotes.items()],
+        }
+        top_symbol_by_signal = max(signal_counts, key=signal_counts.get) if signal_counts else ''
+        top_symbol_by_surplus = max(symbol_surplus_max, key=symbol_surplus_max.get) if symbol_surplus_max else ''
         runtime_metrics = {
             'started_at':           started_at,
             'loop_count':           total_loops,
@@ -274,10 +320,29 @@ def main():
             'p95_quote_latency_ms': _percentile(quote_lat_list, 95),
             'last_quote_age_sec':   round(max(0.0, now - last_quote_at), 2) if last_quote_at else None,
             'updated_at':           now,
+            'last_update_at':       now,
             'quote_source':         (
                 'ws' if quotes and all(q.get('source') == 'ws' for q in quotes.values())
                 else 'rest'
             ),
+            'quote_source_summary': ws_metrics.get('quote_source_summary', {}),
+            'ws_ratio':             round(
+                quote_source_counts['ws'] / max(1, sum(quote_source_counts.values())) * 100, 2),
+            'ws_connected':         ws_metrics.get('ws_connected', False),
+            'ws_symbols_ok':        ws_metrics.get('ws_symbols_ok', 0),
+            'rest_fallback_count':  ws_metrics.get('rest_fallback_count', 0),
+            'quote_stale_count':    ws_metrics.get('quote_stale_count', 0),
+            'symbol_quote_status':  ws_metrics.get('symbols', []),
+            'decision_count':       sum(reason_counts.values()),
+            'total_decision_count': sum(reason_counts.values()),
+            'candidate_count':      candidate_count,
+            'ok_signal_count':      reason_counts.get('OK', 0),
+            'no_go_reason_counts':  {k: v for k, v in reason_counts.items() if k != 'OK'},
+            'max_best_net_surplus_bp': round(max(surplus_bp_list), 4) if surplus_bp_list else 0.0,
+            'avg_best_net_surplus_bp': round(sum(surplus_bp_list) / len(surplus_bp_list), 4) if surplus_bp_list else 0.0,
+            'top_symbol_by_signal': top_symbol_by_signal,
+            'top_symbol_by_surplus': top_symbol_by_surplus,
+            'last_decision_at':     latest_decision_at,
         }
         perf_tracker.update_runtime_metrics(runtime_metrics)
         if args.until_stop and (now - last_console_print >= console_interval):
@@ -295,6 +360,11 @@ def main():
             last_console_print = now
 
         # ── runtime 파일 overwrite ────────────────────────────────────────
+        if now - last_telemetry_write >= cfg.telemetry_write_interval_sec:
+            _write_json(telemetry_path, runtime_metrics)
+            _write_json(decisions_path, {'updated_at': now, 'decisions': list(decisions)})
+            last_telemetry_write = now
+
         if now - last_state_write >= cfg.state_write_interval_sec:
             perf_summary = perf_tracker.summary()
             _write_json(quotes_path, quotes)

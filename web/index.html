@@ -23,6 +23,7 @@
     <nav class="nav">
       <button class="nav-item active" data-tab="dashboard">⬛ 대시보드</button>
       <button class="nav-item" data-tab="trades">📋 거래 로그</button>
+      <button class="nav-item" data-tab="decisions">Decision Log</button>
       <button class="nav-item" data-tab="perf">📈 성과 분석</button>
       <button class="nav-item" data-tab="session">📊 세션 리포트</button>
       <button class="nav-item" data-tab="inventory">Inventory / Rebalance</button>
@@ -103,6 +104,18 @@
           <div><span>Quotes</span><strong id="metric-quote-count">--</strong></div>
           <div><span>P95 loop</span><strong id="metric-p95-loop">--</strong></div>
           <div><span>P95 quote</span><strong id="metric-p95-quote">--</strong></div>
+          <div><span>Decisions</span><strong id="metric-decision-count">--</strong></div>
+          <div><span>Candidates</span><strong id="metric-candidate-count">--</strong></div>
+          <div><span>OK signals</span><strong id="metric-ok-signal-count">--</strong></div>
+          <div><span>Max surplus</span><strong id="metric-max-surplus">--</strong></div>
+          <div><span>Best symbol</span><strong id="metric-best-symbol">--</strong></div>
+          <div><span>Last decision</span><strong id="metric-last-decision">--</strong></div>
+        </div>
+        <div class="source-status-row">
+          <span class="source-badge waiting" id="ws-status">WS WAITING</span>
+          <span class="source-badge waiting" id="rest-status">REST FALLBACK 0</span>
+          <span class="source-badge waiting" id="stale-status">STALE 0</span>
+          <span class="source-detail" id="no-go-top3">NO-GO top 3: --</span>
         </div>
       </div>
       <div class="paper-profit-summary">
@@ -151,6 +164,26 @@
           </thead>
           <tbody id="trades-body">
             <tr><td colspan="9" class="empty-row">데이터 없음</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Decision Log Tab -->
+    <section class="tab-content" id="tab-decisions">
+      <div class="section-label">Decision Log / No-Go Log</div>
+      <div class="decision-note">Recent 100 decisions only. This is an overwrite snapshot, not an unbounded raw tick log.</div>
+      <div class="table-wrapper">
+        <table class="data-table decision-table">
+          <thead>
+            <tr>
+              <th>Time</th><th>Symbol</th><th>Direction</th><th>Surplus</th>
+              <th>Gap</th><th>Expected PnL</th><th>Source</th><th>Age</th>
+              <th>GO / NO-GO</th><th>Reason</th>
+            </tr>
+          </thead>
+          <tbody id="decisions-body">
+            <tr><td colspan="10" class="empty-row">No decisions yet</td></tr>
           </tbody>
         </table>
       </div>

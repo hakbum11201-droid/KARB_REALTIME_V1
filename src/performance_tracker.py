@@ -87,6 +87,9 @@ class PerformanceTracker:
 
         positive_net = sum(1 for p in pnls if p > 0)
 
+        quote_summary = self._runtime_metrics.get('quote_source_summary', {})
+        source_total = sum(float(quote_summary.get(key, 0) or 0) for key in ('ws', 'rest'))
+        ws_ratio = round(float(quote_summary.get('ws', 0) or 0) / source_total * 100, 2) if source_total else 0.0
         s = {
             'paper_trade_count':   total,
             'open_trade_count':    self._open_count,
@@ -107,6 +110,7 @@ class PerformanceTracker:
             'today_pnl_krw':       round(self._today_pnl_krw, 2),
             'elapsed_hours':       round((time.time() - self._started_at) / 3600, 3),
             'buffered_trades':     len(self._closed),
+            'ws_ratio':            ws_ratio,
             'updated_at':          time.time(),
             **self._runtime_metrics,
         }

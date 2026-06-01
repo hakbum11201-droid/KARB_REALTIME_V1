@@ -20,6 +20,13 @@ class OrderbookCache:
         self._quotes = {symbol: {} for symbol in self.symbols}
         self._latencies = deque(maxlen=1000)
         self._quote_count = 0
+        self._rest_fallback_count = 0
+        self._stale_quote_count = 0
+        self._stale_symbols = set()
+
+    def record_rest_fallback(self, count=1):
+        with self._lock:
+            self._rest_fallback_count += int(count)
 
     def update(self, exchange: str, symbol: str, quote: dict, source='ws'):
         now = time.time()
@@ -62,10 +69,40 @@ class OrderbookCache:
     def metrics(self) -> dict:
         now = time.time()
         snap = self.snapshot(require_fresh=False)
-        ages = [now - item['timestamp'] for item in snap.values()]
+        symbols = []
+        stale_symbols = set()
+        for symbol in self.symbols:
+            item = snap.get(symbol, {})
+            age_ms = float(item.get('quote_age_sec', 0) or 0) * 1000 if item else None
+            stale = age_ms is None or age_ms > self.stale_quote_ms
+            if stale:
+                stale_symbols.add(symbol)
+            upbit = item.get('upbit', {})
+            binance = item.get('binance', {})
+            symbols.append({
+                'symbol': symbol,
+                'quote_source': item.get('source', 'missing'),
+                'quote_age_ms': round(age_ms, 2) if age_ms is not None else None,
+                'upbit_source': upbit.get('source', 'missing'),
+                'binance_source': binance.get('source', 'missing'),
+                'stale': stale,
+            })
+        ages = [item['quote_age_ms'] / 1000 for item in symbols if item['quote_age_ms'] is not None]
         with self._lock:
+            self._stale_quote_count += len(stale_symbols - self._stale_symbols)
+            self._stale_symbols = stale_symbols
+            source_summary = {
+                'ws': sum(1 for item in symbols if item['quote_source'] == 'ws' and not item['stale']),
+                'rest': sum(1 for item in symbols if item['quote_source'] == 'rest' and not item['stale']),
+                'stale': len(stale_symbols),
+            }
             return {
                 'quote_count': self._quote_count,
                 'p95_quote_latency_ms': _percentile(self._latencies),
                 'last_quote_age_sec': round(max(ages), 3) if ages else None,
+                'quote_source_summary': source_summary,
+                'ws_symbols_ok': source_summary['ws'],
+                'rest_fallback_count': self._rest_fallback_count,
+                'quote_stale_count': self._stale_quote_count,
+                'symbols': symbols,
             }

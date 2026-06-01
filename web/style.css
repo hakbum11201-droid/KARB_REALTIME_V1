@@ -162,6 +162,8 @@ body {
 .quote-card:hover::before { opacity: 1; }
 .quote-card.go   { border-color: rgba(72,187,120,0.4); }
 .quote-card.go::before { opacity:1; background: linear-gradient(90deg,var(--accent-green),var(--accent-blue)); }
+.quote-card.stale { border-color:rgba(252,129,129,.55); }
+.quote-card.stale::before { opacity:1; background:var(--accent-red); }
 
 .qc-header { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:14px; }
 .qc-symbol { font-size: 20px; font-weight: 700; letter-spacing: .02em; }
@@ -335,6 +337,18 @@ body {
 .runtime-grid div, .summary-grid div { display:flex; flex-direction:column; gap:3px; }
 .runtime-grid span, .summary-grid span { color:var(--text-muted); font-size:10px; text-transform:uppercase; letter-spacing:.06em; }
 .runtime-grid strong, .summary-grid strong { color:var(--text-primary); font-family:var(--font-mono); font-size:13px; }
+.source-status-row { display:flex; gap:7px; align-items:center; flex-wrap:wrap; margin-top:12px; }
+.source-badge { border-radius:999px; padding:4px 8px; font-family:var(--font-mono); font-size:10px; font-weight:700; }
+.source-badge.ok { color:var(--accent-green); background:rgba(72,187,120,.12); }
+.source-badge.fallback { color:var(--accent-yellow); background:rgba(246,224,94,.1); }
+.source-badge.stale { color:var(--accent-red); background:rgba(252,129,129,.1); }
+.source-badge.waiting { color:var(--text-muted); background:rgba(255,255,255,.04); }
+.source-detail { color:var(--text-secondary); font-family:var(--font-mono); font-size:11px; }
+.decision-note { color:var(--text-secondary); background:rgba(99,179,237,.08); border:1px solid rgba(99,179,237,.22); border-radius:var(--radius-sm); padding:10px 12px; margin-bottom:14px; font-size:12px; }
+.decision-table .decision-ok td { color:var(--accent-green); }
+.decision-table .decision-nogo td { color:var(--accent-yellow); }
+.decision-table .decision-warning td { color:var(--accent-orange); }
+.decision-table .decision-stale td { color:var(--accent-red); }
 .quote-card.refreshed { animation: quote-refresh .7s ease-out; }
 @keyframes quote-refresh { 0%{border-color:var(--accent-blue)} 100%{border-color:var(--border)} }
 .quote-card.go.refreshed { animation: quote-refresh-go .7s ease-out; }

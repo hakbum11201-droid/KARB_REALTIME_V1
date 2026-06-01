@@ -162,3 +162,12 @@ python -m py_compile app_launcher.py
 4. Click `DISARM` after the check. `DISARM` is always available.
 
 API keys alone never enable an order. If `PARTIAL_RISK` appears, stop new entries, inspect both exchange fills and balances manually, then disarm. Automatic unwind is intentionally absent.
+
+## Long paper-run monitoring
+
+- The trade log shows actual paper `ENTRY` and `EXIT` events only.
+- The `Decision Log` tab shows the latest 100 GO and NO-GO evaluations from `runtime/latest_decisions.json`. The file is overwritten; raw ticks are not appended.
+- `WS OK` means fresh WebSocket top-of-book quotes are available. `REST FALLBACK` means REST quotes were used because WS coverage was incomplete. `STALE` means a quote crossed the configured freshness limit.
+- During a long paper run, watch runtime, loop count, quote count, decision count, candidate count, OK signals, top NO-GO reasons, maximum surplus, best symbol, quote age, and P95 loop/quote latency.
+- Session summaries include WS ratio, REST fallback count, stale quote count, signal counts, surplus statistics, network health, trading quality, and final judgement.
+- Tiny-live ordering remains blocked by default. Monitoring changes do not enable live orders.

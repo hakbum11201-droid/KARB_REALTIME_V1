@@ -18,6 +18,8 @@ class WebSocketMarketData:
         self.rest_fallback_enabled = rest_fallback_enabled
         self._stop = threading.Event()
         self._threads = []
+        self._connected = {'upbit': False, 'binance': False}
+        self._lock = threading.Lock()
 
     def start(self):
         if self._threads:
@@ -39,22 +41,40 @@ class WebSocketMarketData:
         if not self.rest_fallback_enabled or rest_quote_engine is None:
             return quotes
         fallback = rest_quote_engine.fetch_all()
+        self.cache.record_rest_fallback(1)
         for symbol, quote in fallback.items():
             self.cache.update('upbit', symbol, quote['upbit'], source='rest')
             self.cache.update('binance', symbol, quote['binance'], source='rest')
         return self.cache.snapshot(require_fresh=True)
 
     def metrics(self):
-        return self.cache.metrics()
+        metrics = self.cache.metrics()
+        with self._lock:
+            connected = dict(self._connected)
+        metrics['ws_connected'] = all(connected.values())
+        metrics['ws_connections'] = connected
+        return metrics
 
-    def _run_forever(self, url, on_open, on_message):
+    def _run_forever(self, exchange, url, on_open, on_message):
         delay = 1
         while not self._stop.is_set():
-            app = websocket.WebSocketApp(url, on_open=on_open, on_message=on_message)
+            def handle_open(app):
+                with self._lock:
+                    self._connected[exchange] = True
+                on_open(app)
+
+            def handle_close(_app, _status_code, _message):
+                with self._lock:
+                    self._connected[exchange] = False
+
+            app = websocket.WebSocketApp(
+                url, on_open=handle_open, on_message=on_message, on_close=handle_close)
             try:
                 app.run_forever(ping_interval=20, ping_timeout=10)
             except Exception:
                 pass
+            with self._lock:
+                self._connected[exchange] = False
             if self._stop.wait(delay):
                 break
             delay = min(delay * 2, 30)
@@ -85,7 +105,7 @@ class WebSocketMarketData:
             except Exception:
                 pass
 
-        self._run_forever(self.UPBIT_URL, on_open, on_message)
+        self._run_forever('upbit', self.UPBIT_URL, on_open, on_message)
 
     def _run_binance(self):
         streams = '/'.join(f'{symbol.lower()}usdt@bookTicker' for symbol in self.symbols)
@@ -102,4 +122,4 @@ class WebSocketMarketData:
             except Exception:
                 pass
 
-        self._run_forever(self.BINANCE_URL.format(streams=streams), lambda _app: None, on_message)
+        self._run_forever('binance', self.BINANCE_URL.format(streams=streams), lambda _app: None, on_message)

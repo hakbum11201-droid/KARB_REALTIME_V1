@@ -138,6 +138,12 @@ class Config:
     @property
     def state_write_interval_sec(self): return self.get('state_write_interval_sec', 5)
     @property
+    def decision_log_max_items(self): return self.get('decision_log_max_items', 100)
+    @property
+    def telemetry_write_interval_sec(self): return self.get('telemetry_write_interval_sec', 5)
+    @property
+    def session_summary_interval_sec(self): return self.get('session_summary_interval_sec', 3600)
+    @property
     def max_log_file_mb(self): return self.get('max_log_file_mb', 20)
     @property
     def log_retention_days(self): return self.get('log_retention_days', 14)

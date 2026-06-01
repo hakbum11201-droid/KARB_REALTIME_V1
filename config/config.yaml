@@ -58,6 +58,9 @@ bounded_collector_enabled: false
 log_decisions_only_when_candidate: true
 decision_log_min_surplus_bp: 0
 state_write_interval_sec: 5
+decision_log_max_items: 100
+telemetry_write_interval_sec: 5
+session_summary_interval_sec: 3600
 console_summary_interval_sec: 15
 max_log_file_mb: 20
 log_retention_days: 14

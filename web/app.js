@@ -27,6 +27,7 @@ let latestEngine = {};
 let latestControl = {};
 let latestPerformance = {};
 let latestLimits = {};
+let latestTelemetry = {};
 let lastSummaryFetchAt = 0;
 
 const durationText = seconds => {
@@ -65,6 +66,7 @@ document.querySelectorAll('.nav-item').forEach(btn => {
     if (tab === 'inventory') fetchInventory();
     if (tab === 'perf')    fetchPerf();
     if (tab === 'trades')  fetchTrades();
+    if (tab === 'decisions') fetchDecisions();
   });
 });
 
@@ -228,6 +230,7 @@ function renderTelemetry(state, engine, ctrl) {
   setText('metric-quote-count', fmt(state.quote_count));
   setText('metric-p95-loop', state.p95_loop_latency_ms!=null ? `${fmt(state.p95_loop_latency_ms,1)} ms` : '--');
   setText('metric-p95-quote', state.p95_quote_latency_ms!=null ? `${fmt(state.p95_quote_latency_ms,1)} ms` : '--');
+  renderLongRunTelemetry({...state, ...latestTelemetry});
   if (status === 'STOPPED' && Date.now() - lastSummaryFetchAt >= POLL_MS) {
     lastSummaryFetchAt = Date.now();
     fetchLastSession();
@@ -285,12 +288,14 @@ function renderQuotes(quotes) {
 
   grid.innerHTML = syms.map(sym => {
     const q=quotes[sym]||{}, up=q.upbit||{}, bn=q.binance||{}, c=q.calc||{};
+    const sourceState=(latestTelemetry.symbol_quote_status||[]).find(item=>item.symbol===sym)||{};
     const kimp=Number(c.kimchi_premium_pct||0), surplus=Number(c.best_net_surplus_bp||0);
     const net=Number(c.net_expected_profit_krw||0);
     const threshold_gap = Number(latestLimits.min_net_surplus_bp||0) - surplus;
     const qty=Number(c.max_fillable_qty||0), dir=c.best_direction||'--';
-    const quoteSource=(q.source||up.source||bn.source||'rest').toUpperCase();
-    const quoteAge=Number(q.quote_age_sec||0);
+    const quoteSource=(sourceState.quote_source||q.source||up.source||bn.source||'rest').toUpperCase();
+    const quoteAge=Number(sourceState.quote_age_ms!=null?sourceState.quote_age_ms/1000:q.quote_age_sec||0);
+    const stale=Boolean(sourceState.stale);
     const reason=c.reason_no_trade||'', isGo=reason==='OK';
     const ub=fmt(up.bid||0), ua=fmt(up.ask||0);
     const bb=Number(bn.bid||0).toFixed(4), ba=Number(bn.ask||0).toFixed(4);
@@ -298,7 +303,7 @@ function renderQuotes(quotes) {
       : reason==='LOW_SURPLUS' ? 'reason-low-surplus'
       : reason==='WIDE_SPREAD'||reason==='LOW_DEPTH' ? 'reason-warning'
       : reason==='FX_UNTRUSTED' ? 'reason-danger' : 'reason-default';
-    return `<div class="quote-card ${isGo?'go':'nogo'} refreshed">
+    return `<div class="quote-card ${isGo?'go':'nogo'} ${stale?'stale':''} refreshed">
       <div class="qc-header">
         <span class="qc-symbol">${sym} <span class="live-dot"></span><span class="live-label">LIVE</span></span>
         <span class="qc-kimp ${kimp>=0?'pos':'neg'}">${kimp>=0?'+':''}${kimp.toFixed(2)}%</span>
@@ -309,6 +314,9 @@ function renderQuotes(quotes) {
       </div>
       <div class="qc-metrics">
         <span class="qc-metric">${quoteSource} ${quoteAge.toFixed(2)}s</span>
+        <span class="qc-metric">${stale?'STALE':'FRESH'}</span>
+        <span class="qc-metric">Upbit ${(sourceState.upbit_source||up.source||'rest').toUpperCase()}</span>
+        <span class="qc-metric">Binance ${(sourceState.binance_source||bn.source||'rest').toUpperCase()}</span>
         <span class="qc-metric">Dir ${dir}</span>
         <span class="qc-metric">${surplus.toFixed(1)} bp</span>
         <span class="qc-metric">Net ${fmt(net)} ₩</span>
@@ -353,6 +361,40 @@ function renderTradeTable(trades) {
 }
 
 // ── Performance ─────────────────────────────────────────────────────────
+async function fetchDecisions() {
+  try {
+    const r = await fetch('/api/decisions/recent');
+    if (!r.ok) return;
+    const d = await r.json();
+    renderDecisions(d.decisions||[]);
+  } catch (error) {
+    console.error('[Decision Log] failed', error);
+  }
+}
+
+function renderDecisions(decisions) {
+  const tb = $('decisions-body');
+  if (!tb) return;
+  if (!decisions.length) {
+    tb.innerHTML='<tr><td colspan="10" class="empty-row">No decisions yet</td></tr>';
+    return;
+  }
+  tb.innerHTML = decisions.map(d => {
+    const reason=d.reason_no_trade||'--';
+    const reasonClass = reason==='OK' ? 'decision-ok'
+      : reason==='STALE_QUOTE' ? 'decision-stale'
+      : reason==='LOW_DEPTH'||reason==='WIDE_SPREAD' ? 'decision-warning'
+      : 'decision-nogo';
+    return `<tr class="${reasonClass}">
+      <td>${d.time?new Date(d.time*1000).toLocaleTimeString('ko-KR'):'--'}</td>
+      <td>${esc(d.symbol)}</td><td>${esc(d.direction_label||d.direction)}</td>
+      <td>${fmt(d.best_net_surplus_bp,1)} bp</td><td>${fmt(d.threshold_gap_bp,1)} bp</td>
+      <td>${fmt(d.expected_net_profit_krw)} KRW</td><td>${esc((d.quote_source||'--').toUpperCase())}</td>
+      <td>${fmt(d.quote_age_ms,0)} ms</td><td>${esc(d.go_no_go||'NO-GO')}</td><td>${esc(reason)}</td>
+    </tr>`;
+  }).join('');
+}
+
 async function fetchPerf() {
   try {
     const r = await fetch('/api/perf');
@@ -446,6 +488,12 @@ function renderSessionReport(r) {
       <div class="sr-card"><div class="sr-label">Loops</div><div class="sr-val">${fmt(r.total_loops)}</div></div>
       <div class="sr-card"><div class="sr-label">Quotes</div><div class="sr-val">${fmt(r.quote_count)}</div></div>
       <div class="sr-card"><div class="sr-label">Candidates</div><div class="sr-val">${fmt(r.candidate_count)}</div></div>
+      <div class="sr-card"><div class="sr-label">Decisions</div><div class="sr-val">${fmt(r.total_decision_count)}</div></div>
+      <div class="sr-card"><div class="sr-label">OK Signals</div><div class="sr-val">${fmt(r.ok_signal_count)}</div></div>
+      <div class="sr-card"><div class="sr-label">Max Surplus</div><div class="sr-val">${fmt(r.max_best_net_surplus_bp,1)}bp</div></div>
+      <div class="sr-card"><div class="sr-label">Avg Surplus</div><div class="sr-val">${fmt(r.avg_best_net_surplus_bp,1)}bp</div></div>
+      <div class="sr-card"><div class="sr-label">Top Signal Sym</div><div class="sr-val">${r.top_symbol_by_signal||'--'}</div></div>
+      <div class="sr-card"><div class="sr-label">Top Surplus Sym</div><div class="sr-val">${r.top_symbol_by_surplus||'--'}</div></div>
       <div class="sr-card"><div class="sr-label">Entries</div><div class="sr-val">${r.paper_entry_count}</div></div>
       <div class="sr-card"><div class="sr-label">Closed Trades</div><div class="sr-val">${fmt(r.closed_trade_count)}</div></div>
       <div class="sr-card green"><div class="sr-label">Net PnL</div><div class="sr-val" style="color:${pnlC(net)}">${net>=0?'+':''}${fmt(net)} ₩</div></div>
@@ -460,6 +508,9 @@ function renderSessionReport(r) {
       <div class="sr-card"><div class="sr-label">P95 Loop</div><div class="sr-val">${fmt(r.p95_loop_latency_ms)}ms</div></div>
       <div class="sr-card"><div class="sr-label">P95 Quote</div><div class="sr-val">${fmt(r.p95_quote_latency_ms)}ms</div></div>
       <div class="sr-card"><div class="sr-label">Network</div><div class="sr-val">${r.network_health||'--'}</div></div>
+      <div class="sr-card"><div class="sr-label">WS Ratio</div><div class="sr-val">${fmt(r.ws_ratio,1)}%</div></div>
+      <div class="sr-card"><div class="sr-label">REST Fallback</div><div class="sr-val">${fmt(r.rest_fallback_count)}</div></div>
+      <div class="sr-card"><div class="sr-label">Stale Quotes</div><div class="sr-val">${fmt(r.stale_quote_count)}</div></div>
       <div class="sr-card"><div class="sr-label">Quality</div><div class="sr-val">${r.trading_quality||'--'}</div></div>
       <div class="sr-card"><div class="sr-label">Slippage</div><div class="sr-val">${r.configured_slippage_bp}bp</div></div>
       <div class="sr-card"><div class="sr-label">+5bp Stress</div><div class="sr-val">${fmt(r.slippage_stress_plus_5bp_estimated_pnl)} ₩</div></div>
@@ -535,6 +586,39 @@ function renderInventory(inventory, readiness, tinyStatus={}, lastPreflight={}) 
       <div class="inventory-missing">B missing: ${(row.missing_for_b||[]).map(esc).join(', ')||'none'}</div>
       <div class="inventory-manual">Manual Rebalance: ${esc(row.recommended_manual_action)}</div>
     </div>`).join('') || '<div class="empty-row">Inventory unavailable. Review blockers.</div>';
+}
+
+async function fetchTelemetry() {
+  try {
+    const r = await fetch('/api/telemetry');
+    if (!r.ok) return;
+    const d = await r.json();
+    latestTelemetry = d.telemetry||{};
+    renderLongRunTelemetry(latestTelemetry);
+  } catch (error) {
+    console.error('[telemetry] failed', error);
+  }
+}
+
+function renderLongRunTelemetry(t={}) {
+  const summary = t.quote_source_summary||{};
+  const wsOk = Boolean(t.ws_connected) && Number(t.ws_symbols_ok||0)>0;
+  const fallback = Number(t.rest_fallback_count||0);
+  const stale = Number(t.quote_stale_count||0);
+  const noGo = Object.entries(t.no_go_reason_counts||{}).sort((a,b)=>b[1]-a[1]).slice(0,3);
+  setText('metric-decision-count', fmt(t.total_decision_count||t.decision_count));
+  setText('metric-candidate-count', fmt(t.candidate_count));
+  setText('metric-ok-signal-count', fmt(t.ok_signal_count));
+  setText('metric-max-surplus', `${fmt(t.max_best_net_surplus_bp,1)} bp`);
+  setText('metric-best-symbol', t.top_symbol_by_surplus||'--');
+  setText('metric-last-decision', t.last_decision_at ? ageText(Date.now()/1000-t.last_decision_at) : '--');
+  setText('ws-status', wsOk ? `WS OK ${fmt(summary.ws)}` : 'WS WAITING');
+  setClass('ws-status', `source-badge ${wsOk?'ok':'waiting'}`);
+  setText('rest-status', `REST FALLBACK ${fmt(fallback)}`);
+  setClass('rest-status', `source-badge ${fallback?'fallback':'ok'}`);
+  setText('stale-status', `STALE ${fmt(stale)}`);
+  setClass('stale-status', `source-badge ${stale?'stale':'ok'}`);
+  setText('no-go-top3', `NO-GO top 3: ${noGo.map(([reason,count])=>`${reason} ${count}`).join(' / ')||'--'}`);
 }
 
 function renderTinyLivePanel(readiness, tinyStatus={}) {
@@ -650,10 +734,14 @@ on('btn-save-keys', 'click', async () => {
 
 // ── Init ─────────────────────────────────────────────────────────────────
 fetchData();
+fetchTelemetry();
+fetchDecisions();
 fetchPerf();
 fetchLastSession();
 fetchInventory();
 setInterval(fetchData,   POLL_MS);
 setInterval(fetchPerf,   POLL_MS*2);
 setInterval(fetchTrades, POLL_MS*2);
+setInterval(fetchTelemetry, POLL_MS);
+setInterval(fetchDecisions, POLL_MS*2);
 setInterval(() => renderTelemetry(latestState, latestEngine, latestControl), 1000);

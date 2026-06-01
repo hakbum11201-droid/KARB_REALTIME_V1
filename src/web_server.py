@@ -112,6 +112,27 @@ def _tiny_live_status_payload():
     return status
 
 
+def _telemetry_payload():
+    telemetry = _read_json(os.path.join(RUNTIME_DIR, 'telemetry.json'))
+    return {'ok': True, 'error': '', 'blockers': [], 'telemetry': telemetry}
+
+
+def _decisions_payload():
+    snapshot = _read_json(os.path.join(RUNTIME_DIR, 'latest_decisions.json'))
+    return {
+        'ok': True, 'error': '', 'blockers': [],
+        'updated_at': snapshot.get('updated_at'),
+        'decisions': list(reversed(snapshot.get('decisions', [])))[:100],
+    }
+
+
+def _last_session_payload():
+    return {
+        'ok': True, 'error': '', 'blockers': [],
+        **_read_json(os.path.join(RUNTIME_DIR, 'last_session_summary.json')),
+    }
+
+
 class KarbHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=WEB_DIR, **kwargs)
@@ -188,6 +209,12 @@ class KarbHandler(SimpleHTTPRequestHandler):
         elif self.path == '/api/performance':
             self._send_json(_read_json(os.path.join(RUNTIME_DIR, 'performance_summary.json')))
 
+        elif self.path == '/api/telemetry':
+            self._send_guarded_json(_telemetry_payload)
+
+        elif self.path == '/api/decisions/recent':
+            self._send_guarded_json(_decisions_payload)
+
         elif self.path == '/api/inventory':
             self._send_json(get_inventory_summary())
 
@@ -209,7 +236,7 @@ class KarbHandler(SimpleHTTPRequestHandler):
             self._send_json({'trades': exits})
 
         elif self.path == '/api/session/last':
-            self._send_json(_read_json(os.path.join(RUNTIME_DIR, 'last_session_summary.json')))
+            self._send_guarded_json(_last_session_payload)
 
         elif self.path == '/api/keys/status':
             if not self._is_localhost():

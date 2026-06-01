@@ -62,12 +62,15 @@ def analyze_session(run_id: str) -> dict:
     control_path = os.path.join(RUNTIME_DIR, 'control.json')
     trades_path = os.path.join(LOGS_DIR, 'paper_trades.jsonl')
     decisions_path = os.path.join(LOGS_DIR, 'decisions.jsonl')
+    latest_decisions_path = os.path.join(RUNTIME_DIR, 'latest_decisions.json')
 
     perf = _read_json(perf_path)
     state = _read_json(state_path)
     control = _read_json(control_path)
     trades = _read_jsonl(trades_path)
     decisions = _read_jsonl(decisions_path)
+    latest_decisions = _read_json(latest_decisions_path).get('decisions', [])
+    decision_sample = latest_decisions or decisions
 
     analyzer = SessionAnalyzer(cfg)
     
@@ -88,7 +91,14 @@ def analyze_session(run_id: str) -> dict:
         'duration_sec': duration_sec,
         'total_loops': state.get('loop_count', perf.get('loop_count', len(decisions))),
         'quote_count': state.get('quote_count', perf.get('quote_count', len(decisions))),
-        'candidate_count': sum(1 for d in decisions if d.get('reason_no_trade') == 'OK'),
+        'candidate_count': perf.get('candidate_count', sum(1 for d in decisions if d.get('reason_no_trade') == 'OK')),
+        'ok_signal_count': perf.get('ok_signal_count', sum(1 for d in decisions if d.get('reason_no_trade') == 'OK')),
+        'total_decision_count': perf.get('total_decision_count', len(decisions)),
+        'rest_fallback_count': perf.get('rest_fallback_count', 0),
+        'stale_quote_count': perf.get('quote_stale_count', 0),
+        'ws_ratio': perf.get('ws_ratio', 0),
+        'top_symbol_by_signal': perf.get('top_symbol_by_signal', ''),
+        'top_symbol_by_surplus': perf.get('top_symbol_by_surplus', ''),
         'paper_entry_count': sum(1 for t in trades if t.get('event') == 'ENTRY'),
         'paper_exit_count': sum(1 for t in trades if t.get('event') == 'EXIT'),
         'error_count': sum(1 for d in decisions if d.get('error') or d.get('fx_status') == 'ERROR'),
@@ -98,14 +108,15 @@ def analyze_session(run_id: str) -> dict:
     # Reason 분포 추정
     reasons = {}
     surplus_list = []
-    for d in decisions:
+    for d in decision_sample:
         r = d.get('reason_no_trade', 'UNKNOWN')
         reasons[r] = reasons.get(r, 0) + 1
         surplus = d.get('best_net_surplus_bp')
         if surplus is not None:
             surplus_list.append(surplus)
             
-    session_stats['reason_counts'] = reasons
+    session_stats['reason_counts'] = perf.get('no_go_reason_counts', reasons)
+    session_stats['no_go_reason_counts'] = perf.get('no_go_reason_counts', reasons)
     session_stats['surplus_bp_list'] = surplus_list
     report = analyzer.analyze(session_stats)
     return report
@@ -133,6 +144,13 @@ class SessionAnalyzer:
             'total_loops':        session_stats.get('total_loops', 0),
             'quote_count':        session_stats.get('quote_count', 0),
             'candidate_count':    session_stats.get('candidate_count', 0),
+            'ok_signal_count':    session_stats.get('ok_signal_count', 0),
+            'total_decision_count': session_stats.get('total_decision_count', 0),
+            'rest_fallback_count': session_stats.get('rest_fallback_count', 0),
+            'stale_quote_count':  session_stats.get('stale_quote_count', 0),
+            'ws_ratio':           session_stats.get('ws_ratio', 0.0),
+            'top_symbol_by_signal': session_stats.get('top_symbol_by_signal', ''),
+            'top_symbol_by_surplus': session_stats.get('top_symbol_by_surplus', ''),
             'paper_entry_count':  session_stats.get('paper_entry_count', 0),
             'paper_exit_count':   session_stats.get('paper_exit_count', 0),
             'open_trade_count':   session_stats.get('open_trade_count', 0),
@@ -150,6 +168,7 @@ class SessionAnalyzer:
             'best_symbol':        session_stats.get('best_symbol', ''),
             'best_direction':     session_stats.get('best_direction', ''),
             'reason_counts':      session_stats.get('reason_counts', {}),
+            'no_go_reason_counts': session_stats.get('no_go_reason_counts', {}),
             'positive_net_ratio': session_stats.get('positive_net_ratio', 0.0),
             'error_count':        session_stats.get('error_count', 0),
         }
@@ -176,12 +195,12 @@ class SessionAnalyzer:
         # 네트워크 건강도
         p95_q = r['p95_quote_latency_ms']
         max_lat = self._cfg.max_latency_ms
-        if p95_q <= max_lat * 0.7:
-            r['network_health'] = 'GOOD'
-        elif p95_q <= max_lat:
+        if r['stale_quote_count'] > 0 or p95_q > max_lat:
+            r['network_health'] = 'BAD'
+        elif r['rest_fallback_count'] > 0 or r['ws_ratio'] < 100 or p95_q > max_lat * 0.7:
             r['network_health'] = 'WARNING'
         else:
-            r['network_health'] = 'BAD'
+            r['network_health'] = 'GOOD'
 
         # ── 슬리피지 스트레스 테스트 ───────────────────────────────────────
         base_slippage = self._cfg.slippage_bp
@@ -203,6 +222,7 @@ class SessionAnalyzer:
 
         # ── Judgement ─────────────────────────────────────────────────────
         r['judgement'] = self._judge(r)
+        r['final_judgement'] = r['judgement']
 
         # ── 저장 ──────────────────────────────────────────────────────────
         self._save_json(r, run_id)
@@ -300,6 +320,8 @@ class SessionAnalyzer:
                 f"Total Loops:   {r['total_loops']}",
                 f"Quotes:        {r['quote_count']}",
                 f"Candidates:    {r['candidate_count']}",
+                f"OK Signals:    {r['ok_signal_count']}",
+                f"Decisions:     {r['total_decision_count']}",
                 f"Entries:       {r['paper_entry_count']}",
                 f"Avg Surplus:   {r['avg_best_net_surplus_bp']:.2f} bp",
                 f"Max Surplus:   {r['max_best_net_surplus_bp']:.2f} bp",
@@ -308,6 +330,9 @@ class SessionAnalyzer:
                 f"P95 Loop:      {r['p95_loop_latency_ms']:.0f} ms",
                 f"P95 Quote:     {r['p95_quote_latency_ms']:.0f} ms",
                 f"Network:       {r['network_health']}",
+                f"WS Ratio:      {r['ws_ratio']:.1f}%",
+                f"REST Fallback: {r['rest_fallback_count']}",
+                f"Stale Quotes:  {r['stale_quote_count']}",
                 f"Log Size:      {r['log_total_size_mb']:.2f} MB",
                 f"Errors:        {r['error_count']}",
                 f"",
