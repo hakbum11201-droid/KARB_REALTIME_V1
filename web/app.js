@@ -47,7 +47,7 @@ function showUiError(error) {
   const message = error instanceof Error ? error.message : String(error);
   console.error('[UI render error]', error);
   setText('conn-label', `UI 렌더 오류: ${message}`);
-  const grid = $('quotes-grid');
+  const grid = $('quotes-grid-upbit-binance');
   if (grid && !grid.querySelector('.quote-card')) {
     const placeholder = document.createElement('div');
     placeholder.className = 'loading-placeholder';
@@ -287,8 +287,8 @@ function renderBanner(state, ctrl) {
 }
 
 // ── Quote Grid ──────────────────────────────────────────────────────────
-function renderQuotes(quotes) {
-  const grid = $('quotes-grid');
+function renderLegacyQuotes(quotes) {
+  const grid = $('quotes-grid-upbit-binance');
   if (!grid) return;
   const syms = Object.keys(quotes);
   if (!syms.length) { grid.innerHTML='<div class="loading-placeholder">데이터 없음</div>'; return; }
@@ -345,6 +345,62 @@ function renderQuotes(quotes) {
 }
 
 // ── Trades ───────────────────────────────────────────────────────────────
+function pairMeta(pairId) {
+  if (pairId === 'UPBIT_BITHUMB') return { label:'UPBIT ↔ BITHUMB', type:'DOMESTIC KRW', fx:'FX OFF', badge:'pair-upbit-bithumb' };
+  if (pairId === 'BITHUMB_BINANCE') return { label:'BITHUMB ↔ BINANCE', type:'DISABLED', fx:'FX ON', badge:'pair-disabled' };
+  if (pairId === 'BINANCE_MAKER_DOMESTIC_TAKER') return { label:'BINANCE MAKER ↔ DOMESTIC TAKER', type:'DISABLED', fx:'FX ON', badge:'pair-disabled' };
+  return { label:'UPBIT ↔ BINANCE', type:'CROSS-BORDER', fx:'FX ON', badge:'pair-upbit-binance' };
+}
+
+function directionText(pairId, direction) {
+  if (pairId === 'UPBIT_BITHUMB') {
+    return direction === 'UPBIT_BITHUMB_B'
+      ? 'Bithumb SELL / Upbit BUY · 빗썸이 더 비쌈'
+      : 'Upbit SELL / Bithumb BUY · 업비트가 더 비쌈';
+  }
+  return direction === 'B' ? 'Upbit BUY / Binance SELL' : 'Upbit SELL / Binance BUY';
+}
+
+function renderOpportunityCard(row) {
+  const pairId=row.pair_id||'UPBIT_BINANCE', domestic=pairId==='UPBIT_BITHUMB', meta=pairMeta(pairId);
+  const sym=row.symbol||'--', surplus=Number(row.best_net_surplus_bp||0), net=Number(row.net_expected_profit_krw||0);
+  const thresholdGap=Number(latestLimits.min_net_surplus_bp||0)-surplus, reason=row.reason_no_trade||'', isGo=reason==='OK';
+  const sourceState=(latestTelemetry.symbol_quote_status||[]).find(item=>item.symbol===sym)||{};
+  const quoteSource=(row.quote_source||sourceState.quote_source||'rest').toUpperCase();
+  const quoteAge=Number(sourceState.quote_age_ms!=null?sourceState.quote_age_ms/1000:0), stale=Boolean(sourceState.stale);
+  const rightBid=domestic?row.bithumb_bid:row.binance_bid, rightAsk=domestic?row.bithumb_ask:row.binance_ask;
+  const rightVenue=domestic?'Bithumb':'Binance', rightUnit=domestic?'KRW':'USDT';
+  const gapLabel=domestic?'Domestic Gap':'Kimp', gapValue=domestic?`${surplus>=0?'+':''}${surplus.toFixed(1)} bp`:`${Number(row.kimchi_premium_pct||0).toFixed(2)}%`;
+  const reasonClass=reason==='OK'?'reason-ok':reason==='LOW_SURPLUS'?'reason-low-surplus':reason==='WIDE_SPREAD'||reason==='LOW_DEPTH'?'reason-warning':reason==='FX_UNTRUSTED'?'reason-danger':'reason-default';
+  return `<div class="quote-card ${domestic?'domestic-card':'cross-border-card'} ${isGo?'go':'nogo'} ${stale?'stale':''} refreshed">
+    <div class="qc-pair-row"><span class="pair-badge ${meta.badge}">${meta.label}</span><span class="strategy-type-badge">${meta.type}</span><span class="fx-badge ${domestic?'fx-off':'fx-on'}">${meta.fx}</span></div>
+    <div class="qc-header"><span class="qc-symbol">${esc(sym)} <span class="live-dot"></span><span class="live-label">LIVE</span></span><span class="qc-kimp ${surplus>=0?'pos':'neg'}">${gapLabel} ${gapValue}</span></div>
+    <div class="qc-prices">
+      <div><div class="qc-price-exchange">Upbit · KRW</div><div class="qc-price-val">${fmt(row.upbit_bid)} KRW</div><div class="qc-price-bid-ask">bid ${fmt(row.upbit_bid)} / ask ${fmt(row.upbit_ask)}</div></div>
+      <div><div class="qc-price-exchange">${rightVenue} · ${rightUnit}</div><div class="qc-price-val">${domestic?fmt(rightBid):Number(rightBid||0).toFixed(4)} ${rightUnit}</div><div class="qc-price-bid-ask">bid ${domestic?fmt(rightBid):Number(rightBid||0).toFixed(4)} / ask ${domestic?fmt(rightAsk):Number(rightAsk||0).toFixed(4)}</div></div>
+    </div>
+    <div class="qc-direction"><strong>${esc(row.best_direction||'--')}</strong><span>${esc(directionText(pairId,row.best_direction))}</span></div>
+    <div class="qc-metrics">
+      <span class="qc-metric">${quoteSource} ${quoteAge.toFixed(2)}s</span><span class="qc-metric">${stale?'STALE':'FRESH'}</span>
+      <span class="qc-metric">${domestic?'FX 없음':`FX ${fmt(row.krw_usdt,1)} KRW/USDT`}</span><span class="qc-metric">Net Surplus ${surplus.toFixed(1)} bp</span>
+      <span class="qc-metric">Net ${fmt(net)} KRW</span><span class="qc-metric">Qty ${Number(row.max_fillable_qty||0).toFixed(4)}</span>
+      <span class="qc-metric">Dynamic Slippage ${fmt(row.dynamic_slippage_bp,1)} bp</span><span class="qc-metric">Liquidity ${esc(row.liquidity_class||'--')}</span>
+    </div>
+    <div class="qc-verdict"><span class="verdict-badge ${isGo?'go-badge':'nogo-badge'}">${isGo?'GO':'NO-GO'}</span><span class="qc-reason ${reasonClass}">${esc(reason||'--')}</span></div>
+    <div class="qc-threshold ${isGo?'met':'short'}">${isGo?'Threshold met':thresholdGap>0?`기준까지 ${thresholdGap.toFixed(1)} bp 부족`:`Surplus threshold met / ${esc(reason||'NO-GO')} 확인`}</div>
+  </div>`;
+}
+
+function renderQuotes() {
+  const opportunities=latestStrategy.all_opportunities||[];
+  [['quotes-grid-upbit-binance','UPBIT_BINANCE'],['quotes-grid-upbit-bithumb','UPBIT_BITHUMB']].forEach(([id,pairId]) => {
+    const grid=$(id);
+    if (!grid) return;
+    const rows=opportunities.filter(row=>row.pair_id===pairId);
+    grid.innerHTML=rows.length ? rows.map(renderOpportunityCard).join('') : '<div class="loading-placeholder">No opportunities yet</div>';
+  });
+}
+
 async function fetchTrades() {
   try {
     const r = await fetch('/api/trades/recent');
@@ -394,7 +450,15 @@ function renderStrategyPairs(pairs=[], strategy={}) {
     if (!current || Number(row.best_net_surplus_bp||-9999)>Number(current.best_net_surplus_bp||-9999)) byPair[row.pair_id]=row;
   });
   const bestPair=strategy.best_pair||'--', bestSymbol=strategy.best_symbol||'--';
-  setText('strategy-best', `Best Opportunity: ${bestPair} / ${bestSymbol} / ${strategy.best_direction||'--'} / ${Number(strategy.best_net_surplus_bp||0).toFixed(1)} bp`);
+  const bestMeta=pairMeta(bestPair), bestDirection=strategy.best_direction||'--';
+  const bestReason=strategy.reason_no_trade||'--', bestGo=bestReason==='OK';
+  const best=$('strategy-best');
+  if (best) best.innerHTML=`<strong>Best Opportunity</strong>
+    <span>Pair: ${esc(bestMeta.label)}</span><span>Symbol: ${esc(bestSymbol)}</span>
+    <span>Direction: ${esc(directionText(bestPair,bestDirection))}</span>
+    <span>Net Surplus: ${Number(strategy.best_net_surplus_bp||0)>=0?'+':''}${Number(strategy.best_net_surplus_bp||0).toFixed(1)} bp</span>
+    <span>Expected: ${Number(strategy.expected_profit_krw||0)>=0?'+':''}${fmt(strategy.expected_profit_krw)} KRW</span>
+    <span class="${bestGo?'best-go':'best-nogo'}">Status: ${bestGo?'GO':'NO-GO'} / ${esc(bestReason)}</span>`;
   grid.innerHTML=(pairs||[]).map(pair => {
     const row=byPair[pair.pair_id]||{}, enabled=Boolean(pair.enabled);
     const paperOnly=Boolean(pair.paper_enabled)&&!pair.tiny_live_enabled;
@@ -425,7 +489,7 @@ function renderDecisions(decisions) {
       : 'decision-nogo';
     return `<tr class="${reasonClass}">
       <td>${d.time?new Date(d.time*1000).toLocaleTimeString('ko-KR'):'--'}</td>
-      <td>${esc(d.pair_id||'UPBIT_BINANCE')}</td><td>${esc(d.symbol)}</td><td>${esc(d.direction_label||d.direction)}</td>
+      <td><span class="pair-badge ${pairMeta(d.pair_id||'UPBIT_BINANCE').badge}">${esc(d.pair_id||'UPBIT_BINANCE')}</span></td><td>${esc(d.symbol)}</td><td>${esc(d.direction_label||d.direction)}</td>
       <td>${fmt(d.best_net_surplus_bp,1)} bp</td><td>${fmt(d.threshold_gap_bp,1)} bp</td>
       <td>${fmt(d.expected_net_profit_krw)} KRW</td><td>${esc((d.quote_source||'--').toUpperCase())}</td>
       <td>${fmt(d.quote_age_ms,0)} ms</td><td>${fmt(d.dynamic_slippage_bp,1)} bp</td>

@@ -209,3 +209,10 @@ API keys alone never enable an order. If `PARTIAL_RISK` appears, stop new entrie
 - `iceberg_enabled` and `iceberg_execution_enabled` default to `false`.
 - Large orders require separate validation before any future enablement. Early small-capital operation does not need Iceberg execution.
 - Current 24-hour paper runs use Dynamic Top20 selection, dynamic slippage, and latency-aware paper fill. Live order behavior is unchanged.
+
+## Dashboard venue-pair sections
+
+- The `Upbit ↔ Binance` section shows KRW/USDT cross-border Spot opportunities with FX enabled. Direction `A` means Upbit SELL / Binance BUY; direction `B` means Upbit BUY / Binance SELL.
+- The `Upbit ↔ Bithumb` section shows domestic KRW Spot opportunities with FX disabled. `UPBIT_BITHUMB_A` means Upbit SELL / Bithumb BUY; `UPBIT_BITHUMB_B` means Bithumb SELL / Upbit BUY.
+- Pair badges and the Decision Log distinguish the two strategies visually. Disabled venue-pair placeholders remain gray.
+- This dashboard-only change does not modify calculation logic, order logic, RiskGuard, Executor behavior, or live-order defaults.
