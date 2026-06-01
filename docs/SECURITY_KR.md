@@ -192,3 +192,10 @@ Paper 검증 기간 중:
 - Keep `emergency_liquidation_enabled=false` and `emergency_auto_execute=false` unless a separate review explicitly approves a recovery attempt.
 - A partial fill immediately blocks new entries. Check Upbit fills, Binance fills, and both balances before resolving exposure manually.
 - Automatic repeated recovery orders are prohibited. `MANUAL CLEAR PARTIAL RISK` records the operator reason after manual review; it does not place an order.
+## Iceberg placeholder 안전 정책
+
+- Iceberg 설정은 향후 대규모 주문 검토를 위한 표시 전용 placeholder입니다.
+- `iceberg_enabled: false`, `iceberg_execution_enabled: false`가 기본값입니다.
+- 실제 분할 주문 실행은 구현되어 있지 않습니다.
+- 대규모 주문 활성화 전에는 반복 주문 위험과 총 슬리피지 한도를 별도로 검증해야 합니다.
+- 기존 출금, 입금, 주소 관리, 선물, 마진, P2P, 내부 전송 금지는 그대로 유지됩니다.

@@ -65,6 +65,12 @@ paper_bithumb_latency_ms: 60
 paper_binance_latency_ms: 80
 paper_latency_jitter_ms: 30
 paper_slippage_stress_bp: 5
+iceberg_enabled: false
+iceberg_execution_enabled: false
+iceberg_min_order_krw: 1000000
+iceberg_slice_count: 3
+iceberg_slice_interval_ms: 120
+iceberg_max_total_slippage_bp: 20
 
 symbols: [BTC, ETH, XRP, DOGE, SOL]
 

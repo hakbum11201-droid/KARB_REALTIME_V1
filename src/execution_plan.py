@@ -25,6 +25,11 @@ class ExecutionPlan:
     quote_source: str = ''
     min_order_ok: bool = False
     risk_ok: bool = False
+    iceberg_required: bool = False
+    iceberg_enabled: bool = False
+    iceberg_execution_enabled: bool = False
+    iceberg_slice_count: int = 0
+    iceberg_warning: str = ''
     plan_id: str = ''
     direction_label: str = ''
     upbit_side: str = ''

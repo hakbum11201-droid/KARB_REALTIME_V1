@@ -694,6 +694,33 @@ function renderRuntimeServices(scanner={}, store={}) {
   setText('runtime-store-age', store.snapshot_age_sec==null ? '--' : ageText(store.snapshot_age_sec));
 }
 
+async function fetchIcebergStatus() {
+  try {
+    const r = await fetch('/api/iceberg/status');
+    if (!r.ok) return;
+    renderIcebergStatus((await r.json()).iceberg||{});
+  } catch (error) {
+    console.error('[Iceberg status] failed', error);
+  }
+}
+
+function renderIcebergStatus(iceberg={}) {
+  const grid = $('iceberg-grid');
+  if (!grid) return;
+  const fields = [
+    ['Enabled', String(Boolean(iceberg.enabled))],
+    ['Execution Enabled', String(Boolean(iceberg.execution_enabled))],
+    ['Min Order', `${fmt(iceberg.min_order_krw)} KRW`],
+    ['Slice Count', fmt(iceberg.slice_count)],
+    ['Slice Interval', `${fmt(iceberg.slice_interval_ms)} ms`],
+    ['Max Total Slippage', `${fmt(iceberg.max_total_slippage_bp,1)} bp`],
+  ];
+  grid.innerHTML=fields.map(([label,value])=>`<div><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`).join('');
+  setText('iceberg-warning', iceberg.warnings?.length
+    ? `Large order warning: ${iceberg.warnings.join(' / ')}`
+    : 'Large order warning: none');
+}
+
 function renderTinyLivePanel(readiness, tinyStatus={}) {
   const status = tinyStatus.status||'DISARMED';
   const partialRisk = tinyStatus.partial_risk || status==='PARTIAL_RISK';
@@ -797,7 +824,9 @@ function renderExecutionPlan(plan={}) {
     [`${rightVenue} Expected`, fmt(rightExpected,8)], ['Quote Source', plan.quote_source||'--'],
     ['Quote Age', `${fmt(plan.quote_age_ms,0)} ms`], ['Net Surplus', `${fmt(plan.best_net_surplus_bp,1)} bp`],
     ['Expected Profit', `${fmt(plan.expected_net_profit_krw)} KRW`], ['Preflight', plan.preflight_status],
-    ['Executable', String(Boolean(plan.executable))],
+    ['Executable', String(Boolean(plan.executable))], ['Iceberg Required', String(Boolean(plan.iceberg_required))],
+    ['Iceberg Enabled', String(Boolean(plan.iceberg_enabled))], ['Iceberg Execution', String(Boolean(plan.iceberg_execution_enabled))],
+    ['Iceberg Slices', fmt(plan.iceberg_slice_count)], ['Iceberg Warning', plan.iceberg_warning||'none'],
   ];
   el.innerHTML = `
     <div class="execution-plan-grid">${fields.map(([label,value])=>`<div><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`).join('')}</div>
@@ -867,6 +896,7 @@ on('btn-save-keys', 'click', async () => {
 fetchData();
 fetchTelemetry();
 fetchRuntimeServices();
+fetchIcebergStatus();
 fetchDecisions();
 fetchPerf();
 fetchLastSession();
@@ -876,5 +906,6 @@ setInterval(fetchPerf,   POLL_MS*2);
 setInterval(fetchTrades, POLL_MS*2);
 setInterval(fetchTelemetry, POLL_MS);
 setInterval(fetchRuntimeServices, POLL_MS);
+setInterval(fetchIcebergStatus, POLL_MS*2);
 setInterval(fetchDecisions, POLL_MS*2);
 setInterval(() => renderTelemetry(latestState, latestEngine, latestControl), 1000);

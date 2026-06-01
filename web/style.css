@@ -433,11 +433,13 @@ body {
 .execution-plan { color:var(--text-secondary); background:rgba(255,255,255,.03); border-radius:var(--radius-sm); padding:8px; font-family:var(--font-mono); font-size:11px; margin-top:8px; line-height:1.5; }
 .tiny-live-warning { display:none; color:var(--accent-red); background:rgba(252,129,129,.12); border:1px solid rgba(252,129,129,.35); border-radius:var(--radius-sm); padding:8px; font-weight:700; font-size:11px; margin-top:8px; }
 .tiny-live-warning.visible { display:block; }
-.live-guard-panel, .execution-plan-panel, .order-tracker-panel { background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:14px; margin:14px 0; }
-.live-guard-grid, .execution-plan-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(145px,1fr)); gap:8px; }
-.guard-item, .execution-plan-grid div { display:flex; flex-direction:column; gap:4px; padding:9px; border-radius:var(--radius-sm); background:rgba(255,255,255,.035); }
-.guard-item span, .execution-plan-grid span { color:var(--text-muted); font-size:10px; text-transform:uppercase; letter-spacing:.06em; }
-.guard-item strong, .execution-plan-grid strong { color:var(--text-primary); font-family:var(--font-mono); font-size:12px; }
+.live-guard-panel, .execution-plan-panel, .order-tracker-panel, .iceberg-panel { background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:14px; margin:14px 0; }
+.live-guard-grid, .execution-plan-grid, .iceberg-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(145px,1fr)); gap:8px; }
+.guard-item, .execution-plan-grid div, .iceberg-grid div { display:flex; flex-direction:column; gap:4px; padding:9px; border-radius:var(--radius-sm); background:rgba(255,255,255,.035); }
+.guard-item span, .execution-plan-grid span, .iceberg-grid span { color:var(--text-muted); font-size:10px; text-transform:uppercase; letter-spacing:.06em; }
+.guard-item strong, .execution-plan-grid strong, .iceberg-grid strong { color:var(--text-primary); font-family:var(--font-mono); font-size:12px; }
+.iceberg-note { color:var(--text-secondary); font-size:11px; line-height:1.6; margin:6px 0 10px; }
+.iceberg-warning { color:var(--accent-yellow); font-family:var(--font-mono); font-size:11px; margin-top:9px; }
 .guard-item.ok { border:1px solid rgba(72,187,120,.28); }
 .guard-item.ok strong { color:var(--accent-green); }
 .guard-item.blocked { border:1px solid rgba(237,137,54,.28); }

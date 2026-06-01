@@ -33,6 +33,7 @@ from config import cfg
 from executors import TinyLiveExecutor, create_preflight_plan, get_inventory_summary, get_tiny_live_readiness
 from venue_pair import venue_pair_payload
 from bithumb_private import BithumbPrivateClient
+from iceberg_planner import IcebergPlanner
 
 tiny_live_executor = TinyLiveExecutor()
 
@@ -95,11 +96,20 @@ def _live_readiness_payload(pair_id='UPBIT_BINANCE'):
 
 def _with_plan_quote_source(payload):
     plan = payload.get('plan') if isinstance(payload, dict) else None
-    if not plan or plan.get('quote_source'):
+    if not plan:
         return payload
-    quotes = _read_json(os.path.join(RUNTIME_DIR, 'latest_quotes.json'))
-    quote = quotes.get(plan.get('symbol'), {})
-    plan['quote_source'] = quote.get('source') or quote.get('upbit', {}).get('source') or quote.get('binance', {}).get('source') or 'unknown'
+    if not plan.get('quote_source'):
+        quotes = _read_json(os.path.join(RUNTIME_DIR, 'latest_quotes.json'))
+        quote = quotes.get(plan.get('symbol'), {})
+        plan['quote_source'] = quote.get('source') or quote.get('upbit', {}).get('source') or quote.get('binance', {}).get('source') or 'unknown'
+    iceberg = IcebergPlanner().build_placeholder_plan(plan, cfg)
+    plan.update({
+        'iceberg_required': iceberg['iceberg_required'],
+        'iceberg_enabled': iceberg['enabled'],
+        'iceberg_execution_enabled': iceberg['execution_enabled'],
+        'iceberg_slice_count': iceberg['slice_count'],
+        'iceberg_warning': ' / '.join(iceberg['warnings']),
+    })
     return payload
 
 
@@ -215,6 +225,13 @@ def _slippage_model_payload():
         'paper_binance_latency_ms': cfg.paper_binance_latency_ms,
         'paper_latency_jitter_ms': cfg.paper_latency_jitter_ms,
         'paper_slippage_stress_bp': cfg.paper_slippage_stress_bp,
+    }
+
+
+def _iceberg_status_payload():
+    return {
+        'ok': True, 'error': '', 'blockers': [],
+        'iceberg': IcebergPlanner().get_status(cfg),
     }
 
 
@@ -355,6 +372,9 @@ class KarbHandler(SimpleHTTPRequestHandler):
 
         elif path == '/api/slippage/model':
             self._send_guarded_json(_slippage_model_payload)
+
+        elif path == '/api/iceberg/status':
+            self._send_guarded_json(_iceberg_status_payload)
 
         elif self.path == '/api/trades/recent':
             recent = _read_jsonl_tail(os.path.join(LOGS_DIR, 'paper_trades.jsonl'), 100)

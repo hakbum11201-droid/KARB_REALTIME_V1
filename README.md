@@ -202,3 +202,10 @@ API keys alone never enable an order. If `PARTIAL_RISK` appears, stop new entrie
 - The paper fill simulator applies venue latency and bounded in-memory quote history. If an older latency-aligned quote is unavailable, it adds a configured slippage stress penalty.
 - Use these fields during long paper runs: dynamic slippage, depth available, liquidity class, simulated fill latency, and paper edge quality.
 - This is paper evaluation only. It does not relax live-order guards or add Iceberg execution.
+## Iceberg placeholder
+
+- Iceberg is placeholder only, for future large-order execution.
+- Actual split order execution is not implemented.
+- `iceberg_enabled` and `iceberg_execution_enabled` default to `false`.
+- Large orders require separate validation before any future enablement. Early small-capital operation does not need Iceberg execution.
+- Current 24-hour paper runs use Dynamic Top20 selection, dynamic slippage, and latency-aware paper fill. Live order behavior is unchanged.

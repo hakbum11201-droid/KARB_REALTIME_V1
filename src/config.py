@@ -204,6 +204,20 @@ class Config:
     @property
     def paper_initial_coin_qty(self): return self.get('paper_initial_coin_qty', {})
 
+    # Iceberg placeholder only. Split order execution is not implemented.
+    @property
+    def iceberg_enabled(self): return self.get('iceberg_enabled', False)
+    @property
+    def iceberg_execution_enabled(self): return self.get('iceberg_execution_enabled', False)
+    @property
+    def iceberg_min_order_krw(self): return self.get('iceberg_min_order_krw', 1000000)
+    @property
+    def iceberg_slice_count(self): return self.get('iceberg_slice_count', 3)
+    @property
+    def iceberg_slice_interval_ms(self): return self.get('iceberg_slice_interval_ms', 120)
+    @property
+    def iceberg_max_total_slippage_bp(self): return self.get('iceberg_max_total_slippage_bp', 20)
+
     # ── 저장 / 로그 ────────────────────────────────────────────
     @property
     def raw_save_enabled(self): return self.get('raw_save_enabled', False)

@@ -17,6 +17,8 @@ LIVE_BLOCKER_CODES = (
     'EMERGENCY_LIMIT_EXCEEDED', 'EMERGENCY_SLIPPAGE_TOO_HIGH',
     'PAIR_DISABLED', 'BITHUMB_KEY_MISSING', 'BITHUMB_PRIVATE_DISABLED',
     'BITHUMB_LIVE_DISABLED', 'UPBIT_BITHUMB_LIVE_DISABLED',
+    'ICEBERG_REQUIRED', 'BLOCK_LARGE_ORDER_WITHOUT_ICEBERG',
+    'ICEBERG_EXECUTION_DISABLED',
 )
 
 
@@ -37,6 +39,12 @@ class RiskGuard:
         self._consecutive_fails: int   = 0
         self._daily_loss_krw:    float = 0.0
         self._day_start:         float = time.time()
+
+    @staticmethod
+    def iceberg_policy(order_krw: float) -> dict:
+        """Expose placeholder policy without changing the live execution flow."""
+        from iceberg_planner import IcebergPlanner
+        return IcebergPlanner().build_placeholder_plan({'order_krw': order_krw}, cfg)
 
     # ──────────────────────────────────────────────────────────────────────
     # 공개 API
