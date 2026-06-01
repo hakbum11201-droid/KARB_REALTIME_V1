@@ -144,3 +144,12 @@ python -m py_compile app_launcher.py
 - `logs/decisions.jsonl` – OK/후보/상태변화/오류만 (LOW_SURPLUS 반복 저장 금지, 최대 20MB)
 - `reports/sessions/` – 세션 요약만 (raw tick 저장 금지)
 - sqlite / 대용량 파일 생성 금지
+
+## Guarded tiny-live execution
+
+- Tiny-live uses the same inspectable `ExecutionPlan` shape as paper evaluation.
+- Orders remain blocked unless live trading, tiny-live, and live-order gates are enabled and the executor is explicitly armed.
+- Upbit and Binance Spot orders are submitted concurrently, then both fills are checked before a result is accepted.
+- A one-sided failure or partial fill sets `PARTIAL_RISK`, disarms the executor, and blocks new entries.
+- Automatic unwind orders are intentionally disabled. Resolve partial exposure manually.
+- Withdrawal, wallet, transfer, Futures, Margin, and P2P features are intentionally absent.

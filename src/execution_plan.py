@@ -17,6 +17,7 @@ class ExecutionPlan:
     order_krw: float = 0
     order_usdt: float = 0
     qty: float = 0
+    normalized_qty: float = 0
     quantity: float = 0
     binance_usdt: float = 0
     quote_timestamp: float = 0
@@ -25,6 +26,8 @@ class ExecutionPlan:
     upbit_ask: float = 0
     binance_bid: float = 0
     binance_ask: float = 0
+    upbit_expected_price: float = 0
+    binance_expected_price: float = 0
     fx_rate: float = 0
     expected_net_profit_krw: float = 0
     best_net_surplus_bp: float = 0

@@ -82,6 +82,17 @@ class KarbHandler(SimpleHTTPRequestHandler):
     def _send_403(self):
         self._send_json({'error': 'localhost only'}, 403)
 
+    def _send_executor_action(self, action):
+        try:
+            self._send_json(action())
+        except Exception as exc:
+            self._send_json({
+                'ok': False,
+                'status': 'BLOCKED',
+                'blockers': ['INTERNAL_ERROR'],
+                'error': type(exc).__name__,
+            }, 500)
+
     def do_OPTIONS(self):
         self.send_response(204)
         self.send_header('Access-Control-Allow-Origin', '*')
@@ -125,7 +136,7 @@ class KarbHandler(SimpleHTTPRequestHandler):
             self._send_json(get_tiny_live_readiness())
 
         elif self.path == '/api/execution/preflight':
-            self._send_json(create_preflight_plan())
+            self._send_executor_action(create_preflight_plan)
 
         elif self.path == '/api/execution/last-plan':
             self._send_json(_read_json(os.path.join(RUNTIME_DIR, 'tiny_live_last_preflight.json')))
@@ -158,25 +169,25 @@ class KarbHandler(SimpleHTTPRequestHandler):
             if not self._is_localhost():
                 self._send_403()
                 return
-            self._send_json(create_preflight_plan())
+            self._send_executor_action(create_preflight_plan)
 
         elif self.path == '/api/tiny-live/arm':
             if not self._is_localhost():
                 self._send_403()
                 return
-            self._send_json(tiny_live_executor.arm())
+            self._send_executor_action(tiny_live_executor.arm)
 
         elif self.path == '/api/tiny-live/disarm':
             if not self._is_localhost():
                 self._send_403()
                 return
-            self._send_json(tiny_live_executor.disarm())
+            self._send_executor_action(tiny_live_executor.disarm)
 
         elif self.path == '/api/tiny-live/execute-once':
             if not self._is_localhost():
                 self._send_403()
                 return
-            self._send_json(tiny_live_executor.execute_once())
+            self._send_executor_action(tiny_live_executor.execute_once)
 
         elif self.path == '/api/engine/start':
             if not self._is_localhost():

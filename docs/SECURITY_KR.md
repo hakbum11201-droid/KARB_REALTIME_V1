@@ -163,3 +163,15 @@ Paper 검증 기간 중:
 - [ ] 소스코드에 `YOUR_*` 이외의 실제 키가 없는가?
 - [ ] `logs/`, `runtime/`이 Git에 포함되지 않는가?
 - [ ] UI에서 키 값이 재표시되지 않는가?
+
+---
+
+## Guarded tiny-live safety rules
+
+- Default configuration blocks every real order.
+- Tiny-live orders require all three gates: `enable_live_trading`, `tiny_live_enabled`, and `live_order_enabled`.
+- The executor must also be explicitly `ARMED`, pass preflight, and use fresh quotes.
+- Upbit and Binance Spot orders are sent concurrently and checked for fills.
+- Any one-sided failure or partial fill records `PARTIAL_RISK`, disarms execution, and blocks new entries.
+- There is no automatic unwind order. Operators must inspect balances and orders manually.
+- Never grant withdrawal permission. Futures, Margin, P2P, internal transfer, wallet address storage, and travel-rule automation are prohibited.

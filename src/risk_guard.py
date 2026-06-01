@@ -7,6 +7,15 @@ import time
 from config import cfg
 
 
+LIVE_BLOCKER_CODES = (
+    'MODE_GUARD', 'KEY_MISSING', 'STALE_QUOTE', 'LOW_SURPLUS',
+    'LOW_EXPECTED_PROFIT', 'LOW_DEPTH', 'WIDE_SPREAD',
+    'INVENTORY_SHORTAGE', 'MIN_ORDER_FAIL', 'DAILY_LOSS_LIMIT',
+    'MAX_TRADES_LIMIT', 'COOLDOWN', 'PARTIAL_RISK_ACTIVE',
+    'CONFIG_LIVE_DISABLED',
+)
+
+
 class RiskGuard:
     """
     check_trade() 반환값:
