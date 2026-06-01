@@ -2,6 +2,9 @@
 
 ## Guarded tiny-live Spot execution
 
+- Exchange API keys must be limited to balance-read, order-read, and Spot order permissions.
+- Withdrawal permissions are forbidden. Futures and margin permissions are not used.
+- Adding keys alone never enables orders: the safe default switches remain `false`.
 - Public top-of-book market data prefers reconnecting Upbit and Binance WebSocket streams.
 - Until both WebSocket sides are fresh, the existing REST quote engine remains the fallback.
 - Only the latest top-of-book snapshot is kept. Raw tick append storage is not used.

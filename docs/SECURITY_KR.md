@@ -2,6 +2,9 @@
 
 ## Tiny-live safety boundary
 
+- API keys must have balance-read, order-read, and Spot order permissions only.
+- Never grant withdrawal permissions. Futures and margin permissions are forbidden.
+- Keys alone do not enable orders. Orders remain blocked while the safe config switches are off.
 - Public WebSocket quotes keep only the latest top-of-book snapshot; raw tick append storage is disabled.
 - REST remains a fallback when WebSocket quotes are unavailable or stale.
 - Tiny-live is disabled and disarmed by default.

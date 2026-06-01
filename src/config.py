@@ -28,6 +28,8 @@ class Config:
     @property
     def live_order_enabled(self): return self.get('live_order_enabled', False)
     @property
+    def live_mode_enabled(self): return self.get('live_mode_enabled', False)
+    @property
     def withdrawals_enabled(self): return self.get('withdrawals_enabled', False)
     @property
     def futures_hedge_enabled(self): return self.get('futures_hedge_enabled', False)
@@ -59,6 +61,10 @@ class Config:
     def rest_fallback_enabled(self): return self.get('rest_fallback_enabled', True)
     @property
     def block_new_entries_on_partial_risk(self): return self.get('block_new_entries_on_partial_risk', True)
+    @property
+    def order_ttl_sec(self): return self.get('order_ttl_sec', 1.5)
+    @property
+    def min_fill_ratio(self): return self.get('min_fill_ratio', 0.8)
 
     # ── 심볼 / 루프 ────────────────────────────────────────────
     @property

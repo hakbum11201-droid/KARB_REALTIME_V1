@@ -2,6 +2,7 @@ mode: paper
 enable_live_trading: false
 tiny_live_enabled: false
 live_order_enabled: false
+live_mode_enabled: false
 withdrawals_enabled: false
 futures_hedge_enabled: false
 manual_rebalance_only: true
@@ -19,6 +20,8 @@ tiny_live_require_inventory_ok: true
 use_websocket_market_data: true
 rest_fallback_enabled: true
 block_new_entries_on_partial_risk: true
+order_ttl_sec: 1.5
+min_fill_ratio: 0.8
 
 symbols: [BTC, ETH, XRP, DOGE, SOL]
 
