@@ -69,12 +69,17 @@ class OrderTracker:
     def start_plan(self, plan: dict) -> dict:
         now = time.time()
         qty = float(plan.get('normalized_qty', plan.get('qty', 0)) or 0)
+        left_venue = plan.get('left_venue', 'UPBIT')
+        right_venue = plan.get('right_venue', 'BINANCE')
+        left_side = plan.get('left_side') or plan.get('upbit_side', '')
+        right_side = plan.get('right_side') or plan.get('binance_side', '')
         self.state = {
             'plan_id': plan.get('plan_id', ''), 'symbol': plan.get('symbol', ''),
+            'pair_id': plan.get('pair_id', 'UPBIT_BINANCE'),
             'direction_label': plan.get('direction_label', ''), 'status': 'INIT',
             'created_at': now, 'updated_at': now,
-            'upbit_leg': _leg('UPBIT', plan.get('upbit_side', ''), qty, plan.get('order_krw', 0)),
-            'binance_leg': _leg('BINANCE', plan.get('binance_side', ''), qty, plan.get('order_usdt', 0)),
+            'left_leg': _leg(left_venue, left_side, qty, plan.get('order_krw', 0)),
+            'right_leg': _leg(right_venue, right_side, qty, plan.get('order_usdt') or plan.get('order_krw', 0)),
             'net_filled_qty': 0.0, 'exposure_qty': 0.0, 'exposure_side': 'FLAT',
             'emergency_required': False, 'emergency_attempted': False, 'emergency_done': False,
             'suggested_manual_action': '',
@@ -143,26 +148,25 @@ class OrderTracker:
         return self.to_dict()
 
     def compute_exposure(self) -> dict:
-        upbit = self.state.get('upbit_leg', {})
-        binance = self.state.get('binance_leg', {})
+        left, right = self._legs()
         signed = sum(
             (1 if leg.get('side') == 'BUY' else -1) * float(leg.get('filled_qty', 0) or 0)
-            for leg in (upbit, binance)
+            for leg in (left, right)
         )
         self.state['net_filled_qty'] = round(min(
-            float(upbit.get('filled_qty', 0) or 0), float(binance.get('filled_qty', 0) or 0)), 12)
+            float(left.get('filled_qty', 0) or 0), float(right.get('filled_qty', 0) or 0)), 12)
         self.state['exposure_qty'] = round(abs(signed), 12)
         self.state['exposure_side'] = 'LONG' if signed > 0 else 'SHORT' if signed < 0 else 'FLAT'
         if self.is_partial_risk():
             self.state['status'] = 'PARTIAL_RISK'
             self.state['emergency_required'] = True
-        elif all(leg.get('status') == 'FILLED' for leg in (upbit, binance)):
+        elif all(leg.get('status') == 'FILLED' for leg in (left, right)):
             self.state['status'] = 'FILLED'
         self.state['updated_at'] = time.time()
         return self.to_dict()
 
     def is_partial_risk(self) -> bool:
-        legs = [self.state.get('upbit_leg', {}), self.state.get('binance_leg', {})]
+        legs = list(self._legs())
         filled = [float(leg.get('filled_qty', 0) or 0) for leg in legs]
         statuses = {leg.get('status') for leg in legs}
         return (
@@ -233,10 +237,17 @@ class OrderTracker:
         return list(reversed(self._recent))
 
     def _get_leg(self, venue: str) -> dict:
-        key = 'upbit_leg' if venue.upper() == 'UPBIT' else 'binance_leg'
         if not self.state:
             raise RuntimeError('ORDER_LEDGER_UNSYNCED')
-        return self.state[key]
+        for leg in self._legs():
+            if leg.get('venue', '').upper() == venue.upper():
+                return leg
+        raise RuntimeError(f'ORDER_LEDGER_UNSYNCED: {venue}')
+
+    def _legs(self) -> tuple[dict, dict]:
+        left = self.state.get('left_leg') or self.state.get('upbit_leg', {})
+        right = self.state.get('right_leg') or self.state.get('binance_leg', {})
+        return left, right
 
     def _event(self, event: str, venue='', detail='') -> None:
         self._recent.append({

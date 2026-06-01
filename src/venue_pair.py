@@ -36,7 +36,8 @@ def get_venue_pairs() -> list[VenuePair]:
         VenuePair(
             'UPBIT_BITHUMB', 'UPBIT', 'BITHUMB', 'KRW',
             bool(enabled.get('UPBIT_BITHUMB', True)),
-            cfg.upbit_bithumb_paper_enabled, False, False, 'DOMESTIC_KRW',
+            cfg.upbit_bithumb_paper_enabled, cfg.upbit_bithumb_tiny_live_enabled,
+            cfg.upbit_bithumb_live_enabled, 'DOMESTIC_KRW',
         ),
         VenuePair(
             'BINANCE_MAKER_DOMESTIC_TAKER', 'BINANCE', 'DOMESTIC', 'KRW/USDT',

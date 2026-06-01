@@ -16,6 +16,15 @@ class ExecutionPlan:
     domestic_only: bool = False
     fx_required: bool = True
     strategy_type: str = 'CROSS_BORDER_SPOT'
+    left_side: str = ''
+    right_side: str = ''
+    left_order_type: str = 'MARKET'
+    right_order_type: str = 'MARKET'
+    left_expected_price: float = 0
+    right_expected_price: float = 0
+    quote_source: str = ''
+    min_order_ok: bool = False
+    risk_ok: bool = False
     plan_id: str = ''
     direction_label: str = ''
     upbit_side: str = ''

@@ -60,6 +60,12 @@ def get_binance_credentials() -> tuple[str, str]:
     return api_key, api_secret
 
 
+def get_bithumb_credentials() -> tuple[str, str]:
+    access_key = _require_env("BITHUMB_ACCESS_KEY")
+    secret_key = _require_env("BITHUMB_SECRET_KEY")
+    return access_key, secret_key
+
+
 def get_fx_api_key() -> str | None:
     """외부 FX API 키. 없으면 None (크로스레이트 폴백 사용)."""
     return _get_env("FX_API_KEY")
@@ -90,7 +96,8 @@ def get_key_status() -> dict:
     각 키의 Set/Missing 상태만 반환.
     키 값 자체는 절대 포함하지 않는다.
     """
-    keys = ["UPBIT_ACCESS_KEY", "UPBIT_SECRET_KEY", "BINANCE_API_KEY", "BINANCE_API_SECRET"]
+    keys = ["UPBIT_ACCESS_KEY", "UPBIT_SECRET_KEY", "BINANCE_API_KEY", "BINANCE_API_SECRET",
+            "BITHUMB_ACCESS_KEY", "BITHUMB_SECRET_KEY"]
     return {
         k: ("Set" if (_get_env(k) and not _get_env(k).startswith("YOUR_")) else "Missing")
         for k in keys
@@ -106,12 +113,15 @@ def get_api_permission_policy() -> dict:
         'upbit_forbidden': ['WITHDRAW_CREATE', 'WITHDRAW_READ', 'WITHDRAW_ADDRESS_MANAGE'],
         'binance_allowed': ['SPOT_ACCOUNT_READ', 'SPOT_TRADE', 'ORDER_READ'],
         'binance_forbidden': ['WITHDRAWALS', 'FUTURES', 'MARGIN', 'P2P', 'INTERNAL_TRANSFER'],
+        'bithumb_allowed': ['BALANCE_READ', 'ORDER_READ', 'ORDER_CREATE'],
+        'bithumb_forbidden': ['WITHDRAWALS', 'DEPOSITS', 'ADDRESS_MANAGE'],
         'recommend_ip_restriction': True,
     }
 
 
 def save_keys(upbit_access: str, upbit_secret: str,
-              binance_api: str, binance_secret: str) -> dict:
+              binance_api: str, binance_secret: str,
+              bithumb_access: str = '', bithumb_secret: str = '') -> dict:
     """
     키를 .env.local에 저장한다. .env.local은 Git 제외.
     키 값은 절대 print/log하지 않는다.
@@ -128,6 +138,8 @@ def save_keys(upbit_access: str, upbit_secret: str,
             ("UPBIT_SECRET_KEY",    upbit_secret.strip()),
             ("BINANCE_API_KEY",     binance_api.strip()),
             ("BINANCE_API_SECRET",  binance_secret.strip()),
+            ("BITHUMB_ACCESS_KEY",  bithumb_access.strip()),
+            ("BITHUMB_SECRET_KEY",  bithumb_secret.strip()),
         ]
         for k, v in pairs:
             if v:  # 비어있으면 덮어쓰지 않는다

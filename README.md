@@ -184,7 +184,7 @@ API keys alone never enable an order. If `PARTIAL_RISK` appears, stop new entrie
 
 - KARB remains one program. The dashboard compares enabled venue pairs through one paper-monitoring flow.
 - `UPBIT_BINANCE` keeps the existing cross-border Spot calculation and guarded tiny-live execution path.
-- `UPBIT_BITHUMB` adds domestic KRW spread monitoring for paper evaluation only. Both venues use KRW quotes, so this calculation does not carry FX risk.
+- `UPBIT_BITHUMB` adds domestic KRW spread monitoring and a guarded tiny-live preparation path. Both venues use KRW quotes, so this calculation does not carry FX risk.
 - `BITHUMB_BINANCE` is a disabled quote-structure placeholder. `BINANCE_MAKER_DOMESTIC_TAKER` is a disabled display-only placeholder.
-- Bithumb integration uses public REST orderbook quotes only. Bithumb private keys, Bithumb orders, withdrawals, wallet addresses, automatic transfers, Futures, Margin, and P2P are not implemented.
-- A separate follow-up is required before any Bithumb tiny-live work. Paper monitoring does not enable any live order gate.
+- Bithumb private integration is limited to balance read, order read, and Spot market orders. Withdrawals, deposits, wallet addresses, automatic transfers, Futures, Margin, and P2P are intentionally absent.
+- Bithumb orders remain blocked by default. In addition to the global live gates and explicit ARM action, `bithumb_private_enabled` and `upbit_bithumb_live_enabled` must be enabled deliberately.

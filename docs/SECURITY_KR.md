@@ -179,6 +179,13 @@ Paper 검증 기간 중:
 - Restrict API keys by IP where possible. Use read and Spot order permissions only.
 - Treat `PARTIAL_RISK` as an immediate stop condition: inspect both exchange fills and balances, then disarm manually.
 
+## Bithumb domestic KRW pair
+
+- `UPBIT_BITHUMB` uses inventory-based Spot orders only. It does not add withdrawals, deposits, wallet addresses, transfers, travel-rule automation, Futures, Margin, or P2P.
+- Bithumb API keys must be limited to balance read, order read, and Spot order permissions. Never grant withdrawal permissions.
+- Bithumb orders remain blocked while any global live gate is off, while the executor is disarmed, or while `bithumb_private_enabled=false` or `upbit_bithumb_live_enabled=false`.
+- A one-sided Upbit/Bithumb fill becomes `PARTIAL_RISK`. Inspect both exchanges and resolve remaining Spot exposure manually.
+
 ## Partial-risk recovery scaffold
 
 - Emergency recovery is Spot-only. Withdrawal, wallet-address, transfer, Futures, Margin, and P2P APIs must not be added.

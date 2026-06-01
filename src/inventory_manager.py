@@ -180,6 +180,65 @@ class InventoryManager:
             'symbols': symbols,
         }
 
+    def upbit_bithumb_inventory_summary(self, opportunities=None, mode='paper') -> dict:
+        """Return read-only Upbit/Bithumb domestic KRW inventory sufficiency."""
+        opportunities = opportunities or []
+        if mode == 'paper':
+            upbit_balances = {'KRW': self._paper_upbit_krw, **self._paper_coin_qty}
+            bithumb_balances = {'KRW': self._paper_upbit_krw, **self._paper_coin_qty}
+            blockers, source = [], 'paper_config_inventory'
+        else:
+            from bithumb_private import BithumbPrivateClient
+            from exchange_clients import UpbitPrivateClient
+            upbit = UpbitPrivateClient().get_balances()
+            bithumb = BithumbPrivateClient().get_balances()
+            blockers = list(upbit.get('blockers', [])) + list(bithumb.get('blockers', []))
+            upbit_balances, bithumb_balances = upbit.get('balances', {}), bithumb.get('balances', {})
+            source = 'read_only_private_clients'
+        rows = {row.get('symbol'): row for row in opportunities if row.get('pair_id') == 'UPBIT_BITHUMB'}
+        symbols = []
+        trade_krw = float(cfg.upbit_bithumb_order_krw)
+        for symbol in cfg.symbols:
+            quote = rows.get(symbol, {})
+            upbit_bid = float(quote.get('upbit_bid', 0) or 0)
+            bithumb_bid = float(quote.get('bithumb_bid', 0) or 0)
+            upbit_coin = float(upbit_balances.get(symbol, 0) or 0)
+            bithumb_coin = float(bithumb_balances.get(symbol, 0) or 0)
+            upbit_krw = float(upbit_balances.get('KRW', 0) or 0)
+            bithumb_krw = float(bithumb_balances.get('KRW', 0) or 0)
+            missing_a, missing_b = [], []
+            if not quote or upbit_bid <= 0 or bithumb_bid <= 0:
+                missing_a = ['PRICE_UNAVAILABLE']
+                missing_b = ['PRICE_UNAVAILABLE']
+            else:
+                required_upbit_coin = trade_krw / upbit_bid
+                required_bithumb_coin = trade_krw / bithumb_bid
+                if upbit_coin < required_upbit_coin:
+                    missing_a.append(f'Upbit {symbol} need {required_upbit_coin:.8f} / have {upbit_coin:.8f}')
+                if bithumb_krw < trade_krw:
+                    missing_a.append(f'Bithumb KRW need {trade_krw:.0f} / have {bithumb_krw:.0f}')
+                if bithumb_coin < required_bithumb_coin:
+                    missing_b.append(f'Bithumb {symbol} need {required_bithumb_coin:.8f} / have {bithumb_coin:.8f}')
+                if upbit_krw < trade_krw:
+                    missing_b.append(f'Upbit KRW need {trade_krw:.0f} / have {upbit_krw:.0f}')
+            symbols.append({
+                'pair_id': 'UPBIT_BITHUMB', 'symbol': symbol,
+                'upbit_coin_qty': upbit_coin, 'bithumb_coin_qty': bithumb_coin,
+                'upbit_krw_available': upbit_krw, 'bithumb_krw_available': bithumb_krw,
+                'direction_a_possible': not missing_a, 'direction_b_possible': not missing_b,
+                'missing_for_a': missing_a, 'missing_for_b': missing_b,
+                'recommended_manual_action': (
+                    'Inventory ready for both directions.' if not missing_a and not missing_b
+                    else 'Manual rebalance required. Withdrawals and automatic transfers are not provided.'
+                ),
+                'status': 'OK' if not missing_a or not missing_b else 'INVENTORY_SHORTAGE',
+            })
+        return {
+            'ok': not blockers, 'pair_id': 'UPBIT_BITHUMB', 'mode': mode, 'source': source,
+            'blockers': blockers, 'manual_rebalance_only': True,
+            'balances': {'upbit': upbit_balances, 'bithumb': bithumb_balances}, 'symbols': symbols,
+        }
+
     # ──────────────────────────────────────────────────────────────────────
     # 진입 가능 여부 확인
     # ──────────────────────────────────────────────────────────────────────

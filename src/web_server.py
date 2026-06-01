@@ -18,6 +18,7 @@ import os
 import sys
 import argparse
 import time
+from urllib.parse import parse_qs, urlparse
 
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 WEB_DIR     = os.path.normpath(os.path.join(BASE_DIR, '..', 'web'))
@@ -31,6 +32,7 @@ import process_manager
 from config import cfg
 from executors import TinyLiveExecutor, create_preflight_plan, get_inventory_summary, get_tiny_live_readiness
 from venue_pair import venue_pair_payload
+from bithumb_private import BithumbPrivateClient
 
 tiny_live_executor = TinyLiveExecutor()
 
@@ -62,8 +64,8 @@ def _read_jsonl_tail(path, n=50):
         return []
 
 
-def _live_readiness_payload():
-    readiness = get_tiny_live_readiness()
+def _live_readiness_payload(pair_id='UPBIT_BINANCE'):
+    readiness = get_tiny_live_readiness(pair_id)
     quotes = _read_json(os.path.join(RUNTIME_DIR, 'latest_quotes.json'))
     newest_quote = max((float(item.get('timestamp', 0) or 0) for item in quotes.values()), default=0)
     quote_age_ms = max(0, (time.time() - newest_quote) * 1000) if newest_quote else None
@@ -83,7 +85,10 @@ def _live_readiness_payload():
         'inventory_status': 'OK' if inventory and not inventory.get('blockers') else 'BLOCKED',
         'quote_freshness': 'OK' if quote_age_ms is not None and quote_age_ms <= cfg.stale_quote_ms else 'STALE',
         'quote_age_ms': quote_age_ms,
-        'min_order_status': 'OK' if cfg.tiny_live_order_krw >= 5000 else 'BLOCKED',
+        'min_order_status': 'OK' if (
+            cfg.upbit_bithumb_order_krw >= cfg.bithumb_min_order_krw
+            if pair_id == 'UPBIT_BITHUMB' else cfg.tiny_live_order_krw >= 5000
+        ) else 'BLOCKED',
     }
     return readiness
 
@@ -98,8 +103,8 @@ def _with_plan_quote_source(payload):
     return payload
 
 
-def _preflight_payload():
-    return _with_plan_quote_source(create_preflight_plan())
+def _preflight_payload(pair_id='UPBIT_BINANCE'):
+    return _with_plan_quote_source(create_preflight_plan(pair_id))
 
 
 def _last_plan_payload():
@@ -158,6 +163,25 @@ def _opportunities_payload():
     }
 
 
+def _bithumb_status_payload():
+    keys = secrets_manager.get_key_status()
+    return {
+        'ok': True, 'error': '', 'blockers': [],
+        'public_enabled': cfg.bithumb_public_enabled,
+        'private_enabled': cfg.bithumb_private_enabled,
+        'upbit_bithumb_live_enabled': cfg.upbit_bithumb_live_enabled,
+        'key_status': {
+            'BITHUMB_ACCESS_KEY': keys['BITHUMB_ACCESS_KEY'],
+            'BITHUMB_SECRET_KEY': keys['BITHUMB_SECRET_KEY'],
+        },
+        'withdrawals_enabled': False, 'deposits_enabled': False,
+    }
+
+
+def _bithumb_balances_payload():
+    return BithumbPrivateClient().get_balances()
+
+
 class KarbHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=WEB_DIR, **kwargs)
@@ -198,6 +222,10 @@ class KarbHandler(SimpleHTTPRequestHandler):
                 'error': type(exc).__name__,
             }, 500)
 
+    def _request_json(self):
+        length = int(self.headers.get('Content-Length', 0))
+        return json.loads(self.rfile.read(length).decode('utf-8')) if length else {}
+
     def do_OPTIONS(self):
         self.send_response(204)
         self.send_header('Access-Control-Allow-Origin', '*')
@@ -206,13 +234,16 @@ class KarbHandler(SimpleHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        if self.path == '/api/engine/status':
+        parsed = urlparse(self.path)
+        path = parsed.path
+        query = parse_qs(parsed.query)
+        if path == '/api/engine/status':
             self._send_json(process_manager.get_engine_status())
 
         elif self.path == '/api/state':
             self._send_json(_read_json(os.path.join(RUNTIME_DIR, 'state.json')))
 
-        elif self.path == '/api/data':
+        elif path == '/api/data':
             self._send_json({
                 'state':   _read_json(os.path.join(RUNTIME_DIR, 'state.json')),
                 'quotes':  _read_json(os.path.join(RUNTIME_DIR, 'latest_quotes.json')),
@@ -242,11 +273,13 @@ class KarbHandler(SimpleHTTPRequestHandler):
         elif self.path == '/api/decisions/recent':
             self._send_guarded_json(_decisions_payload)
 
-        elif self.path == '/api/inventory':
-            self._send_json(get_inventory_summary())
+        elif path == '/api/inventory':
+            pair_id = query.get('pair', ['UPBIT_BINANCE'])[0]
+            self._send_json(get_inventory_summary(pair_id))
 
-        elif self.path == '/api/live/readiness':
-            self._send_guarded_json(_live_readiness_payload)
+        elif path == '/api/live/readiness':
+            pair_id = query.get('pair', ['UPBIT_BINANCE'])[0]
+            self._send_guarded_json(lambda: _live_readiness_payload(pair_id))
 
         elif self.path == '/api/execution/preflight':
             self._send_guarded_json(_preflight_payload)
@@ -269,8 +302,14 @@ class KarbHandler(SimpleHTTPRequestHandler):
         elif self.path == '/api/strategy/pairs':
             self._send_guarded_json(_strategy_pairs_payload)
 
-        elif self.path == '/api/opportunities':
+        elif path == '/api/opportunities':
             self._send_guarded_json(_opportunities_payload)
+
+        elif path == '/api/bithumb/status':
+            self._send_guarded_json(_bithumb_status_payload)
+
+        elif path == '/api/bithumb/balances':
+            self._send_guarded_json(_bithumb_balances_payload)
 
         elif self.path == '/api/trades/recent':
             recent = _read_jsonl_tail(os.path.join(LOGS_DIR, 'paper_trades.jsonl'), 100)
@@ -297,13 +336,15 @@ class KarbHandler(SimpleHTTPRequestHandler):
             if not self._is_localhost():
                 self._send_403()
                 return
-            self._send_guarded_json(_preflight_payload)
+            body = self._request_json()
+            self._send_guarded_json(lambda: _preflight_payload(body.get('pair_id', 'UPBIT_BINANCE')))
 
         elif self.path == '/api/tiny-live/arm':
             if not self._is_localhost():
                 self._send_403()
                 return
-            self._send_guarded_json(tiny_live_executor.arm)
+            body = self._request_json()
+            self._send_guarded_json(lambda: tiny_live_executor.arm(body.get('pair_id', 'UPBIT_BINANCE')))
 
         elif self.path == '/api/tiny-live/disarm':
             if not self._is_localhost():
@@ -315,7 +356,8 @@ class KarbHandler(SimpleHTTPRequestHandler):
             if not self._is_localhost():
                 self._send_403()
                 return
-            self._send_guarded_json(tiny_live_executor.execute_once)
+            body = self._request_json()
+            self._send_guarded_json(lambda: tiny_live_executor.execute_once(body.get('pair_id')))
 
         elif self.path == '/api/emergency/manual-clear':
             if not self._is_localhost():
@@ -383,6 +425,8 @@ class KarbHandler(SimpleHTTPRequestHandler):
                 upbit_secret  =body.get('upbit_secret_key', ''),
                 binance_api   =body.get('binance_api_key', ''),
                 binance_secret=body.get('binance_api_secret', ''),
+                bithumb_access=body.get('bithumb_access_key', ''),
+                bithumb_secret=body.get('bithumb_secret_key', ''),
             )
             self._send_json(result)
         else:

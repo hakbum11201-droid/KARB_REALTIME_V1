@@ -404,6 +404,8 @@ body {
 .inventory-manual { color:var(--accent-yellow); line-height:1.5; }
 .tiny-live-panel { border:1px solid rgba(237,137,54,.35); background:var(--bg-card); border-radius:var(--radius); padding:14px; margin:14px 0; }
 .tiny-live-panel-title { color:var(--text-primary); font-weight:700; margin-bottom:8px; }
+.pair-selector { display:flex; flex-wrap:wrap; align-items:center; gap:8px; color:var(--text-secondary); font-size:11px; }
+.pair-selector select { background:var(--bg-card); color:var(--text-primary); border:1px solid var(--border); border-radius:6px; padding:6px 8px; font-family:var(--font-mono); }
 .tiny-live-badges, .tiny-live-actions { display:flex; flex-wrap:wrap; gap:8px; margin-top:8px; }
 .tiny-live-badges span { color:var(--accent-green); background:rgba(72,187,120,.12); border-radius:999px; padding:3px 7px; font-size:10px; font-weight:700; }
 .tiny-live-overview { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:8px; margin-top:12px; }

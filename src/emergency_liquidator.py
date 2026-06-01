@@ -4,14 +4,16 @@ from datetime import date
 
 from config import cfg
 from exchange_clients import BinanceSpotPrivateClient, UpbitPrivateClient
+from bithumb_private import BithumbPrivateClient
 
 
 class EmergencyLiquidator:
     def build_emergency_plan(self, order_state: dict, original_plan: dict) -> dict:
         strategy = cfg.emergency_strategy
-        upbit = order_state.get('upbit_leg', {})
-        binance = order_state.get('binance_leg', {})
-        legs = [upbit, binance]
+        legs = [
+            order_state.get('left_leg') or order_state.get('upbit_leg', {}),
+            order_state.get('right_leg') or order_state.get('binance_leg', {}),
+        ]
         if strategy == 'COMPLETE_MISSING_LEG':
             leg = min(legs, key=lambda item: float(item.get('filled_qty', 0) or 0))
             qty = max(0, float(leg.get('requested_qty', 0) or 0) - float(leg.get('filled_qty', 0) or 0))
@@ -85,9 +87,13 @@ class EmergencyLiquidator:
                 client = UpbitPrivateClient()
                 response = (client.place_market_buy_krw(plan['symbol'], plan['order_krw'])
                             if plan['side'] == 'BUY' else client.place_market_sell_qty(plan['symbol'], plan['qty']))
-            else:
+            elif plan['venue'] == 'BINANCE':
                 client = BinanceSpotPrivateClient()
                 response = (client.place_market_buy_quote(plan['symbol'], plan['order_usdt'])
+                            if plan['side'] == 'BUY' else client.place_market_sell_qty(plan['symbol'], plan['qty']))
+            else:
+                client = BithumbPrivateClient()
+                response = (client.place_market_buy_krw(plan['symbol'], plan['order_krw'])
                             if plan['side'] == 'BUY' else client.place_market_sell_qty(plan['symbol'], plan['qty']))
             return {
                 'ok': True, 'status': 'EMERGENCY_PENDING', 'blockers': [], 'emergency_plan': plan,
@@ -102,7 +108,7 @@ class EmergencyLiquidator:
 
     def manual_action(self, order_state: dict) -> str:
         return (
-            'New entries are blocked. Inspect Upbit and Binance fill history and balances. '
+            'New entries are blocked. Inspect both venue fill histories and balances. '
             'Manually resolve the remaining Spot exposure, then use MANUAL CLEAR PARTIAL RISK with a reason. '
             'Automatic repeated orders are disabled.'
         )
@@ -130,10 +136,14 @@ class EmergencyLiquidator:
             balances = UpbitPrivateClient().get_balances()
             asset = 'KRW' if plan['side'] == 'BUY' else plan['symbol']
             needed = plan['order_krw'] if asset == 'KRW' else plan['qty']
-        else:
+        elif plan['venue'] == 'BINANCE':
             balances = BinanceSpotPrivateClient().get_balances()
             asset = 'USDT' if plan['side'] == 'BUY' else plan['symbol']
             needed = plan['order_usdt'] if asset == 'USDT' else plan['qty']
+        else:
+            balances = BithumbPrivateClient().get_balances()
+            asset = 'KRW' if plan['side'] == 'BUY' else plan['symbol']
+            needed = plan['order_krw'] if asset == 'KRW' else plan['qty']
         if not balances.get('ok'):
             return list(balances.get('blockers', ['INVENTORY_SHORTAGE']))
         return [] if float(balances.get('balances', {}).get(asset, 0) or 0) >= needed else ['INVENTORY_SHORTAGE']

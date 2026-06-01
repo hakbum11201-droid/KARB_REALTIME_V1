@@ -240,6 +240,16 @@
       <div class="inventory-blockers" id="inventory-blockers">Loading blockers...</div>
       <div class="tiny-live-panel">
         <div class="tiny-live-panel-title">Tiny Live</div>
+        <div class="pair-selector">
+          <label for="live-pair-select">Selected Pair</label>
+          <select id="live-pair-select">
+            <option value="UPBIT_BINANCE">UPBIT_BINANCE</option>
+            <option value="UPBIT_BITHUMB">UPBIT_BITHUMB</option>
+            <option value="BITHUMB_BINANCE" disabled>BITHUMB_BINANCE disabled</option>
+            <option value="BINANCE_MAKER_DOMESTIC_TAKER" disabled>BINANCE_MAKER_DOMESTIC_TAKER disabled</option>
+          </select>
+          <span id="selected-pair-note">Cross-border Spot / FX required</span>
+        </div>
         <div class="tiny-live-badges">
           <span>Withdrawals Disabled</span><span>Manual Rebalance Only</span>
         </div>
@@ -257,7 +267,7 @@
         <div class="tiny-live-warnings" id="tiny-live-warnings">Warnings: loading...</div>
         <div class="tiny-live-warning" id="tiny-live-warning"></div>
         <div class="tiny-live-actions">
-          <button class="btn btn-tiny" id="btn-tiny-arm">ARM TINY LIVE</button>
+          <button class="btn btn-tiny" id="btn-tiny-arm">ARM LIVE</button>
           <button class="btn btn-stop" id="btn-tiny-disarm">DISARM</button>
           <button class="btn btn-live" id="btn-tiny-execute" disabled>EXECUTE ONCE</button>
         </div>
@@ -281,7 +291,7 @@
       </div>
       <div class="execution-plan-panel">
         <div class="tiny-live-panel-title">Execution Plan</div>
-        <div class="execution-direction-guide">
+        <div class="execution-direction-guide" id="execution-direction-guide">
           <span>A_KIMCHI = Upbit SELL / Binance BUY</span>
           <span>B_REVERSE_KIMCHI = Upbit BUY / Binance SELL</span>
         </div>
@@ -312,12 +322,20 @@
           <strong class="forbidden">Binance forbidden</strong>
           <span>Withdrawals / Futures / Margin / P2P / Internal transfer</span>
         </div>
+        <div>
+          <strong>Bithumb allowed</strong>
+          <span>Balance read / Order read / Order create</span>
+          <strong class="forbidden">Bithumb forbidden</strong>
+          <span>Withdrawals / Deposits / Address management</span>
+        </div>
       </div>
       <div class="keys-status-grid">
         <div class="key-status-card"><div class="key-status-label">Upbit Access</div><div class="key-status-badge" id="badge-UPBIT_ACCESS_KEY">--</div></div>
         <div class="key-status-card"><div class="key-status-label">Upbit Secret</div><div class="key-status-badge" id="badge-UPBIT_SECRET_KEY">--</div></div>
         <div class="key-status-card"><div class="key-status-label">Binance API</div><div class="key-status-badge" id="badge-BINANCE_API_KEY">--</div></div>
         <div class="key-status-card"><div class="key-status-label">Binance Secret</div><div class="key-status-badge" id="badge-BINANCE_API_SECRET">--</div></div>
+        <div class="key-status-card"><div class="key-status-label">Bithumb Access</div><div class="key-status-badge" id="badge-BITHUMB_ACCESS_KEY">--</div></div>
+        <div class="key-status-card"><div class="key-status-label">Bithumb Secret</div><div class="key-status-badge" id="badge-BITHUMB_SECRET_KEY">--</div></div>
       </div>
       <div class="keys-form">
         <div class="form-section-label">키 저장</div>
@@ -325,6 +343,8 @@
         <div class="form-row"><label for="inp-upbit-secret">Upbit Secret Key</label><input id="inp-upbit-secret" type="password" autocomplete="off"></div>
         <div class="form-row"><label for="inp-binance-api">Binance API Key</label><input id="inp-binance-api" type="password" autocomplete="off"></div>
         <div class="form-row"><label for="inp-binance-secret">Binance API Secret</label><input id="inp-binance-secret" type="password" autocomplete="off"></div>
+        <div class="form-row"><label for="inp-bithumb-access">Bithumb Access Key</label><input id="inp-bithumb-access" type="password" autocomplete="off"></div>
+        <div class="form-row"><label for="inp-bithumb-secret">Bithumb Secret Key</label><input id="inp-bithumb-secret" type="password" autocomplete="off"></div>
         <div class="form-actions">
           <button class="btn-save" id="btn-save-keys">💾 저장</button>
           <span class="save-result" id="save-result"></span>

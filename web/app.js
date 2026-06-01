@@ -4,7 +4,7 @@
  * STOP 버튼, 세션 배너, 세션 리포트 표시
  */
 const POLL_MS = 3000;
-const TINY_LIVE_ACTION_LABELS = { arm:'ARM TINY LIVE', disarm:'DISARM', 'execute-once':'EXECUTE ONCE' };
+const TINY_LIVE_ACTION_LABELS = { arm:'ARM LIVE', disarm:'DISARM', 'execute-once':'EXECUTE ONCE' };
 const missingElements = new Set();
 const $ = id => {
   const el = document.getElementById(id);
@@ -558,7 +558,7 @@ async function fetchKeyStatus() {
     const r = await fetch('/api/keys/status');
     if (!r.ok) return;
     const s = await r.json();
-    ['UPBIT_ACCESS_KEY','UPBIT_SECRET_KEY','BINANCE_API_KEY','BINANCE_API_SECRET'].forEach(k => {
+    ['UPBIT_ACCESS_KEY','UPBIT_SECRET_KEY','BINANCE_API_KEY','BINANCE_API_SECRET','BITHUMB_ACCESS_KEY','BITHUMB_SECRET_KEY'].forEach(k => {
       const b = $(`badge-${k}`);
       if (!b) return;
       const v = s[k]||'Missing';
@@ -570,9 +570,10 @@ async function fetchKeyStatus() {
 
 async function fetchInventory() {
   try {
+    const pair = selectedPair();
     const [inventoryRes, readinessRes, statusRes, planRes] = await Promise.all([
-      fetch('/api/inventory'),
-      fetch('/api/live/readiness'),
+      fetch(`/api/inventory?pair=${encodeURIComponent(pair)}`),
+      fetch(`/api/live/readiness?pair=${encodeURIComponent(pair)}`),
       fetch('/api/tiny-live/status'),
       fetch('/api/execution/last-plan'),
     ]);
@@ -585,12 +586,13 @@ async function fetchInventory() {
 
 function renderInventory(inventory, readiness, tinyStatus={}, lastPreflight={}) {
   const balances = inventory.balances||{};
-  const upbit = balances.upbit||{}, binance = balances.binance||{};
+  const upbit = balances.upbit||{}, binance = balances.binance||{}, bithumb = balances.bithumb||{};
   const symbols = inventory.symbols||[];
   const balancesEl = $('inventory-balances');
   if (balancesEl) balancesEl.innerHTML = `
     <div><span>Upbit KRW</span><strong>${fmt(upbit.KRW)} KRW</strong></div>
-    <div><span>Binance USDT</span><strong>${fmt(binance.USDT,2)} USDT</strong></div>`;
+    <div><span>Binance USDT</span><strong>${fmt(binance.USDT,2)} USDT</strong></div>
+    <div><span>Bithumb KRW</span><strong>${fmt(bithumb.KRW)} KRW</strong></div>`;
   const readyEl = $('inventory-readiness');
   if (readyEl) {
     readyEl.className = `inventory-readiness ${readiness.ready?'yes':'no'}`;
@@ -607,7 +609,7 @@ function renderInventory(inventory, readiness, tinyStatus={}, lastPreflight={}) 
   grid.innerHTML = symbols.map(row => `
     <div class="inventory-card ${row.status==='OK'?'ok':'shortage'}">
       <div class="inventory-symbol">${esc(row.symbol)}</div>
-      <div class="inventory-qty">Upbit ${fmt(row.upbit_coin_qty,6)} / Binance ${fmt(row.binance_coin_qty,6)}</div>
+      <div class="inventory-qty">Upbit ${fmt(row.upbit_coin_qty,6)} / ${row.pair_id==='UPBIT_BITHUMB'?'Bithumb':'Binance'} ${fmt(row.bithumb_coin_qty??row.binance_coin_qty,6)}</div>
       <div class="inventory-directions">
         <span class="${row.direction_a_possible?'ok':'no'}">Direction A ${row.direction_a_possible?'YES':'NO'}</span>
         <span class="${row.direction_b_possible?'ok':'no'}">Direction B ${row.direction_b_possible?'YES':'NO'}</span>
@@ -660,14 +662,16 @@ function renderTinyLivePanel(readiness, tinyStatus={}) {
   setText('tiny-live-partial-risk', String(Boolean(partialRisk)));
   setText('tiny-live-trade-count', fmt(tinyStatus.trade_count));
   setText('tiny-live-daily-loss', `${fmt(tinyStatus.daily_loss_krw)} KRW`);
-  setText('tiny-live-limits', `Order ${fmt(readiness.limits?.tiny_live_order_krw)} KRW / Max ${fmt(readiness.limits?.tiny_live_max_order_krw)} KRW`);
+  const domestic=readiness.pair_id==='UPBIT_BITHUMB';
+  setText('selected-pair-note', domestic?'Domestic KRW pair / FX not required / Bithumb live gates required':'Cross-border Spot / FX required');
+  setText('tiny-live-limits', `Order ${fmt(domestic?readiness.limits?.upbit_bithumb_order_krw:readiness.limits?.tiny_live_order_krw)} KRW / Max ${fmt(domestic?readiness.limits?.upbit_bithumb_max_order_krw:readiness.limits?.tiny_live_max_order_krw)} KRW`);
   const last = tinyStatus.last_order?.status || tinyStatus.last_preflight?.blockers?.join(' / ') || 'No preflight result.';
   setText('tiny-live-result', `Last result: ${last}`);
   setText('tiny-live-next-action', readiness.next_action||'Review blockers before arming.');
   setText('tiny-live-blockers', readiness.blockers?.length ? `Blockers: ${readiness.blockers.join(' / ')}` : 'Blockers: none');
   setText('tiny-live-warnings', readiness.warnings?.length ? `Warnings: ${readiness.warnings.join(' / ')}` : 'Warnings: none');
   setText('tiny-live-warning', partialRisk
-    ? 'PARTIAL_RISK: new entries blocked. Check Upbit fills, Binance fills, and both balances. DISARM after manual cleanup. Automatic unwind is not implemented.'
+    ? 'PARTIAL_RISK: new entries blocked. Check both venue fills and balances. DISARM after manual cleanup. Automatic repeated orders are disabled.'
     : '');
   setClass('tiny-live-warning', `tiny-live-warning ${partialRisk?'visible':''}`);
   setDisabled('btn-tiny-execute', !tinyStatus.armed || !readiness.ready || partialRisk);
@@ -680,10 +684,10 @@ function renderOrderTracker(tracker={}, emergency={}) {
   if (!tracker.plan_id) {
     grid.innerHTML='<div class="empty-row">No tracked tiny-live order.</div>';
   } else {
-    const upbit=tracker.upbit_leg||{}, binance=tracker.binance_leg||{};
+    const upbit=tracker.left_leg||tracker.upbit_leg||{}, binance=tracker.right_leg||tracker.binance_leg||{};
     const fields = [
-      ['Status', tracker.status], ['Plan ID', tracker.plan_id], ['Upbit Leg', upbit.status||'--'],
-      ['Binance Leg', binance.status||'--'], ['Net Filled Qty', fmt(tracker.net_filled_qty,8)],
+      ['Status', tracker.status], ['Plan ID', tracker.plan_id], ['Selected Pair', tracker.pair_id||'UPBIT_BINANCE'], [`${upbit.venue||'Upbit'} Leg`, upbit.status||'--'],
+      [`${binance.venue||'Right'} Leg`, binance.status||'--'], ['Net Filled Qty', fmt(tracker.net_filled_qty,8)],
       ['Exposure Qty', `${fmt(tracker.exposure_qty,8)} ${tracker.exposure_side||''}`],
       ['Partial Risk', String(tracker.status==='PARTIAL_RISK')], ['Emergency Required', String(Boolean(tracker.emergency_required))],
       ['Emergency Attempted', String(Boolean(tracker.emergency_attempted))], ['Emergency Enabled', String(Boolean(emergency.enabled))],
@@ -727,18 +731,29 @@ function renderLiveGuard(guard, readiness) {
 
 function renderExecutionPlan(plan={}) {
   const el = $('execution-plan');
+  const guide = $('execution-direction-guide');
+  const domestic = plan.pair_id === 'UPBIT_BITHUMB' || selectedPair() === 'UPBIT_BITHUMB';
+  if (guide) guide.innerHTML = domestic
+    ? '<span>UPBIT_BITHUMB_A = Upbit SELL / Bithumb BUY</span><span>UPBIT_BITHUMB_B = Upbit BUY / Bithumb SELL</span>'
+    : '<span>A_KIMCHI = Upbit SELL / Binance BUY</span><span>B_REVERSE_KIMCHI = Upbit BUY / Binance SELL</span>';
   if (!el) return;
   if (!plan.plan_id) {
     el.textContent = 'Execution Plan: no preflight yet.';
     return;
   }
+  const leftVenue = plan.left_venue || 'UPBIT';
+  const rightVenue = plan.right_venue || 'BINANCE';
+  const leftSide = plan.left_side || plan.upbit_side || '--';
+  const rightSide = plan.right_side || plan.binance_side || '--';
+  const leftExpected = plan.left_expected_price ?? plan.upbit_expected_price;
+  const rightExpected = plan.right_expected_price ?? plan.binance_expected_price;
   const fields = [
-    ['Plan ID', plan.plan_id], ['Symbol', plan.symbol], ['Direction', plan.direction],
-    ['Direction Label', plan.direction_label], ['Upbit Side', plan.upbit_side],
-    ['Binance Side', plan.binance_side], ['Order KRW', `${fmt(plan.order_krw)} KRW`],
+    ['Plan ID', plan.plan_id], ['Pair', plan.pair_id], ['Symbol', plan.symbol], ['Direction', plan.direction],
+    ['Direction Label', plan.direction_label], [`${leftVenue} Side`, leftSide],
+    [`${rightVenue} Side`, rightSide], ['Order KRW', `${fmt(plan.order_krw)} KRW`],
     ['Order USDT', `${fmt(plan.order_usdt,4)} USDT`], ['Qty', fmt(plan.qty,8)],
-    ['Normalized Qty', fmt(plan.normalized_qty,8)], ['Upbit Expected', fmt(plan.upbit_expected_price,2)],
-    ['Binance Expected', fmt(plan.binance_expected_price,8)], ['Quote Source', plan.quote_source||'--'],
+    ['Normalized Qty', fmt(plan.normalized_qty,8)], [`${leftVenue} Expected`, fmt(leftExpected,2)],
+    [`${rightVenue} Expected`, fmt(rightExpected,8)], ['Quote Source', plan.quote_source||'--'],
     ['Quote Age', `${fmt(plan.quote_age_ms,0)} ms`], ['Net Surplus', `${fmt(plan.best_net_surplus_bp,1)} bp`],
     ['Expected Profit', `${fmt(plan.expected_net_profit_krw)} KRW`], ['Preflight', plan.preflight_status],
     ['Executable', String(Boolean(plan.executable))],
@@ -753,7 +768,7 @@ async function tinyLiveAction(action) {
   if (action === 'execute-once' && !confirm('Execute one guarded tiny-live Spot order pair?')) return;
   try {
     const label = TINY_LIVE_ACTION_LABELS[action]||action;
-    const res = await fetch(`/api/tiny-live/${action}`, { method:'POST' });
+    const res = await fetch(`/api/tiny-live/${action}`, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({pair_id:selectedPair()}) });
     const data = await res.json();
     setText('tiny-live-result', data.ok
       ? `${label}: ${data.status}`
@@ -764,9 +779,12 @@ async function tinyLiveAction(action) {
   }
 }
 
+function selectedPair() { return $('live-pair-select')?.value || 'UPBIT_BINANCE'; }
+
 on('btn-tiny-arm', 'click', () => tinyLiveAction('arm'));
 on('btn-tiny-disarm', 'click', () => tinyLiveAction('disarm'));
 on('btn-tiny-execute', 'click', () => tinyLiveAction('execute-once'));
+on('live-pair-select', 'change', fetchInventory);
 on('btn-manual-clear', 'click', async () => {
   if (!confirm('Manual clear does not place an order. Continue only after checking both exchanges and resolving any Spot exposure.')) return;
   const reason = prompt('Enter the manual clearing reason:');
@@ -789,6 +807,8 @@ on('btn-save-keys', 'click', async () => {
     upbit_secret_key:  $('inp-upbit-secret').value,
     binance_api_key:   $('inp-binance-api').value,
     binance_api_secret:$('inp-binance-secret').value,
+    bithumb_access_key: $('inp-bithumb-access').value,
+    bithumb_secret_key: $('inp-bithumb-secret').value,
   };
   const r = $('save-result');
   r.textContent='저장 중...'; r.className='save-result';
@@ -797,7 +817,7 @@ on('btn-save-keys', 'click', async () => {
     const d = await res.json();
     r.textContent = d.message || (d.ok?'완료':'실패');
     r.className = `save-result ${d.ok?'ok':'err'}`;
-    ['inp-upbit-access','inp-upbit-secret','inp-binance-api','inp-binance-secret'].forEach(id=>$(id).value='');
+    ['inp-upbit-access','inp-upbit-secret','inp-binance-api','inp-binance-secret','inp-bithumb-access','inp-bithumb-secret'].forEach(id=>$(id).value='');
     fetchKeyStatus();
   } catch { r.textContent='연결 실패'; r.className='save-result err'; }
 });

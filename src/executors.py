@@ -9,6 +9,7 @@ from datetime import date
 
 from config import cfg
 from exchange_clients import BinanceSpotPrivateClient, UpbitPrivateClient
+from bithumb_private import BithumbPrivateClient
 from execution_plan import ExecutionPlan
 from emergency_liquidator import EmergencyLiquidator
 from inventory_manager import InventoryManager
@@ -80,17 +81,35 @@ def _public_inventory_summary(quotes: dict) -> dict:
     return InventoryManager().inventory_summary(quotes=quotes, mode=cfg.mode)
 
 
-def get_inventory_summary() -> dict:
+def get_inventory_summary(pair_id='UPBIT_BINANCE') -> dict:
+    if pair_id == 'UPBIT_BITHUMB':
+        snapshot = _read_json('latest_opportunities.json')
+        return InventoryManager().upbit_bithumb_inventory_summary(
+            snapshot.get('all_opportunities', []), mode=cfg.mode
+        )
     return _public_inventory_summary(_read_json('latest_quotes.json'))
 
 
-def _base_blockers() -> list[str]:
+def _base_blockers(pair_id='UPBIT_BINANCE') -> list[str]:
     keys = get_key_status()
     blockers = []
     if keys['UPBIT_ACCESS_KEY'] != 'Set' or keys['UPBIT_SECRET_KEY'] != 'Set':
         blockers.append('UPBIT_KEY_MISSING')
-    if keys['BINANCE_API_KEY'] != 'Set' or keys['BINANCE_API_SECRET'] != 'Set':
+    if pair_id == 'UPBIT_BINANCE' and (keys['BINANCE_API_KEY'] != 'Set' or keys['BINANCE_API_SECRET'] != 'Set'):
         blockers.append('BINANCE_KEY_MISSING')
+    if pair_id == 'UPBIT_BITHUMB':
+        if keys['BITHUMB_ACCESS_KEY'] != 'Set' or keys['BITHUMB_SECRET_KEY'] != 'Set':
+            blockers.append('BITHUMB_KEY_MISSING')
+        if not cfg.bithumb_private_enabled:
+            blockers.append('BITHUMB_PRIVATE_DISABLED')
+        if not cfg.upbit_bithumb_live_enabled:
+            blockers.append('UPBIT_BITHUMB_LIVE_DISABLED')
+        if cfg.upbit_bithumb_order_krw < cfg.bithumb_min_order_krw:
+            blockers.extend(['MIN_ORDER_FAIL', 'BITHUMB_MIN_ORDER_KRW'])
+        if cfg.upbit_bithumb_order_krw > cfg.upbit_bithumb_max_order_krw:
+            blockers.extend(['MIN_ORDER_FAIL', 'UPBIT_BITHUMB_MAX_ORDER_EXCEEDED'])
+    if pair_id not in ('UPBIT_BINANCE', 'UPBIT_BITHUMB'):
+        blockers.append('PAIR_DISABLED')
     if any(item.endswith('_KEY_MISSING') for item in blockers):
         blockers.append('KEY_MISSING')
     if cfg.mode != 'tiny_live':
@@ -131,11 +150,11 @@ def _base_blockers() -> list[str]:
     return _unique(blockers)
 
 
-def get_tiny_live_readiness() -> dict:
+def get_tiny_live_readiness(pair_id='UPBIT_BINANCE') -> dict:
     perf = _read_json('performance_summary.json')
     last_session = _read_json('last_session_summary.json')
     quotes = _read_json('latest_quotes.json')
-    blockers = _base_blockers()
+    blockers = _base_blockers(pair_id)
     warnings = ['WITHDRAWALS_DISABLED_BY_POLICY', 'MANUAL_REBALANCE_ONLY']
     if cfg.require_paper_pass_for_tiny_live and last_session.get('judgement') != 'PAPER_EDGE_PASS':
         blockers.append('PAPER_PASS_REQUIRED')
@@ -147,10 +166,11 @@ def get_tiny_live_readiness() -> dict:
         blockers.append('PAPER_WIN_RATE_TOO_LOW')
     if float(perf.get('avg_pnl_krw', 0)) <= 0:
         blockers.append('PAPER_AVG_PNL_TOO_LOW')
-    inventory = _public_inventory_summary(quotes) if not blockers else {}
+    inventory = get_inventory_summary(pair_id) if not blockers else {}
     blockers.extend(inventory.get('blockers', []))
     return {
         'ready': not blockers,
+        'pair_id': pair_id,
         'blockers': _unique(blockers),
         'warnings': warnings,
         'next_action': 'Review blockers, then arm tiny-live explicitly.' if blockers else 'Preflight may proceed.',
@@ -161,6 +181,8 @@ def get_tiny_live_readiness() -> dict:
         'limits': {
             'tiny_live_order_krw': cfg.tiny_live_order_krw,
             'tiny_live_max_order_krw': cfg.tiny_live_max_order_krw,
+            'upbit_bithumb_order_krw': cfg.upbit_bithumb_order_krw,
+            'upbit_bithumb_max_order_krw': cfg.upbit_bithumb_max_order_krw,
         },
     }
 
@@ -222,8 +244,68 @@ def _inventory_and_filter_checks(blockers: list[str], symbol: str, direction: st
     return {'qty': qty, 'normalized_qty': normalized_qty, 'usdt': usdt}
 
 
-def create_preflight_plan() -> dict:
-    readiness = get_tiny_live_readiness()
+def _create_upbit_bithumb_plan(readiness: dict) -> dict:
+    blockers = list(readiness['blockers'])
+    snapshot = _read_json('latest_opportunities.json')
+    rows = [
+        item for item in snapshot.get('all_opportunities', [])
+        if item.get('pair_id') == 'UPBIT_BITHUMB'
+    ]
+    if not rows:
+        blockers.append('LATEST_QUOTES_MISSING')
+        return {**readiness, 'ready': False, 'blockers': _unique(blockers), 'plan': None}
+    calc = max(rows, key=lambda item: item.get('best_net_surplus_bp', -9999))
+    symbol, direction = calc.get('symbol', ''), calc.get('best_direction', '')
+    if direction not in ('UPBIT_BITHUMB_A', 'UPBIT_BITHUMB_B'):
+        blockers.append('DIRECTION_UNAVAILABLE')
+    if calc.get('reason_no_trade') != 'OK':
+        blockers.append(calc.get('reason_no_trade', 'RISK_GUARD_REJECTED'))
+    quote_age_ms = max(0, time.time() - float(calc.get('bithumb_ts', 0) or 0)) * 1000
+    if quote_age_ms > cfg.stale_quote_ms:
+        blockers.append('STALE_QUOTE')
+    order_krw = float(cfg.upbit_bithumb_order_krw)
+    price = float(calc.get('upbit_bid' if direction == 'UPBIT_BITHUMB_A' else 'bithumb_bid', 0) or 0)
+    qty = order_krw / price if price > 0 else 0
+    if not blockers:
+        upbit, bithumb = UpbitPrivateClient().get_balances(), BithumbPrivateClient().get_balances()
+        blockers.extend(upbit.get('blockers', []))
+        blockers.extend(bithumb.get('blockers', []))
+        up, bh = upbit.get('balances', {}), bithumb.get('balances', {})
+        if direction == 'UPBIT_BITHUMB_A':
+            if float(up.get(symbol, 0) or 0) < qty or float(bh.get('KRW', 0) or 0) < order_krw:
+                blockers.append('INVENTORY_SHORTAGE')
+        elif direction == 'UPBIT_BITHUMB_B':
+            if float(bh.get(symbol, 0) or 0) < qty or float(up.get('KRW', 0) or 0) < order_krw:
+                blockers.append('INVENTORY_SHORTAGE')
+    left_side, right_side = (
+        ('SELL', 'BUY') if direction == 'UPBIT_BITHUMB_A' else ('BUY', 'SELL')
+    )
+    plan = ExecutionPlan(
+        pair_id='UPBIT_BITHUMB', strategy_type='DOMESTIC_KRW',
+        left_venue='UPBIT', right_venue='BITHUMB', domestic_only=True, fx_required=False,
+        left_side=left_side, right_side=right_side, symbol=symbol, direction=direction,
+        direction_label=direction, mode=cfg.mode, quote_available=bool(rows),
+        inventory_sufficient='INVENTORY_SHORTAGE' not in blockers,
+        plan_id=str(uuid.uuid4()), upbit_side=left_side,
+        order_krw=order_krw, qty=qty, normalized_qty=qty, quantity=qty,
+        quote_timestamp=float(calc.get('bithumb_ts', 0) or 0), quote_age_ms=round(quote_age_ms, 2),
+        quote_source='rest', left_expected_price=float(calc.get('upbit_bid' if left_side == 'SELL' else 'upbit_ask', 0) or 0),
+        right_expected_price=float(calc.get('bithumb_bid' if right_side == 'SELL' else 'bithumb_ask', 0) or 0),
+        expected_net_profit_krw=float(calc.get('net_expected_profit_krw', 0) or 0),
+        best_net_surplus_bp=float(calc.get('best_net_surplus_bp', 0) or 0),
+        min_order_ok=order_krw >= cfg.bithumb_min_order_krw, risk_ok=calc.get('reason_no_trade') == 'OK',
+        preflight_status='PASS' if not blockers else 'BLOCKED', blockers=_unique(blockers),
+        warnings=list(readiness['warnings']), executable=not blockers,
+    )
+    return {**readiness, 'ready': not blockers, 'blockers': _unique(blockers), 'plan': plan.to_dict()}
+
+
+def create_preflight_plan(pair_id='UPBIT_BINANCE') -> dict:
+    readiness = get_tiny_live_readiness(pair_id)
+    if pair_id == 'UPBIT_BITHUMB':
+        result = _create_upbit_bithumb_plan(readiness)
+        _write_json(PREFLIGHT_FILE, result)
+        return result
     blockers = list(readiness['blockers'])
     quotes = _read_json('latest_quotes.json')
     if not quotes:
@@ -246,6 +328,7 @@ def create_preflight_plan() -> dict:
         inventory_sufficient=not any('SHORTAGE' in item for item in blockers),
         plan_id=str(uuid.uuid4()), direction_label='A_KIMCHI' if direction == 'A' else 'B_REVERSE_KIMCHI',
         upbit_side=upbit_side, binance_side=binance_side,
+        left_side=upbit_side, right_side=binance_side,
         order_krw=cfg.tiny_live_order_krw, order_usdt=order['usdt'], qty=order['qty'],
         normalized_qty=order['normalized_qty'], quantity=order['normalized_qty'], binance_usdt=order['usdt'],
         quote_timestamp=quote_ts, quote_age_ms=round(max(0, time.time() - quote_ts) * 1000, 2),
@@ -269,16 +352,17 @@ class TinyLiveExecutor:
         self.tracker = OrderTracker()
         self.emergency = EmergencyLiquidator()
 
-    def preflight(self, plan=None) -> dict:
-        return create_preflight_plan()
+    def preflight(self, pair_id=None, plan=None) -> dict:
+        return create_preflight_plan(pair_id or _status().get('pair_id') or 'UPBIT_BINANCE')
 
-    def arm(self) -> dict:
-        preflight = self.preflight()
+    def arm(self, pair_id=None) -> dict:
+        pair_id = pair_id or 'UPBIT_BINANCE'
+        preflight = self.preflight(pair_id)
         if not preflight['ready']:
             status = _write_status(armed=False, status='DISARMED', blockers=preflight['blockers'],
                                    warnings=preflight.get('warnings', []), last_error='MODE_GUARD')
             return {'ok': False, **status}
-        status = _write_status(armed=True, status='ARMED', blockers=[], warnings=preflight.get('warnings', []),
+        status = _write_status(armed=True, status='ARMED', pair_id=pair_id, blockers=[], warnings=preflight.get('warnings', []),
                                last_error='')
         return {'ok': True, **status}
 
@@ -303,11 +387,12 @@ class TinyLiveExecutor:
         )
         return {'ok': True, **status, 'order_tracker': tracker_state}
 
-    def execute_once(self, plan=None) -> dict:
+    def execute_once(self, pair_id=None, plan=None) -> dict:
         status = _status()
         if not status.get('armed'):
             return {'ok': False, 'status': 'DISARMED', 'blockers': ['TINY_LIVE_DISARMED']}
-        preflight = self.preflight()
+        pair_id = pair_id or status.get('pair_id') or 'UPBIT_BINANCE'
+        preflight = self.preflight(pair_id)
         plan = preflight.get('plan') or {}
         if not preflight['ready'] or not plan.get('executable'):
             _write_status(status='BLOCKED', blockers=preflight['blockers'], last_error='PREFLIGHT_BLOCKED')
@@ -319,7 +404,8 @@ class TinyLiveExecutor:
 
     def execute_plan(self, plan: dict) -> dict:
         current = _status()
-        blockers = _base_blockers()
+        pair_id = plan.get('pair_id', 'UPBIT_BINANCE')
+        blockers = _base_blockers(pair_id)
         last_preflight = _read_json(PREFLIGHT_FILE)
         last_plan = last_preflight.get('plan') or {}
         if not current.get('armed'):
@@ -336,17 +422,11 @@ class TinyLiveExecutor:
             self.tracker.start_plan(plan)
         status = _write_status(status='EXECUTING', blockers=[], last_error='')
         symbol, direction = plan['symbol'], plan['direction']
-        upbit, binance = UpbitPrivateClient(), BinanceSpotPrivateClient()
-        if direction == 'A':
-            calls = {
-                'upbit': lambda: upbit.place_market_sell_qty(symbol, plan['normalized_qty']),
-                'binance': lambda: binance.place_market_buy_quote(symbol, plan['binance_usdt']),
-            }
+        upbit = UpbitPrivateClient()
+        if pair_id == 'UPBIT_BITHUMB':
+            right_client, calls = self.execute_upbit_bithumb(plan, upbit)
         else:
-            calls = {
-                'upbit': lambda: upbit.place_market_buy_krw(symbol, plan['order_krw']),
-                'binance': lambda: binance.place_market_sell_qty(symbol, plan['normalized_qty']),
-            }
+            right_client, calls = self.execute_upbit_binance(plan, upbit)
         results, errors = {}, {}
         with ThreadPoolExecutor(max_workers=2) as pool:
             pending = {pool.submit(call): name for name, call in calls.items()}
@@ -360,20 +440,18 @@ class TinyLiveExecutor:
                     errors[name] = f'{type(exc).__name__}: {exc}'
                     if cfg.order_tracker_enabled:
                         self.tracker.mark_failed(name, errors[name])
-        fills = {}
-        wait_calls = {}
+        fills, wait_calls = {}, {}
         upbit_order_id = results.get('upbit', {}).get('uuid')
-        binance_order_id = results.get('binance', {}).get('orderId')
-        if results.get('upbit'):
-            if upbit_order_id:
-                wait_calls['upbit'] = lambda: upbit.wait_order_filled(upbit_order_id, cfg.order_ttl_sec)
-            else:
-                errors['upbit_fill_check'] = 'ValueError: ORDER_ID_MISSING'
-        if results.get('binance'):
-            if binance_order_id is not None:
-                wait_calls['binance'] = lambda: binance.wait_order_filled(symbol, binance_order_id, cfg.order_ttl_sec)
-            else:
-                errors['binance_fill_check'] = 'ValueError: ORDER_ID_MISSING'
+        right_name = 'bithumb' if pair_id == 'UPBIT_BITHUMB' else 'binance'
+        right_order_id = results.get(right_name, {}).get('uuid' if right_name == 'bithumb' else 'orderId')
+        if results.get('upbit') and upbit_order_id:
+            wait_calls['upbit'] = lambda: upbit.wait_order_filled(upbit_order_id, cfg.order_ttl_sec)
+        if results.get(right_name) and right_order_id is not None:
+            wait_calls[right_name] = (
+                (lambda: right_client.wait_order_filled(right_order_id, cfg.order_ttl_sec))
+                if right_name == 'bithumb'
+                else (lambda: right_client.wait_order_filled(symbol, right_order_id, cfg.order_ttl_sec))
+            )
         if wait_calls:
             if cfg.order_tracker_enabled:
                 for name in wait_calls:
@@ -392,6 +470,35 @@ class TinyLiveExecutor:
                         errors[name] = f'{type(exc).__name__}: {exc}'
                         if cfg.order_tracker_enabled:
                             self.tracker.mark_failed(name, errors[name])
+        return self._finalize_execution(plan, status, results, fills, errors)
+
+    def execute_upbit_binance(self, plan, upbit=None):
+        upbit, binance = upbit or UpbitPrivateClient(), BinanceSpotPrivateClient()
+        symbol = plan['symbol']
+        if plan['direction'] == 'A':
+            calls = {
+                'upbit': lambda: upbit.place_market_sell_qty(symbol, plan['normalized_qty']),
+                'binance': lambda: binance.place_market_buy_quote(symbol, plan['binance_usdt']),
+            }
+        else:
+            calls = {
+                'upbit': lambda: upbit.place_market_buy_krw(symbol, plan['order_krw']),
+                'binance': lambda: binance.place_market_sell_qty(symbol, plan['normalized_qty']),
+            }
+        return binance, calls
+
+    def execute_upbit_bithumb(self, plan, upbit=None):
+        upbit, bithumb = upbit or UpbitPrivateClient(), BithumbPrivateClient()
+        symbol = plan['symbol']
+        if plan['direction'] == 'UPBIT_BITHUMB_A':
+            calls = {'upbit': lambda: upbit.place_market_sell_qty(symbol, plan['normalized_qty']),
+                     'bithumb': lambda: bithumb.place_market_buy_krw(symbol, plan['order_krw'])}
+        else:
+            calls = {'upbit': lambda: upbit.place_market_buy_krw(symbol, plan['order_krw']),
+                     'bithumb': lambda: bithumb.place_market_sell_qty(symbol, plan['normalized_qty'])}
+        return bithumb, calls
+
+    def _finalize_execution(self, plan, status, results, fills, errors):
         filled = (
             not errors and len(fills) == 2
             and all(item.get('filled') and float(item.get('fill_ratio', 0) or 0) >= cfg.min_fill_ratio

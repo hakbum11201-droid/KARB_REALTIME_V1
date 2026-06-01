@@ -95,6 +95,16 @@ class Config:
     def upbit_bithumb_tiny_live_enabled(self): return self.get('upbit_bithumb_tiny_live_enabled', False)
     @property
     def upbit_bithumb_live_enabled(self): return self.get('upbit_bithumb_live_enabled', False)
+    @property
+    def upbit_bithumb_order_krw(self): return self.get('upbit_bithumb_order_krw', 10000)
+    @property
+    def upbit_bithumb_max_order_krw(self): return self.get('upbit_bithumb_max_order_krw', 20000)
+    @property
+    def upbit_bithumb_daily_loss_limit_krw(self): return self.get('upbit_bithumb_daily_loss_limit_krw', 10000)
+    @property
+    def upbit_bithumb_max_trades_per_day(self): return self.get('upbit_bithumb_max_trades_per_day', 5)
+    @property
+    def bithumb_min_order_krw(self): return self.get('bithumb_min_order_krw', 5000)
 
     # ── 심볼 / 루프 ────────────────────────────────────────────
     @property
