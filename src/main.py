@@ -9,6 +9,7 @@ from config import cfg
 from secrets_manager import assert_live_credentials_available
 from upbit_public import UpbitPublic
 from binance_public import BinancePublic
+from bithumb_public import BithumbPublic
 from fx_oracle import FxOracle
 from quote_engine import QuoteEngine
 from arb_calculator import ArbCalculator
@@ -21,6 +22,32 @@ from bounded_collector import BoundedCollector
 import control
 from session_analyzer import SessionAnalyzer
 from ws_market_data import WebSocketMarketData
+from strategy_selector import StrategySelector
+
+
+def _decision_record(calc_res, reason, is_safe, quote_source, quote_age_ms):
+    surplus = calc_res.get('best_net_surplus_bp', -9999)
+    direction = calc_res.get('best_direction', '')
+    return {
+        'time': time.time(),
+        'pair_id': calc_res.get('pair_id', 'UPBIT_BINANCE'),
+        'paper_only': bool(calc_res.get('paper_only')),
+        'symbol': calc_res.get('symbol', ''),
+        'direction': direction,
+        'direction_label': (
+            'A_KIMCHI' if direction == 'A'
+            else 'B_REVERSE_KIMCHI' if direction == 'B'
+            else direction
+        ),
+        'best_net_surplus_bp': surplus,
+        'expected_net_profit_krw': calc_res.get('net_expected_profit_krw', 0),
+        'reason_no_trade': reason,
+        'threshold_gap_bp': round(max(0, cfg.min_net_surplus_bp - surplus), 4),
+        'quote_source': quote_source,
+        'quote_age_ms': round(float(quote_age_ms or 0), 2),
+        'go_no_go': 'GO' if is_safe else 'NO-GO',
+        'blockers': [] if is_safe else [reason],
+    }
 
 
 def _write_json(path: str, data) -> None:
@@ -75,6 +102,7 @@ def main():
     # ── 컴포넌트 초기화 ──────────────────────────────────────────────────
     upbit_pub    = UpbitPublic()
     binance_pub  = BinancePublic()
+    bithumb_pub  = BithumbPublic()
     fx_oracle    = FxOracle(upbit_pub, binance_pub)
     quote_engine = QuoteEngine(upbit_pub, binance_pub, cfg.symbols)
     ws_market_data = None
@@ -85,6 +113,7 @@ def main():
         )
         ws_market_data.start()
     arb_calc     = ArbCalculator()
+    strategy_selector = StrategySelector()
     inv_mgr      = InventoryManager()
     risk_guard   = RiskGuard()
     paper_eng    = PaperEngine(inventory_manager=inv_mgr)
@@ -100,6 +129,7 @@ def main():
     quotes_path  = os.path.join(runtime_dir, 'latest_quotes.json')
     telemetry_path = os.path.join(runtime_dir, 'telemetry.json')
     decisions_path = os.path.join(runtime_dir, 'latest_decisions.json')
+    opportunities_path = os.path.join(runtime_dir, 'latest_opportunities.json')
 
     # ── 세션 통계 누적기 ──────────────────────────────────────────────────
     start_time         = started_at
@@ -165,6 +195,11 @@ def main():
             event_logger.log_error('quote_engine', e)
             quotes = {}
             error_count += 1
+        bithumb_quotes = (
+            bithumb_pub.fetch_all_order_books(cfg.symbols)
+            if cfg.bithumb_public_enabled else {}
+        )
+        loop_opportunities = []
 
         best_sym_this_loop    = ''
         best_dir_this_loop    = ''
@@ -226,23 +261,14 @@ def main():
             symbol_surplus_max[sym] = max(symbol_surplus_max.get(sym, -9999.0), surplus)
             decision_time = time.time()
             latest_decision_at = decision_time
-            decisions.append({
-                'time': decision_time,
-                'symbol': sym,
-                'direction': calc_res.get('best_direction', ''),
-                'direction_label': (
-                    'A_KIMCHI' if calc_res.get('best_direction') == 'A'
-                    else 'B_REVERSE_KIMCHI' if calc_res.get('best_direction') == 'B'
-                    else ''
-                ),
-                'best_net_surplus_bp': surplus,
-                'expected_net_profit_krw': calc_res.get('net_expected_profit_krw', 0),
-                'reason_no_trade': reason,
-                'threshold_gap_bp': round(max(0, cfg.min_net_surplus_bp - surplus), 4),
-                'quote_source': q.get('source', 'rest'),
-                'quote_age_ms': round(float(q.get('quote_age_sec', 0) or 0) * 1000, 2),
+            decisions.append(_decision_record(
+                calc_res, reason, is_safe, q.get('source', 'rest'),
+                float(q.get('quote_age_sec', 0) or 0) * 1000,
+            ))
+            loop_opportunities.append({
+                **calc_res, 'enabled': True, 'paper_only': False,
                 'go_no_go': 'GO' if is_safe else 'NO-GO',
-                'blockers': [] if is_safe else [reason],
+                'quote_source': q.get('source', 'rest'),
             })
 
             event_logger.log_decision(calc_res)
@@ -270,6 +296,48 @@ def main():
 
             elif is_safe and cfg.mode in ('tiny_live', 'live'):
                 print(f"  [{sym}] [{cfg.mode.upper()}] Execution not yet implemented.")
+
+        if cfg.upbit_bithumb_paper_enabled:
+            for sym, q in quotes.items():
+                bithumb_q = bithumb_quotes.get(sym, {})
+                domestic = arb_calc.calculate_domestic_krw(sym, q.get('upbit', {}), bithumb_q)
+                domestic_reason = domestic.get('reason_no_trade', '')
+                domestic_safe = domestic_reason == 'OK'
+                domestic_surplus = domestic.get('best_net_surplus_bp', -9999)
+                bithumb_age_ms = max(0, time.time() - float(bithumb_q.get('ts', 0) or 0)) * 1000
+                decisions.append(_decision_record(
+                    domestic, domestic_reason, domestic_safe, 'rest', bithumb_age_ms
+                ))
+                latest_decision_at = time.time()
+                reason_counts[domestic_reason] = reason_counts.get(domestic_reason, 0) + 1
+                quote_count += 1
+                quote_lat_list.append(float(bithumb_q.get('latency_ms', 0) or 0))
+                last_quote_at = max(last_quote_at, float(bithumb_q.get('ts', 0) or 0))
+                surplus_bp_list.append(domestic_surplus)
+                symbol_key = f'UPBIT_BITHUMB:{sym}'
+                symbol_surplus_max[symbol_key] = max(
+                    symbol_surplus_max.get(symbol_key, -9999.0), domestic_surplus
+                )
+                if domestic_safe:
+                    candidate_count += 1
+                    signal_counts[symbol_key] = signal_counts.get(symbol_key, 0) + 1
+                if domestic_surplus > best_surplus_this_loop:
+                    best_surplus_this_loop = domestic_surplus
+                    best_sym_this_loop = symbol_key
+                    best_dir_this_loop = domestic.get('best_direction', '')
+                loop_opportunities.append({
+                    **domestic, 'enabled': True, 'paper_only': True,
+                    'go_no_go': 'GO' if domestic_safe else 'NO-GO',
+                    'quote_source': 'rest',
+                })
+                if args.once:
+                    print(
+                        f"  [UPBIT_BITHUMB:{sym}] Dir: {domestic.get('best_direction') or '--'} | "
+                        f"Surplus: {domestic_surplus:.1f} bp | "
+                        f"Net: {domestic.get('net_expected_profit_krw', 0):,.0f} KRW | "
+                        f"{'GO' if domestic_safe else f'NO [{domestic_reason}]'} | PAPER ONLY"
+                    )
+        strategy_snapshot = strategy_selector.select(loop_opportunities)
 
         # ── Paper 청산 체크 ───────────────────────────────────────────────
         if cfg.mode == 'paper':
@@ -363,6 +431,7 @@ def main():
         if now - last_telemetry_write >= cfg.telemetry_write_interval_sec:
             _write_json(telemetry_path, runtime_metrics)
             _write_json(decisions_path, {'updated_at': now, 'decisions': list(decisions)})
+            _write_json(opportunities_path, {'updated_at': now, **strategy_snapshot})
             last_telemetry_write = now
 
         if now - last_state_write >= cfg.state_write_interval_sec:
@@ -382,6 +451,7 @@ def main():
                 'today_pnl_krw':  perf_summary.get('today_pnl_krw', 0),
                 'runtime_sec':    round(now - start_time, 1),
                 'latest_reason':  latest_reason,
+                'strategy':       strategy_snapshot,
             })
             last_state_write = now
 

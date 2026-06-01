@@ -10,6 +10,12 @@ class ExecutionPlan:
     mode: str
     quote_available: bool
     inventory_sufficient: bool
+    pair_id: str = 'UPBIT_BINANCE'
+    left_venue: str = 'UPBIT'
+    right_venue: str = 'BINANCE'
+    domestic_only: bool = False
+    fx_required: bool = True
+    strategy_type: str = 'CROSS_BORDER_SPOT'
     plan_id: str = ''
     direction_label: str = ''
     upbit_side: str = ''

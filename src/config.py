@@ -81,6 +81,20 @@ class Config:
     def order_tracker_enabled(self): return self.get('order_tracker_enabled', True)
     @property
     def order_tracker_recent_max_items(self): return self.get('order_tracker_recent_max_items', 100)
+    @property
+    def enabled_strategy_pairs(self): return self.get('enabled_strategy_pairs', {})
+    @property
+    def bithumb_fee_bp(self): return self.get('bithumb_fee_bp', 4)
+    @property
+    def bithumb_public_enabled(self): return self.get('bithumb_public_enabled', True)
+    @property
+    def bithumb_private_enabled(self): return self.get('bithumb_private_enabled', False)
+    @property
+    def upbit_bithumb_paper_enabled(self): return self.get('upbit_bithumb_paper_enabled', True)
+    @property
+    def upbit_bithumb_tiny_live_enabled(self): return self.get('upbit_bithumb_tiny_live_enabled', False)
+    @property
+    def upbit_bithumb_live_enabled(self): return self.get('upbit_bithumb_live_enabled', False)
 
     # ── 심볼 / 루프 ────────────────────────────────────────────
     @property

@@ -30,6 +30,7 @@ import control as ctrl_module
 import process_manager
 from config import cfg
 from executors import TinyLiveExecutor, create_preflight_plan, get_inventory_summary, get_tiny_live_readiness
+from venue_pair import venue_pair_payload
 
 tiny_live_executor = TinyLiveExecutor()
 
@@ -146,6 +147,17 @@ def _emergency_status_payload():
     return {'ok': True, 'error': '', 'blockers': [], 'emergency': tiny_live_executor.emergency.status(tracker)}
 
 
+def _strategy_pairs_payload():
+    return {'ok': True, 'error': '', 'blockers': [], 'pairs': venue_pair_payload()}
+
+
+def _opportunities_payload():
+    return {
+        'ok': True, 'error': '', 'blockers': [],
+        **_read_json(os.path.join(RUNTIME_DIR, 'latest_opportunities.json')),
+    }
+
+
 class KarbHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=WEB_DIR, **kwargs)
@@ -211,6 +223,8 @@ class KarbHandler(SimpleHTTPRequestHandler):
                 },
                 'control': ctrl_module.get_control_state(),
                 'engine':  process_manager.get_engine_status(),
+                'strategy': _read_json(os.path.join(RUNTIME_DIR, 'latest_opportunities.json')),
+                'strategy_pairs': venue_pair_payload(),
             })
 
         elif self.path == '/api/perf':
@@ -251,6 +265,12 @@ class KarbHandler(SimpleHTTPRequestHandler):
 
         elif self.path == '/api/emergency/status':
             self._send_guarded_json(_emergency_status_payload)
+
+        elif self.path == '/api/strategy/pairs':
+            self._send_guarded_json(_strategy_pairs_payload)
+
+        elif self.path == '/api/opportunities':
+            self._send_guarded_json(_opportunities_payload)
 
         elif self.path == '/api/trades/recent':
             recent = _read_jsonl_tail(os.path.join(LOGS_DIR, 'paper_trades.jsonl'), 100)

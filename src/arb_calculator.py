@@ -1,3 +1,5 @@
+import time
+
 from config import cfg
 
 class ArbCalculator:
@@ -67,6 +69,10 @@ class ArbCalculator:
         kimchi_premium_pct = surplus_a_raw_bp / 100.0
 
         return {
+            'pair_id': 'UPBIT_BINANCE',
+            'strategy_type': 'CROSS_BORDER_SPOT',
+            'domestic_only': False,
+            'fx_required': True,
             'symbol': symbol,
             'upbit_bid': u_bid,
             'upbit_ask': u_ask,
@@ -93,4 +99,100 @@ class ArbCalculator:
             'required_binance_balance_usdt': max_qty_a * b_ask,
             # 판단
             'reason_no_trade': ''
+        }
+
+    def calculate_domestic_krw(self, symbol, upbit_quote, bithumb_quote):
+        """Compare Upbit and Bithumb KRW top-of-book quotes for paper display only."""
+        if not bithumb_quote.get('ok'):
+            return self._domestic_unavailable(symbol, 'BITHUMB_QUOTE_UNAVAILABLE')
+        if not upbit_quote or not bithumb_quote:
+            return self._domestic_unavailable(symbol, 'QUOTE_UNAVAILABLE')
+
+        u_bid, u_ask = float(upbit_quote['bid']), float(upbit_quote['ask'])
+        h_bid, h_ask = float(bithumb_quote['bid']), float(bithumb_quote['ask'])
+        total_cost_bp = (
+            cfg.upbit_fee_bp + cfg.bithumb_fee_bp + cfg.slippage_bp + cfg.risk_buffer_bp
+        )
+
+        surplus_a_raw_bp = (u_bid - h_ask) / h_ask * 10000
+        surplus_b_raw_bp = (h_bid - u_ask) / u_ask * 10000
+        direction_a_net_surplus_bp = surplus_a_raw_bp - total_cost_bp
+        direction_b_net_surplus_bp = surplus_b_raw_bp - total_cost_bp
+        max_qty_a = min(float(upbit_quote['bid_size']), float(bithumb_quote['ask_size']))
+        max_qty_b = min(float(bithumb_quote['bid_size']), float(upbit_quote['ask_size']))
+
+        if direction_a_net_surplus_bp >= direction_b_net_surplus_bp:
+            best_direction = 'UPBIT_BITHUMB_A'
+            best_net_surplus_bp = direction_a_net_surplus_bp
+            max_fillable_qty = max_qty_a
+            reference_price = h_ask
+        else:
+            best_direction = 'UPBIT_BITHUMB_B'
+            best_net_surplus_bp = direction_b_net_surplus_bp
+            max_fillable_qty = max_qty_b
+            reference_price = u_ask
+
+        expected_profit_krw = max(
+            0.0, max_fillable_qty * reference_price * best_net_surplus_bp / 10000
+        )
+        result = {
+            'pair_id': 'UPBIT_BITHUMB',
+            'strategy_type': 'DOMESTIC_KRW',
+            'domestic_only': True,
+            'fx_required': False,
+            'paper_only': True,
+            'symbol': symbol,
+            'upbit_bid': u_bid,
+            'upbit_ask': u_ask,
+            'bithumb_bid': h_bid,
+            'bithumb_ask': h_ask,
+            'upbit_ts': upbit_quote.get('ts'),
+            'bithumb_ts': bithumb_quote.get('ts'),
+            'direction_a_net_surplus_bp': direction_a_net_surplus_bp,
+            'direction_b_net_surplus_bp': direction_b_net_surplus_bp,
+            'best_direction': best_direction,
+            'best_net_surplus_bp': best_net_surplus_bp,
+            'net_expected_profit_krw': expected_profit_krw,
+            'max_fillable_qty': max_fillable_qty,
+            'reason_no_trade': '',
+        }
+        result['reason_no_trade'] = self._domestic_reason(result)
+        return result
+
+    @staticmethod
+    def _domestic_reason(result):
+        now_ms = time.time() * 1000
+        for key in ('upbit_ts', 'bithumb_ts'):
+            timestamp = result.get(key)
+            if not timestamp or now_ms - float(timestamp) * 1000 > cfg.stale_quote_ms:
+                return 'STALE_QUOTE'
+        for bid_key, ask_key in (('upbit_bid', 'upbit_ask'), ('bithumb_bid', 'bithumb_ask')):
+            bid, ask = result[bid_key], result[ask_key]
+            if bid <= 0 or ask <= 0:
+                return 'QUOTE_UNAVAILABLE'
+            if (ask - bid) / bid * 10000 > cfg.max_spread_bp:
+                return 'WIDE_SPREAD'
+        target_qty = cfg.max_one_trade_krw / result['upbit_ask']
+        if result['max_fillable_qty'] < target_qty / cfg.min_depth_multiplier:
+            return 'LOW_DEPTH'
+        if result['best_net_surplus_bp'] < cfg.min_net_surplus_bp:
+            return 'LOW_SURPLUS'
+        if result['net_expected_profit_krw'] < cfg.min_expected_profit_krw:
+            return 'LOW_EXPECTED_PROFIT'
+        return 'OK'
+
+    @staticmethod
+    def _domestic_unavailable(symbol, reason):
+        return {
+            'pair_id': 'UPBIT_BITHUMB',
+            'strategy_type': 'DOMESTIC_KRW',
+            'domestic_only': True,
+            'fx_required': False,
+            'paper_only': True,
+            'symbol': symbol,
+            'best_direction': '',
+            'best_net_surplus_bp': -9999.0,
+            'net_expected_profit_krw': 0.0,
+            'max_fillable_qty': 0.0,
+            'reason_no_trade': reason,
         }

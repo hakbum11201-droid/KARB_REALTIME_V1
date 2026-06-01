@@ -28,6 +28,8 @@ let latestControl = {};
 let latestPerformance = {};
 let latestLimits = {};
 let latestTelemetry = {};
+let latestStrategy = {};
+let latestStrategyPairs = [];
 let lastSummaryFetchAt = 0;
 
 const durationText = seconds => {
@@ -126,10 +128,13 @@ async function fetchData() {
     latestControl = d.control||{};
     latestPerformance = d.performance||{};
     latestLimits = d.limits||{};
+    latestStrategy = d.strategy||{};
+    latestStrategyPairs = d.strategy_pairs||[];
     renderTopbar(d.state||{}, d.engine||{});
     renderBanner(d.state||{}, d.control||{});
     renderTelemetry(d.state||{}, d.engine||{}, d.control||{});
     renderPaperProfitSummary(d.performance||{}, d.limits||{});
+    renderStrategyPairs(latestStrategyPairs, latestStrategy);
     renderQuotes(d.quotes||{});
     setText('last-update', new Date().toLocaleTimeString('ko-KR'));
     if (missingElements.size) {
@@ -372,11 +377,36 @@ async function fetchDecisions() {
   }
 }
 
+function renderStrategyPairs(pairs=[], strategy={}) {
+  const grid=$('strategy-grid');
+  if (!grid) return;
+  const byPair={};
+  (strategy.all_opportunities||[]).forEach(row => {
+    const current=byPair[row.pair_id];
+    if (!current || Number(row.best_net_surplus_bp||-9999)>Number(current.best_net_surplus_bp||-9999)) byPair[row.pair_id]=row;
+  });
+  const bestPair=strategy.best_pair||'--', bestSymbol=strategy.best_symbol||'--';
+  setText('strategy-best', `Best Opportunity: ${bestPair} / ${bestSymbol} / ${strategy.best_direction||'--'} / ${Number(strategy.best_net_surplus_bp||0).toFixed(1)} bp`);
+  grid.innerHTML=(pairs||[]).map(pair => {
+    const row=byPair[pair.pair_id]||{}, enabled=Boolean(pair.enabled);
+    const paperOnly=Boolean(pair.paper_enabled)&&!pair.tiny_live_enabled;
+    const reason=row.reason_no_trade||(enabled?'QUOTE WAITING':'DISABLED');
+    const go=enabled&&reason==='OK', highlighted=pair.pair_id===bestPair;
+    return `<div class="strategy-card ${enabled?'enabled':'disabled'} ${highlighted?'best':''}">
+      <div class="strategy-card-title">${esc(pair.pair_id)} ${highlighted?'<span>BEST</span>':''}</div>
+      <div class="strategy-card-flags">${enabled?'enabled':'disabled'} / ${paperOnly?'paper-only':'configured'}</div>
+      <div class="strategy-card-line">${esc(row.symbol||'--')} / ${esc(row.best_direction||'--')}</div>
+      <div class="strategy-card-line">${Number(row.best_net_surplus_bp||0).toFixed(1)} bp / ${fmt(row.net_expected_profit_krw)} KRW</div>
+      <div class="strategy-card-verdict ${go?'go':'nogo'}">${go?'GO':'NO-GO'} ${esc(reason)}</div>
+    </div>`;
+  }).join('');
+}
+
 function renderDecisions(decisions) {
   const tb = $('decisions-body');
   if (!tb) return;
   if (!decisions.length) {
-    tb.innerHTML='<tr><td colspan="10" class="empty-row">No decisions yet</td></tr>';
+    tb.innerHTML='<tr><td colspan="11" class="empty-row">No decisions yet</td></tr>';
     return;
   }
   tb.innerHTML = decisions.map(d => {
@@ -387,7 +417,7 @@ function renderDecisions(decisions) {
       : 'decision-nogo';
     return `<tr class="${reasonClass}">
       <td>${d.time?new Date(d.time*1000).toLocaleTimeString('ko-KR'):'--'}</td>
-      <td>${esc(d.symbol)}</td><td>${esc(d.direction_label||d.direction)}</td>
+      <td>${esc(d.pair_id||'UPBIT_BINANCE')}</td><td>${esc(d.symbol)}</td><td>${esc(d.direction_label||d.direction)}</td>
       <td>${fmt(d.best_net_surplus_bp,1)} bp</td><td>${fmt(d.threshold_gap_bp,1)} bp</td>
       <td>${fmt(d.expected_net_profit_krw)} KRW</td><td>${esc((d.quote_source||'--').toUpperCase())}</td>
       <td>${fmt(d.quote_age_ms,0)} ms</td><td>${esc(d.go_no_go||'NO-GO')}</td><td>${esc(reason)}</td>

@@ -30,6 +30,17 @@ emergency_max_slippage_bp: 20
 emergency_max_attempts_per_day: 2
 order_tracker_enabled: true
 order_tracker_recent_max_items: 100
+enabled_strategy_pairs:
+  UPBIT_BINANCE: true
+  BITHUMB_BINANCE: false
+  UPBIT_BITHUMB: true
+  BINANCE_MAKER_DOMESTIC_TAKER: false
+bithumb_fee_bp: 4
+bithumb_public_enabled: true
+bithumb_private_enabled: false
+upbit_bithumb_paper_enabled: true
+upbit_bithumb_tiny_live_enabled: false
+upbit_bithumb_live_enabled: false
 
 symbols: [BTC, ETH, XRP, DOGE, SOL]
 

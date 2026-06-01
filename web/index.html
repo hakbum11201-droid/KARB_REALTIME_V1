@@ -141,6 +141,15 @@
         <div class="tiny-ready-reasons" id="paper-tiny-reasons">NO_CLOSED_TRADES</div>
       </div>
       <div class="section-label">실시간 호가 & 아비트라지 신호</div>
+      <div class="strategy-panel">
+        <div class="strategy-panel-header">
+          <div class="section-label">Strategy / Venue Pair</div>
+          <div class="strategy-best" id="strategy-best">Best Opportunity: waiting...</div>
+        </div>
+        <div class="strategy-grid" id="strategy-grid">
+          <div class="empty-row">Loading venue pairs...</div>
+        </div>
+      </div>
       <div class="quotes-grid" id="quotes-grid">
         <div class="loading-placeholder">엔진 연결 중...</div>
       </div>
@@ -177,13 +186,13 @@
         <table class="data-table decision-table">
           <thead>
             <tr>
-              <th>Time</th><th>Symbol</th><th>Direction</th><th>Surplus</th>
+              <th>Time</th><th>Venue Pair</th><th>Symbol</th><th>Direction</th><th>Surplus</th>
               <th>Gap</th><th>Expected PnL</th><th>Source</th><th>Age</th>
               <th>GO / NO-GO</th><th>Reason</th>
             </tr>
           </thead>
           <tbody id="decisions-body">
-            <tr><td colspan="10" class="empty-row">No decisions yet</td></tr>
+            <tr><td colspan="11" class="empty-row">No decisions yet</td></tr>
           </tbody>
         </table>
       </div>

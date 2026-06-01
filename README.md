@@ -179,3 +179,12 @@ API keys alone never enable an order. If `PARTIAL_RISK` appears, stop new entrie
 - `EmergencyLiquidator` is a guarded scaffold only. `emergency_liquidation_enabled=false` and `emergency_auto_execute=false` are the defaults, so it returns a manual action guide instead of placing an order.
 - `MANUAL CLEAR PARTIAL RISK` records an operator-provided reason and returns the tracker to `DISARMED`. It never places an order.
 - Withdrawal, wallet-address, transfer, Futures, Margin, and P2P features remain intentionally absent.
+
+## Strategy and venue pairs
+
+- KARB remains one program. The dashboard compares enabled venue pairs through one paper-monitoring flow.
+- `UPBIT_BINANCE` keeps the existing cross-border Spot calculation and guarded tiny-live execution path.
+- `UPBIT_BITHUMB` adds domestic KRW spread monitoring for paper evaluation only. Both venues use KRW quotes, so this calculation does not carry FX risk.
+- `BITHUMB_BINANCE` is a disabled quote-structure placeholder. `BINANCE_MAKER_DOMESTIC_TAKER` is a disabled display-only placeholder.
+- Bithumb integration uses public REST orderbook quotes only. Bithumb private keys, Bithumb orders, withdrawals, wallet addresses, automatic transfers, Futures, Margin, and P2P are not implemented.
+- A separate follow-up is required before any Bithumb tiny-live work. Paper monitoring does not enable any live order gate.
