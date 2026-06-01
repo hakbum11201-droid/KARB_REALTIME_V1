@@ -30,6 +30,8 @@ let latestLimits = {};
 let latestTelemetry = {};
 let latestStrategy = {};
 let latestStrategyPairs = [];
+let latestScanner = {};
+let latestRuntimeStore = {};
 let lastSummaryFetchAt = 0;
 
 const durationText = seconds => {
@@ -653,6 +655,32 @@ function renderLongRunTelemetry(t={}) {
   setText('no-go-top3', `NO-GO top 3: ${noGo.map(([reason,count])=>`${reason} ${count}`).join(' / ')||'--'}`);
 }
 
+async function fetchRuntimeServices() {
+  try {
+    const [scannerRes, storeRes] = await Promise.all([
+      fetch('/api/market/scanner'),
+      fetch('/api/runtime-store/status'),
+    ]);
+    if (!scannerRes.ok || !storeRes.ok) return;
+    latestScanner = await scannerRes.json();
+    latestRuntimeStore = await storeRes.json();
+    renderRuntimeServices(latestScanner, latestRuntimeStore);
+  } catch (error) {
+    console.error('[runtime services] failed', error);
+  }
+}
+
+function renderRuntimeServices(scanner={}, store={}) {
+  const symbols = scanner.active_symbols||[];
+  setText('scanner-active-count', fmt(symbols.length));
+  setText('scanner-source', scanner.source||'--');
+  setText('scanner-active-symbols', `Active Symbols: ${symbols.join(', ')||'--'}`);
+  setText('runtime-store-enabled', store.enabled ? 'ENABLED' : 'DISABLED');
+  setText('runtime-store-writes', fmt(store.snapshot_write_count));
+  setText('runtime-store-fails', fmt(store.snapshot_fail_count));
+  setText('runtime-store-age', store.snapshot_age_sec==null ? '--' : ageText(store.snapshot_age_sec));
+}
+
 function renderTinyLivePanel(readiness, tinyStatus={}) {
   const status = tinyStatus.status||'DISARMED';
   const partialRisk = tinyStatus.partial_risk || status==='PARTIAL_RISK';
@@ -825,6 +853,7 @@ on('btn-save-keys', 'click', async () => {
 // ── Init ─────────────────────────────────────────────────────────────────
 fetchData();
 fetchTelemetry();
+fetchRuntimeServices();
 fetchDecisions();
 fetchPerf();
 fetchLastSession();
@@ -833,5 +862,6 @@ setInterval(fetchData,   POLL_MS);
 setInterval(fetchPerf,   POLL_MS*2);
 setInterval(fetchTrades, POLL_MS*2);
 setInterval(fetchTelemetry, POLL_MS);
+setInterval(fetchRuntimeServices, POLL_MS);
 setInterval(fetchDecisions, POLL_MS*2);
 setInterval(() => renderTelemetry(latestState, latestEngine, latestControl), 1000);

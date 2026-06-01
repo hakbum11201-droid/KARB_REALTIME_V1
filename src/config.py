@@ -105,6 +105,24 @@ class Config:
     def upbit_bithumb_max_trades_per_day(self): return self.get('upbit_bithumb_max_trades_per_day', 5)
     @property
     def bithumb_min_order_krw(self): return self.get('bithumb_min_order_krw', 5000)
+    @property
+    def use_dynamic_symbols(self): return self.get('use_dynamic_symbols', True)
+    @property
+    def dynamic_symbol_top_n(self): return self.get('dynamic_symbol_top_n', 20)
+    @property
+    def dynamic_symbol_refresh_sec(self): return self.get('dynamic_symbol_refresh_sec', 300)
+    @property
+    def min_24h_quote_volume_krw(self): return self.get('min_24h_quote_volume_krw', 1000000000)
+    @property
+    def symbol_blacklist(self): return self.get('symbol_blacklist', [])
+    @property
+    def exclude_stablecoin_symbols(self): return self.get('exclude_stablecoin_symbols', True)
+    @property
+    def runtime_store_enabled(self): return self.get('runtime_store_enabled', True)
+    @property
+    def runtime_snapshot_interval_sec(self): return self.get('runtime_snapshot_interval_sec', 3)
+    @property
+    def runtime_snapshot_max_failures(self): return self.get('runtime_snapshot_max_failures', 5)
 
     # ── 심볼 / 루프 ────────────────────────────────────────────
     @property

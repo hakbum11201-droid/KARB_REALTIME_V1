@@ -46,6 +46,15 @@ upbit_bithumb_max_order_krw: 20000
 upbit_bithumb_daily_loss_limit_krw: 10000
 upbit_bithumb_max_trades_per_day: 5
 bithumb_min_order_krw: 5000
+use_dynamic_symbols: true
+dynamic_symbol_top_n: 20
+dynamic_symbol_refresh_sec: 300
+min_24h_quote_volume_krw: 1000000000
+symbol_blacklist: []
+exclude_stablecoin_symbols: true
+runtime_store_enabled: true
+runtime_snapshot_interval_sec: 3
+runtime_snapshot_max_failures: 5
 
 symbols: [BTC, ETH, XRP, DOGE, SOL]
 

@@ -23,6 +23,8 @@ import control
 from session_analyzer import SessionAnalyzer
 from ws_market_data import WebSocketMarketData
 from strategy_selector import StrategySelector
+from runtime_store import RuntimeStore
+from market_scanner import MarketScanner
 
 
 def _decision_record(calc_res, reason, is_safe, quote_source, quote_age_ms):
@@ -103,12 +105,19 @@ def main():
     upbit_pub    = UpbitPublic()
     binance_pub  = BinancePublic()
     bithumb_pub  = BithumbPublic()
+    market_scanner = MarketScanner()
+    scanner_snapshot = (
+        market_scanner.scan() if cfg.use_dynamic_symbols
+        else market_scanner.fallback('DYNAMIC_SYMBOLS_DISABLED')
+    )
+    active_symbols = scanner_snapshot.get('active_symbols') or list(cfg.symbols)
+    print(f"[KARB] Active symbols: {len(active_symbols)} ({scanner_snapshot.get('source', 'fallback')})")
     fx_oracle    = FxOracle(upbit_pub, binance_pub)
-    quote_engine = QuoteEngine(upbit_pub, binance_pub, cfg.symbols)
+    quote_engine = QuoteEngine(upbit_pub, binance_pub, active_symbols)
     ws_market_data = None
     if cfg.use_websocket_market_data:
         ws_market_data = WebSocketMarketData(
-            cfg.symbols, stale_quote_ms=cfg.stale_quote_ms,
+            active_symbols, stale_quote_ms=cfg.stale_quote_ms,
             rest_fallback_enabled=cfg.rest_fallback_enabled,
         )
         ws_market_data.start()
@@ -130,6 +139,29 @@ def main():
     telemetry_path = os.path.join(runtime_dir, 'telemetry.json')
     decisions_path = os.path.join(runtime_dir, 'latest_decisions.json')
     opportunities_path = os.path.join(runtime_dir, 'latest_opportunities.json')
+    performance_path = os.path.join(runtime_dir, 'performance_summary.json')
+    execution_plan_path = os.path.join(runtime_dir, 'last_execution_plan.json')
+    scanner_path = os.path.join(runtime_dir, 'market_scanner.json')
+    runtime_store_status_path = os.path.join(runtime_dir, 'runtime_store_status.json')
+    snapshot_paths = {
+        'latest_quotes': quotes_path,
+        'telemetry': telemetry_path,
+        'latest_decisions': decisions_path,
+        'performance_summary': performance_path,
+        'last_execution_plan': execution_plan_path,
+        'market_scanner': scanner_path,
+    }
+    runtime_store = RuntimeStore(
+        enabled=cfg.runtime_store_enabled,
+        max_failures=cfg.runtime_snapshot_max_failures,
+    )
+    runtime_store.hydrate(snapshot_paths)
+    runtime_store.set_state('market_scanner', scanner_snapshot)
+    if runtime_store.get_state('last_execution_plan') is None:
+        runtime_store.set_state('last_execution_plan', {})
+    runtime_store.start_background_writer(
+        cfg.runtime_snapshot_interval_sec, snapshot_paths, runtime_store_status_path
+    )
 
     # ── 세션 통계 누적기 ──────────────────────────────────────────────────
     start_time         = started_at
@@ -157,10 +189,34 @@ def main():
     signal_counts: dict[str, int] = {}
     symbol_surplus_max: dict[str, float] = {}
     quote_source_counts = {'ws': 0, 'rest': 0}
+    last_scanner_refresh = time.time()
 
     while True:
         loop_start = time.time()
         total_loops += 1
+
+        if (
+            cfg.use_dynamic_symbols
+            and loop_start - last_scanner_refresh >= cfg.dynamic_symbol_refresh_sec
+        ):
+            next_scanner_snapshot = market_scanner.scan()
+            next_symbols = next_scanner_snapshot.get('active_symbols') or list(cfg.symbols)
+            if next_symbols != active_symbols:
+                if ws_market_data:
+                    ws_market_data.stop()
+                active_symbols = next_symbols
+                quote_engine = QuoteEngine(upbit_pub, binance_pub, active_symbols)
+                ws_market_data = None
+                if cfg.use_websocket_market_data:
+                    ws_market_data = WebSocketMarketData(
+                        active_symbols, stale_quote_ms=cfg.stale_quote_ms,
+                        rest_fallback_enabled=cfg.rest_fallback_enabled,
+                    )
+                    ws_market_data.start()
+                print(f"[KARB] Active symbols refreshed: {len(active_symbols)} ({next_scanner_snapshot.get('source')})")
+            scanner_snapshot = next_scanner_snapshot
+            runtime_store.set_state('market_scanner', scanner_snapshot)
+            last_scanner_refresh = loop_start
 
         # ── graceful stop 체크 ────────────────────────────────────────────
         if args.until_stop and control.is_stop_requested():
@@ -196,7 +252,7 @@ def main():
             quotes = {}
             error_count += 1
         bithumb_quotes = (
-            bithumb_pub.fetch_all_order_books(cfg.symbols)
+            bithumb_pub.fetch_all_order_books(active_symbols)
             if cfg.bithumb_public_enabled else {}
         )
         loop_opportunities = []
@@ -413,6 +469,10 @@ def main():
             'last_decision_at':     latest_decision_at,
         }
         perf_tracker.update_runtime_metrics(runtime_metrics)
+        runtime_store.set_state('latest_quotes', quotes)
+        runtime_store.set_state('telemetry', runtime_metrics)
+        runtime_store.set_state('latest_decisions', {'updated_at': now, 'decisions': list(decisions)})
+        runtime_store.set_state('market_scanner', scanner_snapshot)
         if args.until_stop and (now - last_console_print >= console_interval):
             elapsed_sec = now - start_time
             perf_s = perf_tracker.summary()
@@ -429,14 +489,18 @@ def main():
 
         # ── runtime 파일 overwrite ────────────────────────────────────────
         if now - last_telemetry_write >= cfg.telemetry_write_interval_sec:
-            _write_json(telemetry_path, runtime_metrics)
-            _write_json(decisions_path, {'updated_at': now, 'decisions': list(decisions)})
+            if not cfg.runtime_store_enabled:
+                _write_json(telemetry_path, runtime_metrics)
+                _write_json(decisions_path, {'updated_at': now, 'decisions': list(decisions)})
+                _write_json(scanner_path, scanner_snapshot)
             _write_json(opportunities_path, {'updated_at': now, **strategy_snapshot})
             last_telemetry_write = now
 
         if now - last_state_write >= cfg.state_write_interval_sec:
             perf_summary = perf_tracker.summary()
-            _write_json(quotes_path, quotes)
+            runtime_store.set_state('performance_summary', perf_summary)
+            if not cfg.runtime_store_enabled:
+                _write_json(quotes_path, quotes)
             _write_json(state_path, {
                 'mode':           cfg.mode,
                 'run_id':         run_id,
@@ -479,6 +543,7 @@ def main():
     ended_at = time.time()
     if ws_market_data:
         ws_market_data.stop()
+    runtime_store.stop_background_writer(snapshot_paths, runtime_store_status_path)
 
     if args.until_stop:
         control.finish_run(ended_at)

@@ -182,6 +182,26 @@ def _bithumb_balances_payload():
     return BithumbPrivateClient().get_balances()
 
 
+def _market_scanner_payload():
+    return {
+        'ok': True, 'error': '', 'blockers': [],
+        **_read_json(os.path.join(RUNTIME_DIR, 'market_scanner.json')),
+    }
+
+
+def _runtime_store_status_payload():
+    status = _read_json(os.path.join(RUNTIME_DIR, 'runtime_store_status.json'))
+    last_snapshot_at = float(status.get('last_snapshot_at', 0) or 0)
+    if last_snapshot_at:
+        status['snapshot_age_sec'] = round(max(0.0, time.time() - last_snapshot_at), 2)
+    return {
+        'ok': True, 'error': '', 'blockers': [],
+        'enabled': cfg.runtime_store_enabled,
+        'snapshot_interval_sec': cfg.runtime_snapshot_interval_sec,
+        **status,
+    }
+
+
 class KarbHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=WEB_DIR, **kwargs)
@@ -310,6 +330,12 @@ class KarbHandler(SimpleHTTPRequestHandler):
 
         elif path == '/api/bithumb/balances':
             self._send_guarded_json(_bithumb_balances_payload)
+
+        elif path == '/api/market/scanner':
+            self._send_guarded_json(_market_scanner_payload)
+
+        elif path == '/api/runtime-store/status':
+            self._send_guarded_json(_runtime_store_status_payload)
 
         elif self.path == '/api/trades/recent':
             recent = _read_jsonl_tail(os.path.join(LOGS_DIR, 'paper_trades.jsonl'), 100)

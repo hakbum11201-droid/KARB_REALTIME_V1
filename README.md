@@ -188,3 +188,10 @@ API keys alone never enable an order. If `PARTIAL_RISK` appears, stop new entrie
 - `BITHUMB_BINANCE` is a disabled quote-structure placeholder. `BINANCE_MAKER_DOMESTIC_TAKER` is a disabled display-only placeholder.
 - Bithumb private integration is limited to balance read, order read, and Spot market orders. Withdrawals, deposits, wallet addresses, automatic transfers, Futures, Margin, and P2P are intentionally absent.
 - Bithumb orders remain blocked by default. In addition to the global live gates and explicit ARM action, `bithumb_private_enabled` and `upbit_bithumb_live_enabled` must be enabled deliberately.
+
+## RuntimeStore and Dynamic Top20 scanner
+
+- `RuntimeStore` keeps loop state in memory and writes bounded overwrite-only compatibility snapshots at a configured interval. Raw tick append storage is not added.
+- The Dynamic Top20 scanner reads Upbit KRW, Bithumb KRW, and Binance USDT Spot public markets, intersects supported symbols, excludes thin or blacklisted symbols, and selects the highest-volume symbols.
+- If any scanner request fails or no eligible common market remains, the engine falls back to the existing `config.symbols` list.
+- This monitoring change does not relax live-order guards or add any withdrawal, deposit, address, transfer, Futures, Margin, or P2P capability.
