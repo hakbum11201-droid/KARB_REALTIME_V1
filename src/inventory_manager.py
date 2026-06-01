@@ -79,6 +79,9 @@ class InventoryManager:
             upbit_bid = float(upbit.get('bid', 0) or 0)
             binance_bid = float(binance.get('bid', 0) or 0)
             krw_usdt = float(calc.get('krw_usdt', 0) or 0)
+            direction_a_assets = calc.get('direction_a_required_assets') or {}
+            direction_b_assets = calc.get('direction_b_required_assets') or {}
+            selected_required_assets = calc.get('selected_required_assets') or {}
 
             required_upbit_coin_for_a = None
             required_binance_usdt_for_a = None
@@ -113,9 +116,18 @@ class InventoryManager:
                 })
                 continue
 
-            required_upbit_coin_for_a = trade_krw / upbit_bid
-            required_binance_usdt_for_a = trade_krw / krw_usdt
-            required_binance_coin_for_b = trade_krw / (binance_bid * krw_usdt)
+            required_upbit_coin_for_a = float(
+                direction_a_assets.get('upbit_coin_qty', trade_krw / upbit_bid) or 0
+            )
+            required_binance_usdt_for_a = float(
+                direction_a_assets.get('binance_usdt', trade_krw / krw_usdt) or 0
+            )
+            required_upbit_krw_for_b = float(
+                direction_b_assets.get('upbit_krw', trade_krw) or 0
+            )
+            required_binance_coin_for_b = float(
+                direction_b_assets.get('binance_coin_qty', trade_krw / (binance_bid * krw_usdt)) or 0
+            )
             direction_a_possible = (
                 upbit_coin >= required_upbit_coin_for_a
                 and binance_usdt >= required_binance_usdt_for_a
@@ -159,6 +171,9 @@ class InventoryManager:
                 'binance_coin_qty': binance_coin,
                 'upbit_krw_available': upbit_krw,
                 'binance_usdt_available': binance_usdt,
+                'direction_a_required_assets': direction_a_assets,
+                'direction_b_required_assets': direction_b_assets,
+                'selected_required_assets': selected_required_assets,
                 'direction_a_possible': direction_a_possible,
                 'direction_b_possible': direction_b_possible,
                 'missing_for_a': missing_for_a,
@@ -207,24 +222,48 @@ class InventoryManager:
             upbit_krw = float(upbit_balances.get('KRW', 0) or 0)
             bithumb_krw = float(bithumb_balances.get('KRW', 0) or 0)
             missing_a, missing_b = [], []
+            direction_a_assets = quote.get('direction_a_required_assets') or {}
+            direction_b_assets = quote.get('direction_b_required_assets') or {}
+            selected_required_assets = quote.get('selected_required_assets') or {}
+            required_upbit_coin = None
+            required_bithumb_krw = None
+            required_bithumb_coin = None
+            required_upbit_krw = None
             if not quote or upbit_bid <= 0 or bithumb_bid <= 0:
                 missing_a = ['PRICE_UNAVAILABLE']
                 missing_b = ['PRICE_UNAVAILABLE']
             else:
-                required_upbit_coin = trade_krw / upbit_bid
-                required_bithumb_coin = trade_krw / bithumb_bid
+                required_upbit_coin = float(
+                    direction_a_assets.get('upbit_coin_qty', trade_krw / upbit_bid) or 0
+                )
+                required_bithumb_krw = float(
+                    direction_a_assets.get('bithumb_krw', trade_krw) or 0
+                )
+                required_bithumb_coin = float(
+                    direction_b_assets.get('bithumb_coin_qty', trade_krw / bithumb_bid) or 0
+                )
+                required_upbit_krw = float(
+                    direction_b_assets.get('upbit_krw', trade_krw) or 0
+                )
                 if upbit_coin < required_upbit_coin:
                     missing_a.append(f'Upbit {symbol} need {required_upbit_coin:.8f} / have {upbit_coin:.8f}')
-                if bithumb_krw < trade_krw:
-                    missing_a.append(f'Bithumb KRW need {trade_krw:.0f} / have {bithumb_krw:.0f}')
+                if bithumb_krw < required_bithumb_krw:
+                    missing_a.append(f'Bithumb KRW need {required_bithumb_krw:.0f} / have {bithumb_krw:.0f}')
                 if bithumb_coin < required_bithumb_coin:
                     missing_b.append(f'Bithumb {symbol} need {required_bithumb_coin:.8f} / have {bithumb_coin:.8f}')
-                if upbit_krw < trade_krw:
-                    missing_b.append(f'Upbit KRW need {trade_krw:.0f} / have {upbit_krw:.0f}')
+                if upbit_krw < required_upbit_krw:
+                    missing_b.append(f'Upbit KRW need {required_upbit_krw:.0f} / have {upbit_krw:.0f}')
             symbols.append({
                 'pair_id': 'UPBIT_BITHUMB', 'symbol': symbol,
                 'upbit_coin_qty': upbit_coin, 'bithumb_coin_qty': bithumb_coin,
                 'upbit_krw_available': upbit_krw, 'bithumb_krw_available': bithumb_krw,
+                'required_upbit_coin_for_a': required_upbit_coin,
+                'required_bithumb_krw_for_a': required_bithumb_krw,
+                'required_bithumb_coin_for_b': required_bithumb_coin,
+                'required_upbit_krw_for_b': required_upbit_krw,
+                'direction_a_required_assets': direction_a_assets,
+                'direction_b_required_assets': direction_b_assets,
+                'selected_required_assets': selected_required_assets,
                 'direction_a_possible': not missing_a, 'direction_b_possible': not missing_b,
                 'missing_for_a': missing_a, 'missing_for_b': missing_b,
                 'recommended_manual_action': (

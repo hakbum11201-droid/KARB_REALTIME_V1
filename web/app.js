@@ -361,6 +361,19 @@ function directionText(pairId, direction) {
   return direction === 'B' ? 'Upbit BUY / Binance SELL' : 'Upbit SELL / Binance BUY';
 }
 
+function requiredAssetsText(row) {
+  const assets=row.selected_required_assets||{};
+  const labels={
+    upbit_coin_qty:'Upbit coin', binance_usdt:'Binance USDT',
+    upbit_krw:'Upbit KRW', binance_coin_qty:'Binance coin',
+    bithumb_krw:'Bithumb KRW', bithumb_coin_qty:'Bithumb coin',
+  };
+  const required=Object.entries(labels)
+    .filter(([key])=>Number(assets[key]||0)>0)
+    .map(([key,label])=>`${label} ${fmt(assets[key],key.endsWith('qty')?8:2)}`);
+  return `Need: ${required.join(' / ')||'--'} · Notional ${fmt(row.selected_notional_krw)} KRW · ${esc(row.notional_basis||'--')}`;
+}
+
 function renderOpportunityCard(row) {
   const pairId=row.pair_id||'UPBIT_BINANCE', domestic=pairId==='UPBIT_BITHUMB', meta=pairMeta(pairId);
   const sym=row.symbol||'--', surplus=Number(row.best_net_surplus_bp||0), net=Number(row.net_expected_profit_krw||0);
@@ -380,6 +393,7 @@ function renderOpportunityCard(row) {
       <div><div class="qc-price-exchange">${rightVenue} · ${rightUnit}</div><div class="qc-price-val">${domestic?fmt(rightBid):Number(rightBid||0).toFixed(4)} ${rightUnit}</div><div class="qc-price-bid-ask">bid ${domestic?fmt(rightBid):Number(rightBid||0).toFixed(4)} / ask ${domestic?fmt(rightAsk):Number(rightAsk||0).toFixed(4)}</div></div>
     </div>
     <div class="qc-direction"><strong>${esc(row.best_direction||'--')}</strong><span>${esc(directionText(pairId,row.best_direction))}</span></div>
+    <div class="qc-direction"><span>${requiredAssetsText(row)}</span></div>
     <div class="qc-metrics">
       <span class="qc-metric">${quoteSource} ${quoteAge.toFixed(2)}s</span><span class="qc-metric">${stale?'STALE':'FRESH'}</span>
       <span class="qc-metric">${domestic?'FX 없음':`FX ${fmt(row.krw_usdt,1)} KRW/USDT`}</span><span class="qc-metric">Net Surplus ${surplus.toFixed(1)} bp</span>

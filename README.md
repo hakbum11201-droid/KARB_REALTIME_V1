@@ -216,3 +216,10 @@ API keys alone never enable an order. If `PARTIAL_RISK` appears, stop new entrie
 - The `Upbit ↔ Bithumb` section shows domestic KRW Spot opportunities with FX disabled. `UPBIT_BITHUMB_A` means Upbit SELL / Bithumb BUY; `UPBIT_BITHUMB_B` means Bithumb SELL / Upbit BUY.
 - Pair badges and the Decision Log distinguish the two strategies visually. Disabled venue-pair placeholders remain gray.
 - This dashboard-only change does not modify calculation logic, order logic, RiskGuard, Executor behavior, or live-order defaults.
+
+## Direction-specific required inventory
+
+- `UPBIT_BINANCE` direction `A` requires Upbit coin and Binance USDT. Direction `B` requires Upbit KRW and Binance coin.
+- `UPBIT_BITHUMB_A` requires Upbit coin and Bithumb KRW. `UPBIT_BITHUMB_B` requires Bithumb coin and Upbit KRW.
+- Opportunities expose `direction_a_required_assets`, `direction_b_required_assets`, and `selected_required_assets`. Inventory checks prefer `selected_required_assets` and fall back to legacy fields only when needed.
+- This correction does not change order execution, live-order gates, withdrawal policy, or risk thresholds.

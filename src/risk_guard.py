@@ -46,6 +46,17 @@ class RiskGuard:
         from iceberg_planner import IcebergPlanner
         return IcebergPlanner().build_placeholder_plan({'order_krw': order_krw}, cfg)
 
+    @staticmethod
+    def selected_required_assets(calc_result: dict) -> dict:
+        """Prefer direction-aware assets while preserving legacy result support."""
+        selected = calc_result.get('selected_required_assets')
+        if isinstance(selected, dict):
+            return selected
+        return {
+            'upbit_krw': float(calc_result.get('required_upbit_balance_krw', 0) or 0),
+            'binance_usdt': float(calc_result.get('required_binance_balance_usdt', 0) or 0),
+        }
+
     # ──────────────────────────────────────────────────────────────────────
     # 공개 API
     # ──────────────────────────────────────────────────────────────────────
@@ -56,6 +67,9 @@ class RiskGuard:
         calc_result['reason_no_trade']를 직접 수정한다.
         """
         self._reset_daily_if_needed()
+        calc_result.setdefault(
+            'selected_required_assets', self.selected_required_assets(calc_result)
+        )
 
         def reject(reason: str) -> bool:
             calc_result['reason_no_trade'] = reason

@@ -57,6 +57,20 @@ class ArbCalculator:
             0.0,
             max_qty_b * u_ask * (direction_b_net_surplus_bp / 10000)
         )
+        direction_a_required_assets = {
+            'upbit_coin_qty': max_qty_a,
+            'binance_usdt': max_qty_a * b_ask,
+            'upbit_krw': 0.0,
+            'binance_coin_qty': 0.0,
+            'notional_krw': max_qty_a * b_ask * krw_usdt,
+        }
+        direction_b_required_assets = {
+            'upbit_krw': max_qty_b * u_ask,
+            'binance_coin_qty': max_qty_b,
+            'upbit_coin_qty': 0.0,
+            'binance_usdt': 0.0,
+            'notional_krw': max_qty_b * u_ask,
+        }
 
         # ----------------------------------------------------------------
         # 최적 방향 선택
@@ -68,6 +82,10 @@ class ArbCalculator:
             gross_gap_krw = direction_a_gross_gap_krw
             max_fillable_qty = max_qty_a
             slippage = slippage_a
+            selected_required_assets = direction_a_required_assets
+            selected_buy_price_krw = b_ask * krw_usdt
+            selected_sell_price_krw = u_bid
+            notional_basis = 'BINANCE_BUY_KRW_VALUE'
         else:
             best_direction = 'B'
             best_net_surplus_bp = direction_b_net_surplus_bp
@@ -75,6 +93,10 @@ class ArbCalculator:
             gross_gap_krw = direction_b_gross_gap_krw
             max_fillable_qty = max_qty_b
             slippage = slippage_b
+            selected_required_assets = direction_b_required_assets
+            selected_buy_price_krw = u_ask
+            selected_sell_price_krw = b_bid * krw_usdt
+            notional_basis = 'UPBIT_BUY_KRW_VALUE'
 
         # kimchi_premium_pct: Direction A 기준 (Upbit bid vs Binance ask mid)
         kimchi_premium_pct = surplus_a_raw_bp / 100.0
@@ -105,13 +127,22 @@ class ArbCalculator:
             'net_expected_profit_krw': net_expected_profit_krw,
             'gross_gap_krw': gross_gap_krw,
             'max_fillable_qty': max_fillable_qty,
+            'direction_a_required_assets': direction_a_required_assets,
+            'direction_b_required_assets': direction_b_required_assets,
+            'selected_required_assets': selected_required_assets,
+            'selected_notional_krw': selected_required_assets['notional_krw'],
+            'selected_qty': max_fillable_qty,
+            'selected_buy_price_krw': selected_buy_price_krw,
+            'selected_sell_price_krw': selected_sell_price_krw,
+            'notional_basis': notional_basis,
             **slippage,
             'slippage_model_used': slippage['model_used'],
             'paper_latency_sim_enabled': cfg.paper_latency_sim_enabled,
             'paper_edge_quality': 'PENDING',
-            # 잔고 요구량 (Direction A 기준)
-            'required_upbit_balance_krw': max_qty_a * u_ask,
-            'required_binance_balance_usdt': max_qty_a * b_ask,
+            # Backward-compatible fields now follow the selected direction.
+            'required_upbit_balance_krw': selected_required_assets['upbit_krw'],
+            'required_binance_balance_usdt': selected_required_assets['binance_usdt'],
+            'deprecated_required_fields': True,
             # 판단
             'reason_no_trade': ''
         }
@@ -138,6 +169,20 @@ class ArbCalculator:
         direction_b_net_surplus_bp = surplus_b_raw_bp - total_cost_b_bp
         max_qty_a = min(float(upbit_quote['bid_size']), float(bithumb_quote['ask_size']))
         max_qty_b = min(float(bithumb_quote['bid_size']), float(upbit_quote['ask_size']))
+        direction_a_required_assets = {
+            'upbit_coin_qty': max_qty_a,
+            'bithumb_krw': max_qty_a * h_ask,
+            'bithumb_coin_qty': 0.0,
+            'upbit_krw': 0.0,
+            'notional_krw': max_qty_a * h_ask,
+        }
+        direction_b_required_assets = {
+            'bithumb_coin_qty': max_qty_b,
+            'upbit_krw': max_qty_b * u_ask,
+            'upbit_coin_qty': 0.0,
+            'bithumb_krw': 0.0,
+            'notional_krw': max_qty_b * u_ask,
+        }
 
         if direction_a_net_surplus_bp >= direction_b_net_surplus_bp:
             best_direction = 'UPBIT_BITHUMB_A'
@@ -145,12 +190,20 @@ class ArbCalculator:
             max_fillable_qty = max_qty_a
             reference_price = h_ask
             slippage = slippage_a
+            selected_required_assets = direction_a_required_assets
+            selected_buy_price_krw = h_ask
+            selected_sell_price_krw = u_bid
+            notional_basis = 'BITHUMB_BUY_KRW_VALUE'
         else:
             best_direction = 'UPBIT_BITHUMB_B'
             best_net_surplus_bp = direction_b_net_surplus_bp
             max_fillable_qty = max_qty_b
             reference_price = u_ask
             slippage = slippage_b
+            selected_required_assets = direction_b_required_assets
+            selected_buy_price_krw = u_ask
+            selected_sell_price_krw = h_bid
+            notional_basis = 'UPBIT_BUY_KRW_VALUE'
 
         expected_profit_krw = max(
             0.0, max_fillable_qty * reference_price * best_net_surplus_bp / 10000
@@ -174,6 +227,14 @@ class ArbCalculator:
             'best_net_surplus_bp': best_net_surplus_bp,
             'net_expected_profit_krw': expected_profit_krw,
             'max_fillable_qty': max_fillable_qty,
+            'direction_a_required_assets': direction_a_required_assets,
+            'direction_b_required_assets': direction_b_required_assets,
+            'selected_required_assets': selected_required_assets,
+            'selected_notional_krw': selected_required_assets['notional_krw'],
+            'selected_qty': max_fillable_qty,
+            'selected_buy_price_krw': selected_buy_price_krw,
+            'selected_sell_price_krw': selected_sell_price_krw,
+            'notional_basis': notional_basis,
             **slippage,
             'slippage_model_used': slippage['model_used'],
             'paper_latency_sim_enabled': cfg.paper_latency_sim_enabled,

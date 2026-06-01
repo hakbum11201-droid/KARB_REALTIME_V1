@@ -98,10 +98,27 @@ def _with_plan_quote_source(payload):
     plan = payload.get('plan') if isinstance(payload, dict) else None
     if not plan:
         return payload
+    calc = {}
     if not plan.get('quote_source'):
         quotes = _read_json(os.path.join(RUNTIME_DIR, 'latest_quotes.json'))
         quote = quotes.get(plan.get('symbol'), {})
         plan['quote_source'] = quote.get('source') or quote.get('upbit', {}).get('source') or quote.get('binance', {}).get('source') or 'unknown'
+        calc = quote.get('calc', {})
+    if plan.get('pair_id') == 'UPBIT_BITHUMB':
+        opportunities = _read_json(os.path.join(RUNTIME_DIR, 'latest_opportunities.json'))
+        calc = next((
+            row for row in opportunities.get('all_opportunities', [])
+            if row.get('pair_id') == 'UPBIT_BITHUMB' and row.get('symbol') == plan.get('symbol')
+        ), calc)
+    elif not calc:
+        quotes = _read_json(os.path.join(RUNTIME_DIR, 'latest_quotes.json'))
+        calc = quotes.get(plan.get('symbol'), {}).get('calc', {})
+    for key in (
+        'selected_required_assets', 'selected_notional_krw', 'selected_qty',
+        'selected_buy_price_krw', 'selected_sell_price_krw', 'notional_basis',
+    ):
+        if key in calc:
+            plan[key] = calc[key]
     iceberg = IcebergPlanner().build_placeholder_plan(plan, cfg)
     plan.update({
         'iceberg_required': iceberg['iceberg_required'],

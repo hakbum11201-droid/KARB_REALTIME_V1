@@ -51,6 +51,12 @@ class ExecutionPlan:
     fx_rate: float = 0
     expected_net_profit_krw: float = 0
     best_net_surplus_bp: float = 0
+    selected_required_assets: dict = field(default_factory=dict)
+    selected_notional_krw: float = 0
+    selected_qty: float = 0
+    selected_buy_price_krw: float = 0
+    selected_sell_price_krw: float = 0
+    notional_basis: str = ''
     preflight_status: str = 'BLOCKED'
     created_at: float = field(default_factory=time.time)
     blockers: list[str] = field(default_factory=list)
