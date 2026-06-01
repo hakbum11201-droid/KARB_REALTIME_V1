@@ -25,6 +25,7 @@ from ws_market_data import WebSocketMarketData
 from strategy_selector import StrategySelector
 from runtime_store import RuntimeStore
 from market_scanner import MarketScanner
+from paper_fill_simulator import simulate_paper_fill
 
 
 def _decision_record(calc_res, reason, is_safe, quote_source, quote_age_ms):
@@ -49,6 +50,10 @@ def _decision_record(calc_res, reason, is_safe, quote_source, quote_age_ms):
         'quote_age_ms': round(float(quote_age_ms or 0), 2),
         'go_no_go': 'GO' if is_safe else 'NO-GO',
         'blockers': [] if is_safe else [reason],
+        'dynamic_slippage_bp': calc_res.get('dynamic_slippage_bp', cfg.slippage_bp),
+        'liquidity_class': calc_res.get('liquidity_class', 'NORMAL'),
+        'latency_used_ms': calc_res.get('latency_used_ms', 0),
+        'fill_quality': calc_res.get('fill_quality', calc_res.get('paper_edge_quality', 'PENDING')),
     }
 
 
@@ -190,6 +195,11 @@ def main():
     symbol_surplus_max: dict[str, float] = {}
     quote_source_counts = {'ws': 0, 'rest': 0}
     last_scanner_refresh = time.time()
+    quote_history: dict[str, deque] = {}
+    dynamic_slippage_list: deque[float] = deque(maxlen=1000)
+    paper_latency_list: deque[float] = deque(maxlen=1000)
+    liquidity_class_counts: dict[str, int] = {}
+    paper_edge_counts = {'PAPER_EDGE_PASS': 0, 'PAPER_EDGE_FAIL': 0}
 
     while True:
         loop_start = time.time()
@@ -290,6 +300,10 @@ def main():
             calc_res['fx_status']   = fx_status
             calc_res['upbit_ts']    = upbit_q.get('ts')
             calc_res['binance_ts']  = binance_q.get('ts')
+            history = quote_history.setdefault(sym, deque(maxlen=120))
+            history.append({**q, '_ts': time.time()})
+            if cfg.paper_latency_sim_enabled:
+                calc_res.update(simulate_paper_fill(calc_res, history, cfg))
             q['calc'] = calc_res
             q['quote_age_sec'] = round(max(
                 0, time.time() - min(upbit_q.get('ts', 0), binance_q.get('ts', 0))
@@ -298,6 +312,12 @@ def main():
             # surplus 통계 수집
             surplus = calc_res.get('best_net_surplus_bp', -9999)
             surplus_bp_list.append(surplus)
+            dynamic_slippage_list.append(float(calc_res.get('dynamic_slippage_bp', 0) or 0))
+            paper_latency_list.append(float(calc_res.get('latency_used_ms', 0) or 0))
+            liquidity = calc_res.get('liquidity_class', 'NORMAL')
+            liquidity_class_counts[liquidity] = liquidity_class_counts.get(liquidity, 0) + 1
+            quality = calc_res.get('paper_edge_quality', 'PAPER_EDGE_FAIL')
+            paper_edge_counts[quality] = paper_edge_counts.get(quality, 0) + 1
 
             if surplus > best_surplus_this_loop:
                 best_surplus_this_loop = surplus
@@ -357,6 +377,10 @@ def main():
             for sym, q in quotes.items():
                 bithumb_q = bithumb_quotes.get(sym, {})
                 domestic = arb_calc.calculate_domestic_krw(sym, q.get('upbit', {}), bithumb_q)
+                domestic_history = quote_history.setdefault(f'UPBIT_BITHUMB:{sym}', deque(maxlen=120))
+                domestic_history.append({'upbit': q.get('upbit', {}), 'bithumb': bithumb_q, '_ts': time.time()})
+                if cfg.paper_latency_sim_enabled:
+                    domestic.update(simulate_paper_fill(domestic, domestic_history, cfg))
                 domestic_reason = domestic.get('reason_no_trade', '')
                 domestic_safe = domestic_reason == 'OK'
                 domestic_surplus = domestic.get('best_net_surplus_bp', -9999)
@@ -370,6 +394,12 @@ def main():
                 quote_lat_list.append(float(bithumb_q.get('latency_ms', 0) or 0))
                 last_quote_at = max(last_quote_at, float(bithumb_q.get('ts', 0) or 0))
                 surplus_bp_list.append(domestic_surplus)
+                dynamic_slippage_list.append(float(domestic.get('dynamic_slippage_bp', 0) or 0))
+                paper_latency_list.append(float(domestic.get('latency_used_ms', 0) or 0))
+                liquidity = domestic.get('liquidity_class', 'NORMAL')
+                liquidity_class_counts[liquidity] = liquidity_class_counts.get(liquidity, 0) + 1
+                quality = domestic.get('paper_edge_quality', 'PAPER_EDGE_FAIL')
+                paper_edge_counts[quality] = paper_edge_counts.get(quality, 0) + 1
                 symbol_key = f'UPBIT_BITHUMB:{sym}'
                 symbol_surplus_max[symbol_key] = max(
                     symbol_surplus_max.get(symbol_key, -9999.0), domestic_surplus
@@ -467,6 +497,13 @@ def main():
             'top_symbol_by_signal': top_symbol_by_signal,
             'top_symbol_by_surplus': top_symbol_by_surplus,
             'last_decision_at':     latest_decision_at,
+            'avg_dynamic_slippage_bp': round(sum(dynamic_slippage_list) / len(dynamic_slippage_list), 4) if dynamic_slippage_list else 0.0,
+            'max_dynamic_slippage_bp': round(max(dynamic_slippage_list), 4) if dynamic_slippage_list else 0.0,
+            'low_depth_count':      liquidity_class_counts.get('LOW_DEPTH', 0),
+            'liquidity_class_counts': liquidity_class_counts,
+            'paper_edge_pass_count': paper_edge_counts.get('PAPER_EDGE_PASS', 0),
+            'paper_edge_fail_count': paper_edge_counts.get('PAPER_EDGE_FAIL', 0),
+            'avg_latency_used_ms':  round(sum(paper_latency_list) / len(paper_latency_list), 2) if paper_latency_list else 0.0,
         }
         perf_tracker.update_runtime_metrics(runtime_metrics)
         runtime_store.set_state('latest_quotes', quotes)

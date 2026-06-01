@@ -123,6 +123,26 @@ class Config:
     def runtime_snapshot_interval_sec(self): return self.get('runtime_snapshot_interval_sec', 3)
     @property
     def runtime_snapshot_max_failures(self): return self.get('runtime_snapshot_max_failures', 5)
+    @property
+    def use_dynamic_slippage(self): return self.get('use_dynamic_slippage', True)
+    @property
+    def base_slippage_bp(self): return self.get('base_slippage_bp', 5)
+    @property
+    def max_dynamic_slippage_bp(self): return self.get('max_dynamic_slippage_bp', 30)
+    @property
+    def depth_safety_multiplier(self): return self.get('depth_safety_multiplier', 2.0)
+    @property
+    def paper_latency_sim_enabled(self): return self.get('paper_latency_sim_enabled', True)
+    @property
+    def paper_upbit_latency_ms(self): return self.get('paper_upbit_latency_ms', 60)
+    @property
+    def paper_bithumb_latency_ms(self): return self.get('paper_bithumb_latency_ms', 60)
+    @property
+    def paper_binance_latency_ms(self): return self.get('paper_binance_latency_ms', 80)
+    @property
+    def paper_latency_jitter_ms(self): return self.get('paper_latency_jitter_ms', 30)
+    @property
+    def paper_slippage_stress_bp(self): return self.get('paper_slippage_stress_bp', 5)
 
     # ── 심볼 / 루프 ────────────────────────────────────────────
     @property

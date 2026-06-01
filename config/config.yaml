@@ -55,6 +55,16 @@ exclude_stablecoin_symbols: true
 runtime_store_enabled: true
 runtime_snapshot_interval_sec: 3
 runtime_snapshot_max_failures: 5
+use_dynamic_slippage: true
+base_slippage_bp: 5
+max_dynamic_slippage_bp: 30
+depth_safety_multiplier: 2.0
+paper_latency_sim_enabled: true
+paper_upbit_latency_ms: 60
+paper_bithumb_latency_ms: 60
+paper_binance_latency_ms: 80
+paper_latency_jitter_ms: 30
+paper_slippage_stress_bp: 5
 
 symbols: [BTC, ETH, XRP, DOGE, SOL]
 

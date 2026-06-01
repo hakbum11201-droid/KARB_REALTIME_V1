@@ -1,6 +1,7 @@
 import time
 
 from config import cfg
+from slippage_model import estimate_slippage_bp
 
 class ArbCalculator:
     def calculate(self, symbol, upbit_quote, binance_quote, krw_usdt):
@@ -12,12 +13,20 @@ class ArbCalculator:
         # ----------------------------------------------------------------
         # 비용 총합 (bp) - 양방향 공통
         # ----------------------------------------------------------------
-        total_cost_bp = (
+        slippage_a = self._combined_slippage(
+            (upbit_quote, 'SELL'), (binance_quote, 'BUY'))
+        slippage_b = self._combined_slippage(
+            (upbit_quote, 'BUY'), (binance_quote, 'SELL'))
+        total_cost_a_bp = (
             cfg.upbit_fee_bp
             + cfg.binance_fee_bp
-            + cfg.slippage_bp
+            + slippage_a['dynamic_slippage_bp']
             + cfg.fx_error_bp
             + cfg.risk_buffer_bp
+        )
+        total_cost_b_bp = (
+            cfg.upbit_fee_bp + cfg.binance_fee_bp + slippage_b['dynamic_slippage_bp']
+            + cfg.fx_error_bp + cfg.risk_buffer_bp
         )
 
         # ----------------------------------------------------------------
@@ -25,7 +34,7 @@ class ArbCalculator:
         #   김프 기준: Upbit가 고평가 → Upbit에서 팔고 Binance에서 산다
         # ----------------------------------------------------------------
         surplus_a_raw_bp = (u_bid - b_ask * krw_usdt) / (b_ask * krw_usdt) * 10000
-        direction_a_net_surplus_bp = surplus_a_raw_bp - total_cost_bp
+        direction_a_net_surplus_bp = surplus_a_raw_bp - total_cost_a_bp
 
         max_qty_a = min(upbit_quote['bid_size'], binance_quote['ask_size'])
         direction_a_gross_gap_krw = max_qty_a * (u_bid - b_ask * krw_usdt)
@@ -40,7 +49,7 @@ class ArbCalculator:
         #   (Binance에 해당 코인 재고가 있을 때만 유효)
         # ----------------------------------------------------------------
         surplus_b_raw_bp = (b_bid * krw_usdt - u_ask) / u_ask * 10000
-        direction_b_net_surplus_bp = surplus_b_raw_bp - total_cost_bp
+        direction_b_net_surplus_bp = surplus_b_raw_bp - total_cost_b_bp
 
         max_qty_b = min(upbit_quote['ask_size'], binance_quote['bid_size'])
         direction_b_gross_gap_krw = max_qty_b * (b_bid * krw_usdt - u_ask)
@@ -58,12 +67,14 @@ class ArbCalculator:
             net_expected_profit_krw = direction_a_net_expected_profit_krw
             gross_gap_krw = direction_a_gross_gap_krw
             max_fillable_qty = max_qty_a
+            slippage = slippage_a
         else:
             best_direction = 'B'
             best_net_surplus_bp = direction_b_net_surplus_bp
             net_expected_profit_krw = direction_b_net_expected_profit_krw
             gross_gap_krw = direction_b_gross_gap_krw
             max_fillable_qty = max_qty_b
+            slippage = slippage_b
 
         # kimchi_premium_pct: Direction A 기준 (Upbit bid vs Binance ask mid)
         kimchi_premium_pct = surplus_a_raw_bp / 100.0
@@ -94,6 +105,10 @@ class ArbCalculator:
             'net_expected_profit_krw': net_expected_profit_krw,
             'gross_gap_krw': gross_gap_krw,
             'max_fillable_qty': max_fillable_qty,
+            **slippage,
+            'slippage_model_used': slippage['model_used'],
+            'paper_latency_sim_enabled': cfg.paper_latency_sim_enabled,
+            'paper_edge_quality': 'PENDING',
             # 잔고 요구량 (Direction A 기준)
             'required_upbit_balance_krw': max_qty_a * u_ask,
             'required_binance_balance_usdt': max_qty_a * b_ask,
@@ -110,14 +125,17 @@ class ArbCalculator:
 
         u_bid, u_ask = float(upbit_quote['bid']), float(upbit_quote['ask'])
         h_bid, h_ask = float(bithumb_quote['bid']), float(bithumb_quote['ask'])
-        total_cost_bp = (
-            cfg.upbit_fee_bp + cfg.bithumb_fee_bp + cfg.slippage_bp + cfg.risk_buffer_bp
-        )
+        slippage_a = self._combined_slippage(
+            (upbit_quote, 'SELL'), (bithumb_quote, 'BUY'))
+        slippage_b = self._combined_slippage(
+            (upbit_quote, 'BUY'), (bithumb_quote, 'SELL'))
+        total_cost_a_bp = cfg.upbit_fee_bp + cfg.bithumb_fee_bp + slippage_a['dynamic_slippage_bp'] + cfg.risk_buffer_bp
+        total_cost_b_bp = cfg.upbit_fee_bp + cfg.bithumb_fee_bp + slippage_b['dynamic_slippage_bp'] + cfg.risk_buffer_bp
 
         surplus_a_raw_bp = (u_bid - h_ask) / h_ask * 10000
         surplus_b_raw_bp = (h_bid - u_ask) / u_ask * 10000
-        direction_a_net_surplus_bp = surplus_a_raw_bp - total_cost_bp
-        direction_b_net_surplus_bp = surplus_b_raw_bp - total_cost_bp
+        direction_a_net_surplus_bp = surplus_a_raw_bp - total_cost_a_bp
+        direction_b_net_surplus_bp = surplus_b_raw_bp - total_cost_b_bp
         max_qty_a = min(float(upbit_quote['bid_size']), float(bithumb_quote['ask_size']))
         max_qty_b = min(float(bithumb_quote['bid_size']), float(upbit_quote['ask_size']))
 
@@ -126,11 +144,13 @@ class ArbCalculator:
             best_net_surplus_bp = direction_a_net_surplus_bp
             max_fillable_qty = max_qty_a
             reference_price = h_ask
+            slippage = slippage_a
         else:
             best_direction = 'UPBIT_BITHUMB_B'
             best_net_surplus_bp = direction_b_net_surplus_bp
             max_fillable_qty = max_qty_b
             reference_price = u_ask
+            slippage = slippage_b
 
         expected_profit_krw = max(
             0.0, max_fillable_qty * reference_price * best_net_surplus_bp / 10000
@@ -154,13 +174,45 @@ class ArbCalculator:
             'best_net_surplus_bp': best_net_surplus_bp,
             'net_expected_profit_krw': expected_profit_krw,
             'max_fillable_qty': max_fillable_qty,
+            **slippage,
+            'slippage_model_used': slippage['model_used'],
+            'paper_latency_sim_enabled': cfg.paper_latency_sim_enabled,
+            'paper_edge_quality': 'PENDING',
             'reason_no_trade': '',
         }
         result['reason_no_trade'] = self._domestic_reason(result)
         return result
 
     @staticmethod
+    def _combined_slippage(*legs):
+        if not cfg.use_dynamic_slippage:
+            return {
+                'dynamic_slippage_bp': float(cfg.slippage_bp),
+                'depth_available_krw': 0.0,
+                'fill_price_estimate': 0.0,
+                'liquidity_class': 'NORMAL',
+                'model_used': 'fixed',
+            }
+        estimates = [
+            estimate_slippage_bp(book, side, cfg.max_one_trade_krw, cfg.base_slippage_bp)
+            for book, side in legs
+        ]
+        worst = max(estimates, key=lambda item: item['dynamic_slippage_bp'])
+        return {
+            'dynamic_slippage_bp': max(float(cfg.slippage_bp), worst['dynamic_slippage_bp']),
+            'depth_available_krw': min(item['depth_available_krw'] for item in estimates),
+            'fill_price_estimate': worst['fill_price_estimate'],
+            'liquidity_class': (
+                'LOW_DEPTH' if any(item['liquidity_class'] == 'LOW_DEPTH' for item in estimates)
+                else worst['liquidity_class']
+            ),
+            'model_used': 'depth' if any(item['model_used'] == 'depth' for item in estimates) else worst['model_used'],
+        }
+
+    @staticmethod
     def _domestic_reason(result):
+        if result.get('liquidity_class') == 'LOW_DEPTH':
+            return 'LOW_DEPTH'
         now_ms = time.time() * 1000
         for key in ('upbit_ts', 'bithumb_ts'):
             timestamp = result.get(key)

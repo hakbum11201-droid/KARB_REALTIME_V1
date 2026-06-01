@@ -111,6 +111,13 @@ class PerformanceTracker:
             'elapsed_hours':       round((time.time() - self._started_at) / 3600, 3),
             'buffered_trades':     len(self._closed),
             'ws_ratio':            ws_ratio,
+            'avg_dynamic_slippage_bp': self._runtime_metrics.get('avg_dynamic_slippage_bp', 0.0),
+            'max_dynamic_slippage_bp': self._runtime_metrics.get('max_dynamic_slippage_bp', 0.0),
+            'low_depth_count': self._runtime_metrics.get('low_depth_count', 0),
+            'liquidity_class_counts': self._runtime_metrics.get('liquidity_class_counts', {}),
+            'paper_edge_pass_count': self._runtime_metrics.get('paper_edge_pass_count', 0),
+            'paper_edge_fail_count': self._runtime_metrics.get('paper_edge_fail_count', 0),
+            'avg_latency_used_ms': self._runtime_metrics.get('avg_latency_used_ms', 0.0),
             'updated_at':          time.time(),
             **self._runtime_metrics,
         }

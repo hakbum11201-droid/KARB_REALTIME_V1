@@ -195,3 +195,10 @@ API keys alone never enable an order. If `PARTIAL_RISK` appears, stop new entrie
 - The Dynamic Top20 scanner reads Upbit KRW, Bithumb KRW, and Binance USDT Spot public markets, intersects supported symbols, excludes thin or blacklisted symbols, and selects the highest-volume symbols.
 - If any scanner request fails or no eligible common market remains, the engine falls back to the existing `config.symbols` list.
 - This monitoring change does not relax live-order guards or add any withdrawal, deposit, address, transfer, Futures, Margin, or P2P capability.
+
+## Dynamic slippage and latency-aware paper fills
+
+- Paper opportunities use a conservative dynamic-slippage estimate. When depth levels are available the model estimates a weighted fill price; top-of-book-only quotes use the configured fallback slippage.
+- The paper fill simulator applies venue latency and bounded in-memory quote history. If an older latency-aligned quote is unavailable, it adds a configured slippage stress penalty.
+- Use these fields during long paper runs: dynamic slippage, depth available, liquidity class, simulated fill latency, and paper edge quality.
+- This is paper evaluation only. It does not relax live-order guards or add Iceberg execution.

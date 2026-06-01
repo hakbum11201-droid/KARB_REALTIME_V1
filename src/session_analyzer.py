@@ -171,6 +171,13 @@ class SessionAnalyzer:
             'no_go_reason_counts': session_stats.get('no_go_reason_counts', {}),
             'positive_net_ratio': session_stats.get('positive_net_ratio', 0.0),
             'error_count':        session_stats.get('error_count', 0),
+            'avg_dynamic_slippage_bp': session_stats.get('avg_dynamic_slippage_bp', 0.0),
+            'max_dynamic_slippage_bp': session_stats.get('max_dynamic_slippage_bp', 0.0),
+            'low_depth_count':    session_stats.get('low_depth_count', 0),
+            'liquidity_class_counts': session_stats.get('liquidity_class_counts', {}),
+            'paper_edge_pass_count': session_stats.get('paper_edge_pass_count', 0),
+            'paper_edge_fail_count': session_stats.get('paper_edge_fail_count', 0),
+            'avg_latency_used_ms': session_stats.get('avg_latency_used_ms', 0.0),
         }
         r['started_at_iso'] = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(r['started_at']))
         r['ended_at_iso'] = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(r['ended_at']))
@@ -338,6 +345,10 @@ class SessionAnalyzer:
                 f"",
                 f"─── 스트레스 테스트 ───",
                 f"Slippage:      {r['configured_slippage_bp']} bp",
+                f"Avg Dynamic:   {r['avg_dynamic_slippage_bp']:.2f} bp",
+                f"Max Dynamic:   {r['max_dynamic_slippage_bp']:.2f} bp",
+                f"Low Depth:     {r['low_depth_count']}",
+                f"Avg Fill Lat:  {r['avg_latency_used_ms']:.0f} ms",
                 f"+5bp Stress:   {r['slippage_stress_plus_5bp_estimated_pnl']:+,.0f} KRW",
                 f"+10bp Stress:  {r['slippage_stress_plus_10bp_estimated_pnl']:+,.0f} KRW",
                 f"Quality:       {r['trading_quality']}",

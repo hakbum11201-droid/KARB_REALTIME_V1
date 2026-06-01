@@ -38,6 +38,8 @@ class OrderbookCache:
             'latency_ms': round(float(quote.get('latency_ms', 0) or 0), 2),
             'ts': float(quote.get('ts', now) or now),
             'source': source,
+            'bids': list(quote.get('bids', []))[:15],
+            'asks': list(quote.get('asks', []))[:15],
         }
         with self._lock:
             self._quotes.setdefault(symbol, {})[exchange] = item

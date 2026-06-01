@@ -202,6 +202,22 @@ def _runtime_store_status_payload():
     }
 
 
+def _slippage_model_payload():
+    return {
+        'ok': True, 'error': '', 'blockers': [],
+        'use_dynamic_slippage': cfg.use_dynamic_slippage,
+        'base_slippage_bp': cfg.base_slippage_bp,
+        'max_dynamic_slippage_bp': cfg.max_dynamic_slippage_bp,
+        'depth_safety_multiplier': cfg.depth_safety_multiplier,
+        'paper_latency_sim_enabled': cfg.paper_latency_sim_enabled,
+        'paper_upbit_latency_ms': cfg.paper_upbit_latency_ms,
+        'paper_bithumb_latency_ms': cfg.paper_bithumb_latency_ms,
+        'paper_binance_latency_ms': cfg.paper_binance_latency_ms,
+        'paper_latency_jitter_ms': cfg.paper_latency_jitter_ms,
+        'paper_slippage_stress_bp': cfg.paper_slippage_stress_bp,
+    }
+
+
 class KarbHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=WEB_DIR, **kwargs)
@@ -336,6 +352,9 @@ class KarbHandler(SimpleHTTPRequestHandler):
 
         elif path == '/api/runtime-store/status':
             self._send_guarded_json(_runtime_store_status_payload)
+
+        elif path == '/api/slippage/model':
+            self._send_guarded_json(_slippage_model_payload)
 
         elif self.path == '/api/trades/recent':
             recent = _read_jsonl_tail(os.path.join(LOGS_DIR, 'paper_trades.jsonl'), 100)

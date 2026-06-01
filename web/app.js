@@ -328,6 +328,12 @@ function renderQuotes(quotes) {
         <span class="qc-metric">${surplus.toFixed(1)} bp</span>
         <span class="qc-metric">Net ${fmt(net)} ₩</span>
         <span class="qc-metric">Qty ${qty.toFixed(4)}</span>
+        <span class="qc-metric">Dynamic Slippage ${fmt(c.dynamic_slippage_bp,1)} bp</span>
+        <span class="qc-metric">Depth ${fmt(c.depth_available_krw)} KRW</span>
+        <span class="qc-metric">Liquidity ${esc(c.liquidity_class||'--')}</span>
+        <span class="qc-metric">Latency ${fmt(c.latency_used_ms)} ms</span>
+        <span class="qc-metric">Paper Latency Sim ${c.paper_latency_sim_enabled?'ON':'OFF'}</span>
+        <span class="qc-metric">Paper Edge ${esc(c.paper_edge_quality||'--')}</span>
       </div>
       <div class="qc-verdict">
         <span class="verdict-badge ${isGo?'go-badge':'nogo-badge'}">${isGo?'✓ GO':'✗ NO-GO'}</span>
@@ -408,7 +414,7 @@ function renderDecisions(decisions) {
   const tb = $('decisions-body');
   if (!tb) return;
   if (!decisions.length) {
-    tb.innerHTML='<tr><td colspan="11" class="empty-row">No decisions yet</td></tr>';
+    tb.innerHTML='<tr><td colspan="15" class="empty-row">No decisions yet</td></tr>';
     return;
   }
   tb.innerHTML = decisions.map(d => {
@@ -422,7 +428,9 @@ function renderDecisions(decisions) {
       <td>${esc(d.pair_id||'UPBIT_BINANCE')}</td><td>${esc(d.symbol)}</td><td>${esc(d.direction_label||d.direction)}</td>
       <td>${fmt(d.best_net_surplus_bp,1)} bp</td><td>${fmt(d.threshold_gap_bp,1)} bp</td>
       <td>${fmt(d.expected_net_profit_krw)} KRW</td><td>${esc((d.quote_source||'--').toUpperCase())}</td>
-      <td>${fmt(d.quote_age_ms,0)} ms</td><td>${esc(d.go_no_go||'NO-GO')}</td><td>${esc(reason)}</td>
+      <td>${fmt(d.quote_age_ms,0)} ms</td><td>${fmt(d.dynamic_slippage_bp,1)} bp</td>
+      <td>${esc(d.liquidity_class||'--')}</td><td>${fmt(d.latency_used_ms,0)} ms</td>
+      <td>${esc(d.fill_quality||'--')}</td><td>${esc(d.go_no_go||'NO-GO')}</td><td>${esc(reason)}</td>
     </tr>`;
   }).join('');
 }
@@ -545,6 +553,11 @@ function renderSessionReport(r) {
       <div class="sr-card"><div class="sr-label">Stale Quotes</div><div class="sr-val">${fmt(r.stale_quote_count)}</div></div>
       <div class="sr-card"><div class="sr-label">Quality</div><div class="sr-val">${r.trading_quality||'--'}</div></div>
       <div class="sr-card"><div class="sr-label">Slippage</div><div class="sr-val">${r.configured_slippage_bp}bp</div></div>
+      <div class="sr-card"><div class="sr-label">Avg Dynamic Slippage</div><div class="sr-val">${fmt(r.avg_dynamic_slippage_bp,1)}bp</div></div>
+      <div class="sr-card"><div class="sr-label">Max Dynamic Slippage</div><div class="sr-val">${fmt(r.max_dynamic_slippage_bp,1)}bp</div></div>
+      <div class="sr-card"><div class="sr-label">Low Depth</div><div class="sr-val">${fmt(r.low_depth_count)}</div></div>
+      <div class="sr-card"><div class="sr-label">Simulated Fill Latency</div><div class="sr-val">${fmt(r.avg_latency_used_ms)}ms</div></div>
+      <div class="sr-card"><div class="sr-label">Paper Edge PASS / FAIL</div><div class="sr-val">${fmt(r.paper_edge_pass_count)} / ${fmt(r.paper_edge_fail_count)}</div></div>
       <div class="sr-card"><div class="sr-label">+5bp Stress</div><div class="sr-val">${fmt(r.slippage_stress_plus_5bp_estimated_pnl)} ₩</div></div>
       <div class="sr-card"><div class="sr-label">+10bp Stress</div><div class="sr-val">${fmt(r.slippage_stress_plus_10bp_estimated_pnl)} ₩</div></div>
       <div class="sr-card"><div class="sr-label">Log Size</div><div class="sr-val">${Number(r.log_total_size_mb||0).toFixed(2)} MB</div></div>
