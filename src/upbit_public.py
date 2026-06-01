@@ -1,6 +1,7 @@
 import requests
 import time
 from exchange_base import ExchangeBase
+from rate_limiter import rate_limiter
 
 
 class UpbitPublic(ExchangeBase):
@@ -16,9 +17,15 @@ class UpbitPublic(ExchangeBase):
         market = f"KRW-{symbol}"
         url = f"{self.base_url}/orderbook?markets={market}"
         try:
+            if not rate_limiter.acquire('upbit'):
+                return None
             t0 = time.time()
             resp = self._session.get(url, timeout=3)
             latency_ms = (time.time() - t0) * 1000
+            if resp.status_code == 429:
+                rate_limiter.record_429('upbit')
+                return None
+            resp.raise_for_status()
             data = resp.json()
             if data and isinstance(data, list):
                 obu = data[0]['orderbook_units'][0]

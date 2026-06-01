@@ -4,6 +4,7 @@ import time
 import requests
 
 from exchange_base import ExchangeBase
+from rate_limiter import rate_limiter
 
 
 class BithumbPublic(ExchangeBase):
@@ -20,11 +21,22 @@ class BithumbPublic(ExchangeBase):
         symbols = list(symbols)
         markets = ','.join(f'KRW-{symbol}' for symbol in symbols)
         try:
+            if not rate_limiter.acquire('bithumb'):
+                return {
+                    symbol: self._unavailable(symbol, 'BITHUMB_RATE_LIMITED')
+                    for symbol in symbols
+                }
             started_at = time.time()
             response = self._session.get(
                 f'{self.BASE_URL}/orderbook', params={'markets': markets}, timeout=3
             )
             latency_ms = (time.time() - started_at) * 1000
+            if response.status_code == 429:
+                rate_limiter.record_429('bithumb')
+                return {
+                    symbol: self._unavailable(symbol, 'BITHUMB_HTTP_429_BACKOFF')
+                    for symbol in symbols
+                }
             response.raise_for_status()
             rows = response.json()
             quotes = {}
@@ -56,7 +68,7 @@ class BithumbPublic(ExchangeBase):
             return {symbol: self._unavailable(symbol) for symbol in symbols}
 
     @staticmethod
-    def _unavailable(symbol: str) -> dict:
+    def _unavailable(symbol: str, blocker='BITHUMB_QUOTE_UNAVAILABLE') -> dict:
         return {
             'symbol': symbol,
             'venue': 'BITHUMB',
@@ -69,5 +81,5 @@ class BithumbPublic(ExchangeBase):
             'latency_ms': 0.0,
             'source': 'rest',
             'ok': False,
-            'blockers': ['BITHUMB_QUOTE_UNAVAILABLE'],
+            'blockers': [blocker],
         }

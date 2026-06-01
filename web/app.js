@@ -32,6 +32,7 @@ let latestStrategy = {};
 let latestStrategyPairs = [];
 let latestScanner = {};
 let latestRuntimeStore = {};
+let latestRateLimit = {};
 let lastSummaryFetchAt = 0;
 
 const durationText = seconds => {
@@ -739,7 +740,7 @@ function renderLongRunTelemetry(t={}) {
   setText('metric-last-decision', t.last_decision_at ? ageText(Date.now()/1000-t.last_decision_at) : '--');
   setText('ws-status', wsOk ? `WS OK ${fmt(summary.ws)}` : 'WS WAITING');
   setClass('ws-status', `source-badge ${wsOk?'ok':'waiting'}`);
-  setText('rest-status', `REST FALLBACK ${fmt(fallback)}`);
+  setText('rest-status', `REST FALLBACK ${fmt(fallback)} / throttle ${fmt(t.rate_limit_throttle_count)}`);
   setClass('rest-status', `source-badge ${fallback?'fallback':'ok'}`);
   setText('stale-status', `STALE ${fmt(stale)}`);
   setClass('stale-status', `source-badge ${stale?'stale':'ok'}`);
@@ -748,20 +749,22 @@ function renderLongRunTelemetry(t={}) {
 
 async function fetchRuntimeServices() {
   try {
-    const [scannerRes, storeRes] = await Promise.all([
+    const [scannerRes, storeRes, rateLimitRes] = await Promise.all([
       fetch('/api/market/scanner'),
       fetch('/api/runtime-store/status'),
+      fetch('/api/rate-limit/status'),
     ]);
-    if (!scannerRes.ok || !storeRes.ok) return;
+    if (!scannerRes.ok || !storeRes.ok || !rateLimitRes.ok) return;
     latestScanner = await scannerRes.json();
     latestRuntimeStore = await storeRes.json();
-    renderRuntimeServices(latestScanner, latestRuntimeStore);
+    latestRateLimit = await rateLimitRes.json();
+    renderRuntimeServices(latestScanner, latestRuntimeStore, latestRateLimit);
   } catch (error) {
     console.error('[runtime services] failed', error);
   }
 }
 
-function renderRuntimeServices(scanner={}, store={}) {
+function renderRuntimeServices(scanner={}, store={}, rateLimit={}) {
   const symbols = scanner.active_symbols||[];
   setText('scanner-active-count', fmt(symbols.length));
   setText('scanner-source', scanner.source||'--');
@@ -770,6 +773,21 @@ function renderRuntimeServices(scanner={}, store={}) {
   setText('runtime-store-writes', fmt(store.snapshot_write_count));
   setText('runtime-store-fails', fmt(store.snapshot_fail_count));
   setText('runtime-store-age', store.snapshot_age_sec==null ? '--' : ageText(store.snapshot_age_sec));
+  let rateLimitEl = document.getElementById('rate-limit-status');
+  if (!rateLimitEl) {
+    const anchor = document.getElementById('scanner-active-symbols');
+    if (anchor?.parentElement) {
+      rateLimitEl = document.createElement('div');
+      rateLimitEl.id = 'rate-limit-status';
+      rateLimitEl.className = 'active-symbol-list';
+      anchor.parentElement.append(rateLimitEl);
+    }
+  }
+  if (rateLimitEl) {
+    const status=rateLimit.rate_limit||{}, exchanges=status.exchanges||{};
+    const backoff=Object.entries(exchanges).filter(([,item])=>item.backoff_active).map(([name])=>name.toUpperCase());
+    rateLimitEl.textContent = `Rate Limit: ${status.enabled?'ENABLED':'DISABLED'} | throttle ${fmt(status.total_throttle_count)} | 429 ${fmt(status.total_api_429_count)} | backoff ${backoff.join(', ')||'none'} | REST fallback ${fmt(rateLimit.rest_fallback_count)} | skipped ${fmt(rateLimit.rest_fallback_skip_count)}`;
+  }
 }
 
 async function fetchIcebergStatus() {

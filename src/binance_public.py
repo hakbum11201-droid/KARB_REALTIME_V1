@@ -1,6 +1,7 @@
 import requests
 import time
 from exchange_base import ExchangeBase
+from rate_limiter import rate_limiter
 
 
 class BinancePublic(ExchangeBase):
@@ -16,9 +17,15 @@ class BinancePublic(ExchangeBase):
         market = f"{symbol}USDT"
         url = f"{self.base_url}/ticker/bookTicker?symbol={market}"
         try:
+            if not rate_limiter.acquire('binance'):
+                return None
             t0 = time.time()
             resp = self._session.get(url, timeout=3)
             latency_ms = (time.time() - t0) * 1000
+            if resp.status_code == 429:
+                rate_limiter.record_429('binance')
+                return None
+            resp.raise_for_status()
             data = resp.json()
             if 'bidPrice' in data:
                 return {

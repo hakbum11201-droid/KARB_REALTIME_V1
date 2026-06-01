@@ -26,6 +26,7 @@ from strategy_selector import StrategySelector
 from runtime_store import RuntimeStore
 from market_scanner import MarketScanner
 from paper_fill_simulator import simulate_paper_fill
+from rate_limiter import rate_limiter
 
 
 def _decision_record(calc_res, reason, is_safe, quote_source, quote_age_ms):
@@ -200,6 +201,9 @@ def main():
     paper_latency_list: deque[float] = deque(maxlen=1000)
     liquidity_class_counts: dict[str, int] = {}
     paper_edge_counts = {'PAPER_EDGE_PASS': 0, 'PAPER_EDGE_FAIL': 0}
+    last_percentile_calc = 0.0
+    cached_p95_loop_latency_ms = 0.0
+    cached_p95_quote_latency_ms = 0.0
 
     while True:
         loop_start = time.time()
@@ -448,6 +452,10 @@ def main():
 
         # ── --until-stop 콘솔 요약 (간격별) ───────────────────────────────
         now = time.time()
+        if now - last_percentile_calc >= cfg.telemetry_percentile_interval_sec:
+            cached_p95_loop_latency_ms = _percentile(loop_lat_list, 95)
+            cached_p95_quote_latency_ms = _percentile(quote_lat_list, 95)
+            last_percentile_calc = now
         ws_metrics = ws_market_data.metrics() if ws_market_data else {
             'ws_connected': False,
             'ws_symbols_ok': 0,
@@ -463,6 +471,7 @@ def main():
                 'stale': float(q.get('quote_age_sec', 0) or 0) * 1000 > cfg.stale_quote_ms,
             } for sym, q in quotes.items()],
         }
+        rate_limit_status = ws_metrics.get('rate_limit_status') or rate_limiter.get_status()
         top_symbol_by_signal = max(signal_counts, key=signal_counts.get) if signal_counts else ''
         top_symbol_by_surplus = max(symbol_surplus_max, key=symbol_surplus_max.get) if symbol_surplus_max else ''
         runtime_metrics = {
@@ -470,8 +479,8 @@ def main():
             'loop_count':           total_loops,
             'quote_count':          quote_count,
             'last_loop_latency_ms': round(loop_ms, 2),
-            'p95_loop_latency_ms':  _percentile(loop_lat_list, 95),
-            'p95_quote_latency_ms': _percentile(quote_lat_list, 95),
+            'p95_loop_latency_ms':  cached_p95_loop_latency_ms,
+            'p95_quote_latency_ms': cached_p95_quote_latency_ms,
             'last_quote_age_sec':   round(max(0.0, now - last_quote_at), 2) if last_quote_at else None,
             'updated_at':           now,
             'last_update_at':       now,
@@ -485,6 +494,10 @@ def main():
             'ws_connected':         ws_metrics.get('ws_connected', False),
             'ws_symbols_ok':        ws_metrics.get('ws_symbols_ok', 0),
             'rest_fallback_count':  ws_metrics.get('rest_fallback_count', 0),
+            'rest_fallback_skip_count': ws_metrics.get('rest_fallback_skip_count', 0),
+            'rate_limit_throttle_count': rate_limit_status.get('total_throttle_count', 0),
+            'api_429_count':        rate_limit_status.get('total_api_429_count', 0),
+            'rate_limit_status':    rate_limit_status,
             'quote_stale_count':    ws_metrics.get('quote_stale_count', 0),
             'symbol_quote_status':  ws_metrics.get('symbols', []),
             'decision_count':       sum(reason_counts.values()),

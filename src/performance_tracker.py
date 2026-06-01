@@ -118,6 +118,9 @@ class PerformanceTracker:
             'paper_edge_pass_count': self._runtime_metrics.get('paper_edge_pass_count', 0),
             'paper_edge_fail_count': self._runtime_metrics.get('paper_edge_fail_count', 0),
             'avg_latency_used_ms': self._runtime_metrics.get('avg_latency_used_ms', 0.0),
+            'rest_fallback_skip_count': self._runtime_metrics.get('rest_fallback_skip_count', 0),
+            'rate_limit_throttle_count': self._runtime_metrics.get('rate_limit_throttle_count', 0),
+            'api_429_count': self._runtime_metrics.get('api_429_count', 0),
             'updated_at':          time.time(),
             **self._runtime_metrics,
         }

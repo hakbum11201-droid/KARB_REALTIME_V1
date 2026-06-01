@@ -34,6 +34,7 @@ from executors import TinyLiveExecutor, create_preflight_plan, get_inventory_sum
 from venue_pair import venue_pair_payload
 from bithumb_private import BithumbPrivateClient
 from iceberg_planner import IcebergPlanner
+from rate_limiter import rate_limiter
 
 tiny_live_executor = TinyLiveExecutor()
 
@@ -148,6 +149,17 @@ def _tiny_live_status_payload():
 def _telemetry_payload():
     telemetry = _read_json(os.path.join(RUNTIME_DIR, 'telemetry.json'))
     return {'ok': True, 'error': '', 'blockers': [], 'telemetry': telemetry}
+
+
+def _rate_limit_status_payload():
+    telemetry = _read_json(os.path.join(RUNTIME_DIR, 'telemetry.json'))
+    status = telemetry.get('rate_limit_status') or rate_limiter.get_status()
+    return {
+        'ok': True, 'error': '', 'blockers': [],
+        'rate_limit': status,
+        'rest_fallback_count': telemetry.get('rest_fallback_count', 0),
+        'rest_fallback_skip_count': telemetry.get('rest_fallback_skip_count', 0),
+    }
 
 
 def _decisions_payload():
@@ -339,6 +351,9 @@ class KarbHandler(SimpleHTTPRequestHandler):
 
         elif self.path == '/api/telemetry':
             self._send_guarded_json(_telemetry_payload)
+
+        elif self.path == '/api/rate-limit/status':
+            self._send_guarded_json(_rate_limit_status_payload)
 
         elif self.path == '/api/decisions/recent':
             self._send_guarded_json(_decisions_payload)

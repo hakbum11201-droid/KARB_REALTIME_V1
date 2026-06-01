@@ -6,6 +6,8 @@ import time
 import websocket
 
 from orderbook_cache import OrderbookCache
+from config import cfg
+from rate_limiter import rate_limiter
 
 
 class WebSocketMarketData:
@@ -20,6 +22,8 @@ class WebSocketMarketData:
         self._threads = []
         self._connected = {'upbit': False, 'binance': False}
         self._lock = threading.Lock()
+        self._last_rest_fallback_at = 0.0
+        self._rest_fallback_skip_count = 0
 
     def start(self):
         if self._threads:
@@ -40,6 +44,15 @@ class WebSocketMarketData:
             return quotes
         if not self.rest_fallback_enabled or rest_quote_engine is None:
             return quotes
+        now = time.time()
+        min_interval_sec = float(cfg.rest_fallback_min_interval_ms) / 1000
+        if now - self._last_rest_fallback_at < min_interval_sec:
+            self._rest_fallback_skip_count += 1
+            return quotes
+        if rate_limiter.should_backoff('upbit') or rate_limiter.should_backoff('binance'):
+            self._rest_fallback_skip_count += 1
+            return quotes
+        self._last_rest_fallback_at = now
         fallback = rest_quote_engine.fetch_all()
         self.cache.record_rest_fallback(1)
         for symbol, quote in fallback.items():
@@ -53,6 +66,11 @@ class WebSocketMarketData:
             connected = dict(self._connected)
         metrics['ws_connected'] = all(connected.values())
         metrics['ws_connections'] = connected
+        rate_status = rate_limiter.get_status()
+        metrics['rest_fallback_skip_count'] = self._rest_fallback_skip_count
+        metrics['rate_limit_throttle_count'] = rate_status['total_throttle_count']
+        metrics['api_429_count'] = rate_status['total_api_429_count']
+        metrics['rate_limit_status'] = rate_status
         return metrics
 
     def _run_forever(self, exchange, url, on_open, on_message):

@@ -60,6 +60,20 @@ class Config:
     @property
     def rest_fallback_enabled(self): return self.get('rest_fallback_enabled', True)
     @property
+    def rate_limiter_enabled(self): return self.get('rate_limiter_enabled', True)
+    @property
+    def rate_limit_upbit_per_sec(self): return self.get('rate_limit_upbit_per_sec', 8)
+    @property
+    def rate_limit_bithumb_per_sec(self): return self.get('rate_limit_bithumb_per_sec', 8)
+    @property
+    def rate_limit_binance_per_sec(self): return self.get('rate_limit_binance_per_sec', 10)
+    @property
+    def rate_limit_burst(self): return self.get('rate_limit_burst', 5)
+    @property
+    def rate_limit_429_backoff_sec(self): return self.get('rate_limit_429_backoff_sec', 10)
+    @property
+    def rest_fallback_min_interval_ms(self): return self.get('rest_fallback_min_interval_ms', 500)
+    @property
     def block_new_entries_on_partial_risk(self): return self.get('block_new_entries_on_partial_risk', True)
     @property
     def order_ttl_sec(self): return self.get('order_ttl_sec', 1.5)
@@ -233,6 +247,8 @@ class Config:
     def decision_log_max_items(self): return self.get('decision_log_max_items', 100)
     @property
     def telemetry_write_interval_sec(self): return self.get('telemetry_write_interval_sec', 5)
+    @property
+    def telemetry_percentile_interval_sec(self): return self.get('telemetry_percentile_interval_sec', 5)
     @property
     def session_summary_interval_sec(self): return self.get('session_summary_interval_sec', 3600)
     @property

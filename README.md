@@ -223,3 +223,11 @@ API keys alone never enable an order. If `PARTIAL_RISK` appears, stop new entrie
 - `UPBIT_BITHUMB_A` requires Upbit coin and Bithumb KRW. `UPBIT_BITHUMB_B` requires Bithumb coin and Upbit KRW.
 - Opportunities expose `direction_a_required_assets`, `direction_b_required_assets`, and `selected_required_assets`. Inventory checks prefer `selected_required_assets` and fall back to legacy fields only when needed.
 - This correction does not change order execution, live-order gates, withdrawal policy, or risk thresholds.
+
+## REST fallback load guards
+
+- Public Upbit, Binance, and Bithumb REST quote requests pass through a shared token-bucket rate limiter.
+- HTTP `429` responses trigger a bounded backoff. WebSocket REST fallback also has a minimum interval and skips retries while an exchange is backing off.
+- Dashboard telemetry shows throttle count, `429` count, active backoff exchanges, REST fallback count, and skipped fallback count.
+- Loop and quote P95 percentiles are refreshed on a configured interval instead of sorting samples every loop.
+- This monitoring change does not modify order execution, live-order gates, withdrawal policy, or risk thresholds.
