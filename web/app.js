@@ -398,7 +398,10 @@ function renderOpportunityCard(row) {
     <div class="qc-metrics">
       <span class="qc-metric">${quoteSource} ${quoteAge.toFixed(2)}s</span><span class="qc-metric">${stale?'STALE':'FRESH'}</span>
       <span class="qc-metric">${domestic?'FX 없음':`FX ${fmt(row.krw_usdt,1)} KRW/USDT`}</span><span class="qc-metric">Net Surplus ${surplus.toFixed(1)} bp</span>
-      <span class="qc-metric">Net ${fmt(net)} KRW</span><span class="qc-metric">Qty ${Number(row.max_fillable_qty||0).toFixed(4)}</span>
+      <span class="qc-metric">Net ${fmt(net)} KRW</span><span class="qc-metric">Order KRW ${fmt(row.order_krw_used)}</span>
+      <span class="qc-metric">Effective Qty ${Number((row.effective_qty??row.selected_qty??row.max_fillable_qty)||0).toFixed(4)}</span>
+      <span class="qc-metric">Raw Depth Qty ${Number((row.max_fillable_qty_raw??row.max_fillable_qty)||0).toFixed(4)}</span>
+      <span class="qc-metric">Selected Notional ${fmt(row.selected_notional_krw)} KRW</span>
       <span class="qc-metric">Dynamic Slippage ${fmt(row.dynamic_slippage_bp,1)} bp</span><span class="qc-metric">Liquidity ${esc(row.liquidity_class||'--')}</span>
     </div>
     <div class="qc-verdict"><span class="verdict-badge ${isGo?'go-badge':'nogo-badge'}">${isGo?'GO':'NO-GO'}</span><span class="qc-reason ${reasonClass}">${esc(reason||'--')}</span></div>
@@ -919,7 +922,9 @@ function renderExecutionPlan(plan={}) {
   const fields = [
     ['Plan ID', plan.plan_id], ['Pair', plan.pair_id], ['Symbol', plan.symbol], ['Direction', plan.direction],
     ['Direction Label', plan.direction_label], [`${leftVenue} Side`, leftSide],
-    [`${rightVenue} Side`, rightSide], ['Order KRW', `${fmt(plan.order_krw)} KRW`],
+    [`${rightVenue} Side`, rightSide], ['Order KRW', `${fmt(plan.order_krw_used??plan.order_krw)} KRW`],
+    ['Effective Qty', fmt(plan.effective_qty??plan.selected_qty??plan.qty,8)],
+    ['Raw Depth Qty', fmt(plan.max_fillable_qty_raw,8)], ['Selected Notional', `${fmt(plan.selected_notional_krw)} KRW`],
     ['Order USDT', `${fmt(plan.order_usdt,4)} USDT`], ['Qty', fmt(plan.qty,8)],
     ['Normalized Qty', fmt(plan.normalized_qty,8)], [`${leftVenue} Expected`, fmt(leftExpected,2)],
     [`${rightVenue} Expected`, fmt(rightExpected,8)], ['Quote Source', plan.quote_source||'--'],

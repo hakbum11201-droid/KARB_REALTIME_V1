@@ -30,8 +30,14 @@ def simulate_paper_fill(plan, quote_history, cfg):
     total_slippage = min(float(cfg.max_dynamic_slippage_bp), dynamic_bp + stress_bp)
     base_price = _snapshot_fill_price(plan, snapshot) or float(plan.get('fill_price_estimate', 0) or 0)
     fill_price = base_price * (1 + total_slippage / 10000) if base_price else 0.0
-    fill_qty = float(plan.get('max_fillable_qty', 0) or 0)
-    order_krw = min(float(cfg.max_one_trade_krw), fill_qty * fill_price) if fill_price else 0.0
+    fill_qty = float(
+        plan.get('selected_qty', plan.get('effective_qty', plan.get('max_fillable_qty', 0))) or 0
+    )
+    fill_notional_krw = float(plan.get('selected_notional_krw', 0) or 0)
+    if fill_notional_krw <= 0 and fill_price:
+        fill_notional_krw = fill_qty * fill_price
+    if fill_notional_krw <= 0:
+        fill_notional_krw = float(plan.get('order_krw_used', cfg.max_one_trade_krw) or 0)
     fee_bp = cfg.upbit_fee_bp + (
         cfg.bithumb_fee_bp if plan.get('pair_id') == 'UPBIT_BITHUMB' else cfg.binance_fee_bp
     )
@@ -43,7 +49,8 @@ def simulate_paper_fill(plan, quote_history, cfg):
     return {
         'fill_price': round(fill_price, 12),
         'fill_qty': fill_qty,
-        'fee_estimate': round(order_krw * fee_bp / 10000, 2),
+        'fill_notional_krw': round(fill_notional_krw, 2),
+        'fee_estimate': round(fill_notional_krw * fee_bp / 10000, 2),
         'slippage_estimate_bp': round(total_slippage, 4),
         'latency_used_ms': latency_ms,
         'fill_quality': 'PAPER_EDGE_PASS' if edge_pass else 'PAPER_EDGE_FAIL',

@@ -224,6 +224,13 @@ API keys alone never enable an order. If `PARTIAL_RISK` appears, stop new entrie
 - Opportunities expose `direction_a_required_assets`, `direction_b_required_assets`, and `selected_required_assets`. Inventory checks prefer `selected_required_assets` and fall back to legacy fields only when needed.
 - This correction does not change order execution, live-order gates, withdrawal policy, or risk thresholds.
 
+## Effective order quantity
+
+- `max_fillable_qty_raw` is the raw top-of-book depth limit.
+- `effective_qty` is the final calculation quantity after applying both raw depth and the configured one-order KRW amount.
+- Expected profit, selected notional, and selected required assets use `effective_qty`.
+- Long paper-run opportunity evaluation now reports order-sized quantities. Paper entry/exit wiring is unchanged by this calculation-only update.
+
 ## REST fallback load guards
 
 - Public Upbit, Binance, and Bithumb REST quote requests pass through a shared token-bucket rate limiter.

@@ -4,6 +4,15 @@ from config import cfg
 from slippage_model import estimate_slippage_bp
 
 class ArbCalculator:
+    @staticmethod
+    def _effective_qty(max_fillable_qty_raw, order_krw, buy_price_krw):
+        max_fillable_qty_raw = max(0.0, float(max_fillable_qty_raw or 0))
+        order_krw = max(0.0, float(order_krw or 0))
+        buy_price_krw = float(buy_price_krw or 0)
+        if max_fillable_qty_raw <= 0 or order_krw <= 0 or buy_price_krw <= 0:
+            return 0.0
+        return min(max_fillable_qty_raw, order_krw / buy_price_krw)
+
     def calculate(self, symbol, upbit_quote, binance_quote, krw_usdt):
         u_bid = upbit_quote['bid']
         u_ask = upbit_quote['ask']
@@ -13,9 +22,10 @@ class ArbCalculator:
         # ----------------------------------------------------------------
         # 비용 총합 (bp) - 양방향 공통
         # ----------------------------------------------------------------
-        slippage_a = self._combined_slippage(
+        order_krw = float(cfg.max_one_trade_krw)
+        slippage_a = self._combined_slippage(order_krw,
             (upbit_quote, 'SELL'), (binance_quote, 'BUY'))
-        slippage_b = self._combined_slippage(
+        slippage_b = self._combined_slippage(order_krw,
             (upbit_quote, 'BUY'), (binance_quote, 'SELL'))
         total_cost_a_bp = (
             cfg.upbit_fee_bp
@@ -37,10 +47,11 @@ class ArbCalculator:
         direction_a_net_surplus_bp = surplus_a_raw_bp - total_cost_a_bp
 
         max_qty_a = min(upbit_quote['bid_size'], binance_quote['ask_size'])
-        direction_a_gross_gap_krw = max_qty_a * (u_bid - b_ask * krw_usdt)
+        effective_qty_a = self._effective_qty(max_qty_a, order_krw, b_ask * krw_usdt)
+        direction_a_gross_gap_krw = effective_qty_a * (u_bid - b_ask * krw_usdt)
         direction_a_net_expected_profit_krw = max(
             0.0,
-            max_qty_a * (b_ask * krw_usdt) * (direction_a_net_surplus_bp / 10000)
+            effective_qty_a * (b_ask * krw_usdt) * (direction_a_net_surplus_bp / 10000)
         )
 
         # ----------------------------------------------------------------
@@ -52,24 +63,25 @@ class ArbCalculator:
         direction_b_net_surplus_bp = surplus_b_raw_bp - total_cost_b_bp
 
         max_qty_b = min(upbit_quote['ask_size'], binance_quote['bid_size'])
-        direction_b_gross_gap_krw = max_qty_b * (b_bid * krw_usdt - u_ask)
+        effective_qty_b = self._effective_qty(max_qty_b, order_krw, u_ask)
+        direction_b_gross_gap_krw = effective_qty_b * (b_bid * krw_usdt - u_ask)
         direction_b_net_expected_profit_krw = max(
             0.0,
-            max_qty_b * u_ask * (direction_b_net_surplus_bp / 10000)
+            effective_qty_b * u_ask * (direction_b_net_surplus_bp / 10000)
         )
         direction_a_required_assets = {
-            'upbit_coin_qty': max_qty_a,
-            'binance_usdt': max_qty_a * b_ask,
+            'upbit_coin_qty': effective_qty_a,
+            'binance_usdt': effective_qty_a * b_ask,
             'upbit_krw': 0.0,
             'binance_coin_qty': 0.0,
-            'notional_krw': max_qty_a * b_ask * krw_usdt,
+            'notional_krw': effective_qty_a * b_ask * krw_usdt,
         }
         direction_b_required_assets = {
-            'upbit_krw': max_qty_b * u_ask,
-            'binance_coin_qty': max_qty_b,
+            'upbit_krw': effective_qty_b * u_ask,
+            'binance_coin_qty': effective_qty_b,
             'upbit_coin_qty': 0.0,
             'binance_usdt': 0.0,
-            'notional_krw': max_qty_b * u_ask,
+            'notional_krw': effective_qty_b * u_ask,
         }
 
         # ----------------------------------------------------------------
@@ -80,7 +92,8 @@ class ArbCalculator:
             best_net_surplus_bp = direction_a_net_surplus_bp
             net_expected_profit_krw = direction_a_net_expected_profit_krw
             gross_gap_krw = direction_a_gross_gap_krw
-            max_fillable_qty = max_qty_a
+            max_fillable_qty_raw = max_qty_a
+            effective_qty = effective_qty_a
             slippage = slippage_a
             selected_required_assets = direction_a_required_assets
             selected_buy_price_krw = b_ask * krw_usdt
@@ -91,7 +104,8 @@ class ArbCalculator:
             best_net_surplus_bp = direction_b_net_surplus_bp
             net_expected_profit_krw = direction_b_net_expected_profit_krw
             gross_gap_krw = direction_b_gross_gap_krw
-            max_fillable_qty = max_qty_b
+            max_fillable_qty_raw = max_qty_b
+            effective_qty = effective_qty_b
             slippage = slippage_b
             selected_required_assets = direction_b_required_assets
             selected_buy_price_krw = u_ask
@@ -126,12 +140,15 @@ class ArbCalculator:
             'best_net_surplus_bp': best_net_surplus_bp,
             'net_expected_profit_krw': net_expected_profit_krw,
             'gross_gap_krw': gross_gap_krw,
-            'max_fillable_qty': max_fillable_qty,
+            'max_fillable_qty': effective_qty,
+            'max_fillable_qty_raw': max_fillable_qty_raw,
+            'effective_qty': effective_qty,
+            'order_krw_used': order_krw,
             'direction_a_required_assets': direction_a_required_assets,
             'direction_b_required_assets': direction_b_required_assets,
             'selected_required_assets': selected_required_assets,
             'selected_notional_krw': selected_required_assets['notional_krw'],
-            'selected_qty': max_fillable_qty,
+            'selected_qty': effective_qty,
             'selected_buy_price_krw': selected_buy_price_krw,
             'selected_sell_price_krw': selected_sell_price_krw,
             'notional_basis': notional_basis,
@@ -156,9 +173,10 @@ class ArbCalculator:
 
         u_bid, u_ask = float(upbit_quote['bid']), float(upbit_quote['ask'])
         h_bid, h_ask = float(bithumb_quote['bid']), float(bithumb_quote['ask'])
-        slippage_a = self._combined_slippage(
+        order_krw = float(cfg.upbit_bithumb_order_krw or cfg.max_one_trade_krw)
+        slippage_a = self._combined_slippage(order_krw,
             (upbit_quote, 'SELL'), (bithumb_quote, 'BUY'))
-        slippage_b = self._combined_slippage(
+        slippage_b = self._combined_slippage(order_krw,
             (upbit_quote, 'BUY'), (bithumb_quote, 'SELL'))
         total_cost_a_bp = cfg.upbit_fee_bp + cfg.bithumb_fee_bp + slippage_a['dynamic_slippage_bp'] + cfg.risk_buffer_bp
         total_cost_b_bp = cfg.upbit_fee_bp + cfg.bithumb_fee_bp + slippage_b['dynamic_slippage_bp'] + cfg.risk_buffer_bp
@@ -169,25 +187,28 @@ class ArbCalculator:
         direction_b_net_surplus_bp = surplus_b_raw_bp - total_cost_b_bp
         max_qty_a = min(float(upbit_quote['bid_size']), float(bithumb_quote['ask_size']))
         max_qty_b = min(float(bithumb_quote['bid_size']), float(upbit_quote['ask_size']))
+        effective_qty_a = self._effective_qty(max_qty_a, order_krw, h_ask)
+        effective_qty_b = self._effective_qty(max_qty_b, order_krw, u_ask)
         direction_a_required_assets = {
-            'upbit_coin_qty': max_qty_a,
-            'bithumb_krw': max_qty_a * h_ask,
+            'upbit_coin_qty': effective_qty_a,
+            'bithumb_krw': effective_qty_a * h_ask,
             'bithumb_coin_qty': 0.0,
             'upbit_krw': 0.0,
-            'notional_krw': max_qty_a * h_ask,
+            'notional_krw': effective_qty_a * h_ask,
         }
         direction_b_required_assets = {
-            'bithumb_coin_qty': max_qty_b,
-            'upbit_krw': max_qty_b * u_ask,
+            'bithumb_coin_qty': effective_qty_b,
+            'upbit_krw': effective_qty_b * u_ask,
             'upbit_coin_qty': 0.0,
             'bithumb_krw': 0.0,
-            'notional_krw': max_qty_b * u_ask,
+            'notional_krw': effective_qty_b * u_ask,
         }
 
         if direction_a_net_surplus_bp >= direction_b_net_surplus_bp:
             best_direction = 'UPBIT_BITHUMB_A'
             best_net_surplus_bp = direction_a_net_surplus_bp
-            max_fillable_qty = max_qty_a
+            max_fillable_qty_raw = max_qty_a
+            effective_qty = effective_qty_a
             reference_price = h_ask
             slippage = slippage_a
             selected_required_assets = direction_a_required_assets
@@ -197,7 +218,8 @@ class ArbCalculator:
         else:
             best_direction = 'UPBIT_BITHUMB_B'
             best_net_surplus_bp = direction_b_net_surplus_bp
-            max_fillable_qty = max_qty_b
+            max_fillable_qty_raw = max_qty_b
+            effective_qty = effective_qty_b
             reference_price = u_ask
             slippage = slippage_b
             selected_required_assets = direction_b_required_assets
@@ -206,7 +228,7 @@ class ArbCalculator:
             notional_basis = 'UPBIT_BUY_KRW_VALUE'
 
         expected_profit_krw = max(
-            0.0, max_fillable_qty * reference_price * best_net_surplus_bp / 10000
+            0.0, effective_qty * reference_price * best_net_surplus_bp / 10000
         )
         result = {
             'pair_id': 'UPBIT_BITHUMB',
@@ -226,12 +248,15 @@ class ArbCalculator:
             'best_direction': best_direction,
             'best_net_surplus_bp': best_net_surplus_bp,
             'net_expected_profit_krw': expected_profit_krw,
-            'max_fillable_qty': max_fillable_qty,
+            'max_fillable_qty': effective_qty,
+            'max_fillable_qty_raw': max_fillable_qty_raw,
+            'effective_qty': effective_qty,
+            'order_krw_used': order_krw,
             'direction_a_required_assets': direction_a_required_assets,
             'direction_b_required_assets': direction_b_required_assets,
             'selected_required_assets': selected_required_assets,
             'selected_notional_krw': selected_required_assets['notional_krw'],
-            'selected_qty': max_fillable_qty,
+            'selected_qty': effective_qty,
             'selected_buy_price_krw': selected_buy_price_krw,
             'selected_sell_price_krw': selected_sell_price_krw,
             'notional_basis': notional_basis,
@@ -245,7 +270,7 @@ class ArbCalculator:
         return result
 
     @staticmethod
-    def _combined_slippage(*legs):
+    def _combined_slippage(order_krw, *legs):
         if not cfg.use_dynamic_slippage:
             return {
                 'dynamic_slippage_bp': float(cfg.slippage_bp),
@@ -255,7 +280,7 @@ class ArbCalculator:
                 'model_used': 'fixed',
             }
         estimates = [
-            estimate_slippage_bp(book, side, cfg.max_one_trade_krw, cfg.base_slippage_bp)
+            estimate_slippage_bp(book, side, order_krw, cfg.base_slippage_bp)
             for book, side in legs
         ]
         worst = max(estimates, key=lambda item: item['dynamic_slippage_bp'])
@@ -285,8 +310,8 @@ class ArbCalculator:
                 return 'QUOTE_UNAVAILABLE'
             if (ask - bid) / bid * 10000 > cfg.max_spread_bp:
                 return 'WIDE_SPREAD'
-        target_qty = cfg.max_one_trade_krw / result['upbit_ask']
-        if result['max_fillable_qty'] < target_qty / cfg.min_depth_multiplier:
+        target_qty = result['order_krw_used'] / result['selected_buy_price_krw']
+        if result['effective_qty'] <= 0 or result['max_fillable_qty_raw'] < target_qty / cfg.min_depth_multiplier:
             return 'LOW_DEPTH'
         if result['best_net_surplus_bp'] < cfg.min_net_surplus_bp:
             return 'LOW_SURPLUS'

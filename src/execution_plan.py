@@ -52,6 +52,9 @@ class ExecutionPlan:
     expected_net_profit_krw: float = 0
     best_net_surplus_bp: float = 0
     selected_required_assets: dict = field(default_factory=dict)
+    order_krw_used: float = 0
+    effective_qty: float = 0
+    max_fillable_qty_raw: float = 0
     selected_notional_krw: float = 0
     selected_qty: float = 0
     selected_buy_price_krw: float = 0

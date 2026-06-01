@@ -115,7 +115,8 @@ def _with_plan_quote_source(payload):
         quotes = _read_json(os.path.join(RUNTIME_DIR, 'latest_quotes.json'))
         calc = quotes.get(plan.get('symbol'), {}).get('calc', {})
     for key in (
-        'selected_required_assets', 'selected_notional_krw', 'selected_qty',
+        'selected_required_assets', 'order_krw_used', 'effective_qty',
+        'max_fillable_qty_raw', 'selected_notional_krw', 'selected_qty',
         'selected_buy_price_krw', 'selected_sell_price_krw', 'notional_basis',
     ):
         if key in calc:
