@@ -156,7 +156,11 @@ class Config:
     @property
     def bithumb_quote_cache_refresh_ms(self): return self.get('bithumb_quote_cache_refresh_ms', 700)
     @property
-    def bithumb_quote_cache_stale_ms(self): return self.get('bithumb_quote_cache_stale_ms', 3000)
+    def bithumb_quote_cache_stale_ms(self): return self.get('bithumb_quote_cache_stale_ms', 5000)
+    @property
+    def bithumb_quote_cache_grace_ms(self): return self.get('bithumb_quote_cache_grace_ms', 3000)
+    @property
+    def bithumb_quote_cache_allow_last_good_on_stale(self): return self.get('bithumb_quote_cache_allow_last_good_on_stale', True)
     @property
     def bithumb_quote_cache_max_failures(self): return self.get('bithumb_quote_cache_max_failures', 10)
     @property

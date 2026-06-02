@@ -234,15 +234,20 @@ def _bithumb_status_payload():
 
 def _bithumb_cache_status_payload():
     telemetry = _read_json(os.path.join(RUNTIME_DIR, 'telemetry.json'))
+    cache = telemetry.get('bithumb_quote_cache_status', {})
     return {
         'ok': True, 'error': '', 'blockers': [],
-        'cache': telemetry.get('bithumb_quote_cache_status', {}),
+        'cache': cache,
+        'stale_grace_count': cache.get('stale_grace_count', 0),
+        'stale_hard_count': cache.get('stale_hard_count', 0),
+        'last_good_age_ms': cache.get('last_good_age_ms'),
         'skipped_bithumb_symbol_count': telemetry.get('skipped_bithumb_symbol_count', 0),
         'skipped_bithumb_quote_reasons': telemetry.get('skipped_bithumb_quote_reasons', {}),
         'quote_history_key_count': telemetry.get('quote_history_key_count', 0),
         'quote_history_cleanup_count': telemetry.get('quote_history_cleanup_count', 0),
         'skipped_bithumb_symbol_count_last_loop': telemetry.get('skipped_bithumb_symbol_count_last_loop', 0),
         'skipped_bithumb_quote_reasons_last_loop': telemetry.get('skipped_bithumb_quote_reasons_last_loop', {}),
+        'bithumb_stale_grace_used_count': telemetry.get('bithumb_stale_grace_used_count', 0),
     }
 
 

@@ -827,7 +827,7 @@ function renderBithumbCacheStatus(t={}) {
   }
   if (cacheEl) {
     const lastSuccess=cache.last_success_age_ms==null ? '--' : `${fmt(cache.last_success_age_ms)} ms`;
-    cacheEl.textContent=`Bithumb Cache: ${cache.enabled?'ON':'OFF'} | Running ${cache.running?'YES':'NO'} | Stale / Quote ${fmt(cache.stale_count)} / ${fmt(cache.quote_count)} | TS Fallback ${fmt(cache.quote_ts_fallback_count)} | TS Normalized ${fmt(cache.quote_ts_normalized_count)} | Last Success Age ${lastSuccess} | Fail Count ${fmt(cache.fail_count)} | Skipped Bithumb Symbols ${fmt(t.skipped_bithumb_symbol_count)} | Quote History Keys ${fmt(t.quote_history_key_count)}`;
+    cacheEl.textContent=`Bithumb Cache: ${cache.enabled?'ON':'OFF'} | Running ${cache.running?'YES':'NO'} | Stale / Quote ${fmt(cache.stale_count)} / ${fmt(cache.quote_count)} | Grace ${fmt(cache.stale_grace_count)} | Hard Stale ${fmt(cache.stale_hard_count)} | Stale Soft ${fmt(cache.stale_soft_count)} | Last Good Age ${cache.last_good_age_ms==null?'--':`${fmt(cache.last_good_age_ms)} ms`} | TS Fallback ${fmt(cache.quote_ts_fallback_count)} | TS Normalized ${fmt(cache.quote_ts_normalized_count)} | Last Success Age ${lastSuccess} | Fail Count ${fmt(cache.fail_count)} | Grace Used ${fmt(t.bithumb_stale_grace_used_count)} | Skipped Last Loop ${fmt(t.skipped_bithumb_symbol_count_last_loop)} | Skipped Bithumb Symbols ${fmt(t.skipped_bithumb_symbol_count)} | Quote History Keys ${fmt(t.quote_history_key_count)}`;
   }
 }
 

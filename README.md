@@ -315,3 +315,8 @@ For long paper smoke tests, the recommended checks are:
 - `P95Loop` should preferably remain below 100 ms.
 - `p95_quote_age_ms` reports freshness age, while
   `p95_quote_fetch_latency_ms` reports REST fetch latency.
+- Repeated `BithumbStale 20/20` is a smoke-test failure. A temporary
+  `stale_grace_count` is acceptable near a refresh boundary, but continuously
+  increasing `Bithumb Skipped Last Loop` is not.
+- Start observing `P95QuoteAge` above 3000 ms. It remains an optimization target
+  before live use.

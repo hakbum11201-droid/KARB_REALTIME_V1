@@ -71,7 +71,9 @@ upbit_bithumb_max_trades_per_day: 5
 bithumb_min_order_krw: 5000
 bithumb_quote_cache_enabled: true
 bithumb_quote_cache_refresh_ms: 700
-bithumb_quote_cache_stale_ms: 3000
+bithumb_quote_cache_stale_ms: 5000
+bithumb_quote_cache_grace_ms: 3000
+bithumb_quote_cache_allow_last_good_on_stale: true
 bithumb_quote_cache_max_failures: 10
 skip_missing_bithumb_quotes: true
 use_dynamic_symbols: true

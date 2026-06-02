@@ -5,11 +5,16 @@ import time
 
 
 class BithumbQuoteCache:
-    def __init__(self, client, enabled=True, refresh_ms=700, stale_ms=3000, max_failures=10):
+    def __init__(
+        self, client, enabled=True, refresh_ms=700, stale_ms=5000,
+        grace_ms=3000, allow_last_good_on_stale=True, max_failures=10,
+    ):
         self.client = client
         self.enabled = bool(enabled)
         self.refresh_ms = max(50, int(refresh_ms))
         self.stale_ms = max(1, int(stale_ms))
+        self.grace_ms = max(0, int(grace_ms))
+        self.allow_last_good_on_stale = bool(allow_last_good_on_stale)
         self.max_failures = max(1, int(max_failures))
         self._lock = threading.RLock()
         self._stop_event = threading.Event()
@@ -56,27 +61,45 @@ class BithumbQuoteCache:
         now = time.time()
         with self._lock:
             snapshot = copy.deepcopy(self._quotes)
+            last_success_at = self._last_success_at
+        last_good_age_ms = max(0.0, now - last_success_at) * 1000 if last_success_at else None
         for quote in snapshot.values():
             ts = float(quote.get('ts', quote.get('timestamp', 0)) or 0)
-            quote['stale'] = not ts or (now - ts) * 1000 > self.stale_ms
+            quote_age_ms = max(0.0, now - ts) * 1000 if ts else None
+            soft_stale = quote_age_ms is None or quote_age_ms > self.stale_ms
+            stale_grace = bool(
+                soft_stale
+                and self.allow_last_good_on_stale
+                and last_good_age_ms is not None
+                and last_good_age_ms <= self.stale_ms + self.grace_ms
+            )
+            quote['stale'] = bool(soft_stale and not stale_grace)
+            quote['stale_grace'] = stale_grace
         return snapshot
 
     def get_status(self):
         snapshot = self.get_snapshot()
         with self._lock:
+            last_success_age_ms = round(max(0.0, time.time() - self._last_success_at) * 1000, 2) if self._last_success_at else None
+            stale_grace_count = sum(1 for quote in snapshot.values() if quote.get('stale_grace'))
+            stale_hard_count = sum(1 for quote in snapshot.values() if quote.get('stale'))
             return {
                 'enabled': self.enabled,
                 'running': bool(self._thread and self._thread.is_alive()),
                 'symbols': list(self._symbols),
                 'last_update_at': self._last_update_at,
                 'last_success_at': self._last_success_at,
-                'last_success_age_ms': round(max(0.0, time.time() - self._last_success_at) * 1000, 2) if self._last_success_at else None,
+                'last_success_age_ms': last_success_age_ms,
+                'last_good_age_ms': last_success_age_ms,
                 'last_error': self._last_error,
                 'refresh_count': self._refresh_count,
                 'fail_count': self._fail_count,
                 'quote_ts_fallback_count': self._quote_ts_fallback_count,
                 'quote_ts_normalized_count': self._quote_ts_normalized_count,
-                'stale_count': sum(1 for quote in snapshot.values() if quote.get('stale')),
+                'stale_count': stale_hard_count,
+                'stale_grace_count': stale_grace_count,
+                'stale_hard_count': stale_hard_count,
+                'stale_soft_count': stale_grace_count + stale_hard_count,
                 'quote_count': len(snapshot),
             }
 

@@ -243,6 +243,8 @@ def main():
         enabled=cfg.bithumb_public_enabled and cfg.bithumb_quote_cache_enabled,
         refresh_ms=cfg.bithumb_quote_cache_refresh_ms,
         stale_ms=cfg.bithumb_quote_cache_stale_ms,
+        grace_ms=cfg.bithumb_quote_cache_grace_ms,
+        allow_last_good_on_stale=cfg.bithumb_quote_cache_allow_last_good_on_stale,
         max_failures=cfg.bithumb_quote_cache_max_failures,
     )
     bithumb_quote_cache.start(active_symbols)
@@ -331,6 +333,7 @@ def main():
     skipped_bithumb_symbol_count = 0
     skipped_bithumb_quote_reasons: dict[str, int] = {}
     skipped_bithumb_timestamps: deque[float] = deque()
+    bithumb_stale_grace_used_count = 0
     quote_history_cleanup_count = 0
     last_quote_history_cleanup_at = 0.0
     scanner_refresh_thread = None
@@ -572,11 +575,18 @@ def main():
                         skipped_bithumb_quote_reasons_last_loop.get(skip_reason, 0) + 1
                     )
                     continue
+                if bithumb_q.get('stale_grace'):
+                    bithumb_stale_grace_used_count += 1
                 domestic_quotes['UPBIT_BITHUMB'][sym] = {
                     'upbit': q.get('upbit', {}),
                     'bithumb': bithumb_q,
                 }
                 domestic = arb_calc.calculate_domestic_krw(sym, q.get('upbit', {}), bithumb_q)
+                if bithumb_q.get('stale_grace'):
+                    domestic['warnings'] = [
+                        *domestic.get('warnings', []),
+                        'BITHUMB_STALE_GRACE',
+                    ]
                 domestic_history = quote_history.setdefault(
                     f'UPBIT_BITHUMB:{sym}', deque(maxlen=cfg.quote_history_maxlen)
                 )
@@ -772,6 +782,9 @@ def main():
             'paper_edge_fail_count': paper_edge_counts.get('PAPER_EDGE_FAIL', 0),
             'avg_latency_used_ms':  round(sum(paper_latency_list) / len(paper_latency_list), 2) if paper_latency_list else 0.0,
             'bithumb_quote_cache_status': bithumb_quote_cache_status,
+            'bithumb_stale_grace_count': bithumb_quote_cache_status.get('stale_grace_count', 0),
+            'bithumb_stale_hard_count': bithumb_quote_cache_status.get('stale_hard_count', 0),
+            'bithumb_last_good_age_ms': bithumb_quote_cache_status.get('last_good_age_ms'),
             'skipped_bithumb_symbol_count': skipped_bithumb_symbol_count,
             'skipped_bithumb_quote_reasons': skipped_bithumb_quote_reasons,
             'skipped_bithumb_symbol_count_total': skipped_bithumb_symbol_count,
@@ -779,6 +792,7 @@ def main():
             'skipped_bithumb_symbol_count_last_loop': skipped_bithumb_symbol_count_last_loop,
             'skipped_bithumb_quote_reasons_total': skipped_bithumb_quote_reasons,
             'skipped_bithumb_quote_reasons_last_loop': skipped_bithumb_quote_reasons_last_loop,
+            'bithumb_stale_grace_used_count': bithumb_stale_grace_used_count,
             'quote_history_key_count': len(quote_history),
             'quote_history_row_count': quote_history_row_count,
             'quote_history_max_rows_per_key': cfg.quote_history_maxlen,
