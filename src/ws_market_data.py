@@ -24,6 +24,12 @@ class WebSocketMarketData:
         self._lock = threading.Lock()
         self._last_rest_fallback_at = 0.0
         self._rest_fallback_skip_count = 0
+        self._rest_fallback_cache_hit_count = 0
+        self._rest_fallback_cache_miss_count = 0
+        self._rest_fallback_cache_stale_count = 0
+        self._rest_direct_call_count = 0
+        self._rest_fallback_older_than_ws_drop_count = 0
+        self._last_rest_fallback_reason = ''
         self._errors = {
             'upbit': {'last_error': '', 'last_error_at': 0.0, 'reconnect_count': 0, 'error_count': 0, 'last_reconnect_at': 0.0},
             'binance': {'last_error': '', 'last_error_at': 0.0, 'reconnect_count': 0, 'error_count': 0, 'last_reconnect_at': 0.0},
@@ -42,11 +48,17 @@ class WebSocketMarketData:
     def stop(self):
         self._stop.set()
 
-    def fetch_all(self, rest_quote_engine=None) -> dict:
+    def fetch_all(self, rest_quote_engine=None, rest_fallback_cache=None) -> dict:
         quotes = self.cache.snapshot(require_fresh=True)
         if len(quotes) == len(self.symbols):
             return quotes
-        if not self.rest_fallback_enabled or rest_quote_engine is None:
+        if not self.rest_fallback_enabled:
+            return quotes
+        if rest_fallback_cache is not None:
+            return self._merge_rest_cache(quotes, rest_fallback_cache)
+        if rest_quote_engine is None or not cfg.rest_direct_fallback_enabled:
+            self._rest_fallback_cache_miss_count += 1
+            self._last_rest_fallback_reason = 'REST_FALLBACK_CACHE_MISS'
             return quotes
         now = time.time()
         min_interval_sec = float(cfg.rest_fallback_min_interval_ms) / 1000
@@ -57,11 +69,46 @@ class WebSocketMarketData:
             self._rest_fallback_skip_count += 1
             return quotes
         self._last_rest_fallback_at = now
+        self._rest_direct_call_count += 1
         fallback = rest_quote_engine.fetch_all()
         self.cache.record_rest_fallback(1)
         for symbol, quote in fallback.items():
             self.cache.update('upbit', symbol, quote['upbit'], source='rest')
             self.cache.update('binance', symbol, quote['binance'], source='rest')
+        return self.cache.snapshot(require_fresh=True)
+
+    def _merge_rest_cache(self, quotes, rest_fallback_cache):
+        fallback = rest_fallback_cache.get_snapshot()
+        cache_status = rest_fallback_cache.get_status()
+        self._rest_fallback_cache_stale_count = cache_status.get('stale_count', 0)
+        previous = self.cache.snapshot(require_fresh=False)
+        used = 0
+        for symbol in self.symbols:
+            if symbol in quotes:
+                continue
+            rest_quote = fallback.get(symbol)
+            if not rest_quote:
+                self._rest_fallback_cache_miss_count += 1
+                self._last_rest_fallback_reason = 'REST_FALLBACK_CACHE_MISS'
+                continue
+            accepted = False
+            for exchange in ('upbit', 'binance'):
+                rest_leg = rest_quote.get(exchange, {})
+                previous_leg = previous.get(symbol, {}).get(exchange, {})
+                if (
+                    previous_leg.get('source') == 'ws'
+                    and float(previous_leg.get('ts', 0) or 0) > float(rest_leg.get('ts', 0) or 0)
+                ):
+                    self._rest_fallback_older_than_ws_drop_count += 1
+                    continue
+                accepted = self.cache.update(
+                    exchange, symbol, rest_leg, source='rest_cache'
+                ) or accepted
+            if accepted:
+                used += 1
+                self._rest_fallback_cache_hit_count += 1
+        if used:
+            self.cache.record_rest_fallback(used)
         return self.cache.snapshot(require_fresh=True)
 
     def metrics(self):
@@ -87,6 +134,12 @@ class WebSocketMarketData:
         })
         rate_status = rate_limiter.get_status()
         metrics['rest_fallback_skip_count'] = self._rest_fallback_skip_count
+        metrics['rest_fallback_cache_hit_count'] = self._rest_fallback_cache_hit_count
+        metrics['rest_fallback_cache_miss_count'] = self._rest_fallback_cache_miss_count
+        metrics['rest_fallback_cache_stale_count'] = self._rest_fallback_cache_stale_count
+        metrics['rest_direct_call_count'] = self._rest_direct_call_count
+        metrics['rest_fallback_older_than_ws_drop_count'] = self._rest_fallback_older_than_ws_drop_count
+        metrics['last_rest_fallback_reason'] = self._last_rest_fallback_reason
         metrics['rate_limit_throttle_count'] = rate_status['total_throttle_count']
         metrics['api_429_count'] = rate_status['total_api_429_count']
         metrics['rate_limit_status'] = rate_status

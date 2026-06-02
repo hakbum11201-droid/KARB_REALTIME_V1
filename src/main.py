@@ -30,6 +30,7 @@ from market_scanner import MarketScanner
 from paper_fill_simulator import simulate_paper_fill
 from rate_limiter import rate_limiter
 from bithumb_quote_cache import BithumbQuoteCache
+from rest_fallback_cache import RestFallbackQuoteCache
 
 
 def _decision_record(calc_res, reason, is_safe, quote_source, quote_age_ms):
@@ -201,6 +202,15 @@ def main():
     print(f"[KARB] Active symbols: {len(active_symbols)} ({scanner_snapshot.get('source', 'fallback')})")
     fx_oracle    = FxOracle(upbit_pub, binance_pub)
     quote_engine = QuoteEngine(upbit_pub, binance_pub, active_symbols)
+    rest_fallback_cache = RestFallbackQuoteCache(
+        upbit_pub,
+        binance_pub,
+        enabled=cfg.rest_fallback_cache_enabled,
+        refresh_ms=cfg.rest_fallback_cache_refresh_ms,
+        stale_ms=cfg.rest_fallback_cache_stale_ms,
+        skip_on_backoff=cfg.rest_fallback_cache_skip_on_backoff,
+    )
+    rest_fallback_cache.start(active_symbols)
     bithumb_quote_cache = BithumbQuoteCache(
         bithumb_pub,
         enabled=cfg.bithumb_public_enabled and cfg.bithumb_quote_cache_enabled,
@@ -320,6 +330,7 @@ def main():
                     ws_market_data.stop()
                 active_symbols = next_symbols
                 bithumb_quote_cache.update_symbols(active_symbols)
+                rest_fallback_cache.update_symbols(active_symbols)
                 removed_history_keys = _cleanup_quote_history(quote_history, active_symbols)
                 if removed_history_keys:
                     quote_history_cleanup_count += removed_history_keys
@@ -372,8 +383,16 @@ def main():
         # ── 호가 수집 ────────────────────────────────────────────────────
         try:
             quotes = (
-                ws_market_data.fetch_all(quote_engine)
-                if ws_market_data else quote_engine.fetch_all()
+                ws_market_data.fetch_all(
+                    quote_engine if cfg.rest_direct_fallback_enabled else None,
+                    rest_fallback_cache=rest_fallback_cache if cfg.rest_fallback_cache_enabled else None,
+                )
+                if ws_market_data
+                else rest_fallback_cache.get_snapshot()
+                if cfg.rest_fallback_cache_enabled
+                else quote_engine.fetch_all()
+                if cfg.rest_direct_fallback_enabled
+                else {}
             )
         except Exception as e:
             event_logger.log_error('quote_engine', e)
@@ -621,6 +640,7 @@ def main():
         }
         rate_limit_status = ws_metrics.get('rate_limit_status') or rate_limiter.get_status()
         bithumb_quote_cache_status = bithumb_quote_cache.get_status()
+        rest_fallback_cache_status = rest_fallback_cache.get_status()
         quote_history_row_count = sum(len(rows) for rows in quote_history.values())
         memory_telemetry = _memory_telemetry(cfg.memory_telemetry_enabled)
         top_symbol_by_signal = max(signal_counts, key=signal_counts.get) if signal_counts else ''
@@ -646,6 +666,12 @@ def main():
             'ws_symbols_ok':        ws_metrics.get('ws_symbols_ok', 0),
             'rest_fallback_count':  ws_metrics.get('rest_fallback_count', 0),
             'rest_fallback_skip_count': ws_metrics.get('rest_fallback_skip_count', 0),
+            'rest_fallback_cache_status': rest_fallback_cache_status,
+            'rest_fallback_cache_hit_count': ws_metrics.get('rest_fallback_cache_hit_count', 0),
+            'rest_fallback_cache_miss_count': ws_metrics.get('rest_fallback_cache_miss_count', 0),
+            'rest_fallback_cache_stale_count': ws_metrics.get('rest_fallback_cache_stale_count', 0),
+            'rest_direct_call_count': ws_metrics.get('rest_direct_call_count', 0),
+            'rest_fallback_older_than_ws_drop_count': ws_metrics.get('rest_fallback_older_than_ws_drop_count', 0),
             'rate_limit_throttle_count': rate_limit_status.get('total_throttle_count', 0),
             'api_429_count':        rate_limit_status.get('total_api_429_count', 0),
             'rate_limit_status':    rate_limit_status,
@@ -777,10 +803,12 @@ def main():
     ended_at = time.time()
     if ws_market_data:
         ws_market_data.stop()
+    rest_fallback_cache.stop()
     bithumb_quote_cache.stop()
     final_runtime_metrics = runtime_store.get_state('telemetry', {})
     if isinstance(final_runtime_metrics, dict):
         final_runtime_metrics['bithumb_quote_cache_status'] = bithumb_quote_cache.get_status()
+        final_runtime_metrics['rest_fallback_cache_status'] = rest_fallback_cache.get_status()
         runtime_store.set_state('telemetry', final_runtime_metrics)
         if not cfg.runtime_store_enabled:
             _write_json(telemetry_path, final_runtime_metrics)

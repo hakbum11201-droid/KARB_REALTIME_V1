@@ -286,3 +286,11 @@ API keys alone never enable an order. If `PARTIAL_RISK` appears, stop new entrie
 - A preview can show either `COMPLETE_MISSING_LEG` or `REVERT_FILLED_LEG`, exposure, failed leg, filled leg, and the manual action without placing an order.
 - An emergency Spot close is permitted only after separate approval enables both emergency gates and every freshness, inventory, order-size, slippage, and ledger guard passes.
 - Each plan allows at most one emergency attempt. Failed or repeated recovery orders remain blocked.
+# Background REST fallback cache
+
+Upbit/Binance REST fallback quotes are refreshed by a background
+`RestFallbackQuoteCache`. The engine loop reads memory snapshots only under the
+default configuration. The cache uses an `RLock`, keeps only the latest
+top-of-book snapshot, and rejects an older REST fallback before it can replace a
+newer WebSocket quote. Direct REST fallback from the engine loop is disabled by
+default with `rest_direct_fallback_enabled: false`.

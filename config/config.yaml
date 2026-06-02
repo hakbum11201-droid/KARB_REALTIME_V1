@@ -26,6 +26,12 @@ rate_limit_binance_per_sec: 10
 rate_limit_burst: 5
 rate_limit_429_backoff_sec: 10
 rest_fallback_min_interval_ms: 1000
+rest_fallback_cache_enabled: true
+rest_fallback_cache_refresh_ms: 1000
+rest_fallback_cache_stale_ms: 3000
+rest_fallback_cache_skip_on_backoff: true
+rest_direct_fallback_enabled: false
+rest_direct_call_warn_threshold: 1
 block_new_entries_on_partial_risk: true
 order_ttl_sec: 1.5
 min_fill_ratio: 0.8

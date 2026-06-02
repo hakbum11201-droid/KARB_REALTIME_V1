@@ -74,6 +74,18 @@ class Config:
     @property
     def rest_fallback_min_interval_ms(self): return self.get('rest_fallback_min_interval_ms', 1000)
     @property
+    def rest_fallback_cache_enabled(self): return self.get('rest_fallback_cache_enabled', True)
+    @property
+    def rest_fallback_cache_refresh_ms(self): return self.get('rest_fallback_cache_refresh_ms', 1000)
+    @property
+    def rest_fallback_cache_stale_ms(self): return self.get('rest_fallback_cache_stale_ms', 3000)
+    @property
+    def rest_fallback_cache_skip_on_backoff(self): return self.get('rest_fallback_cache_skip_on_backoff', True)
+    @property
+    def rest_direct_fallback_enabled(self): return self.get('rest_direct_fallback_enabled', False)
+    @property
+    def rest_direct_call_warn_threshold(self): return self.get('rest_direct_call_warn_threshold', 1)
+    @property
     def block_new_entries_on_partial_risk(self): return self.get('block_new_entries_on_partial_risk', True)
     @property
     def order_ttl_sec(self): return self.get('order_ttl_sec', 1.5)
