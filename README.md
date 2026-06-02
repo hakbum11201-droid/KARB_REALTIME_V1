@@ -193,7 +193,9 @@ API keys alone never enable an order. If `PARTIAL_RISK` appears, stop new entrie
 
 - `RuntimeStore` keeps loop state in memory and writes bounded overwrite-only compatibility snapshots at a configured interval. Raw tick append storage is not added.
 - The Dynamic Top20 scanner reads Upbit KRW, Bithumb KRW, and Binance USDT Spot public markets, intersects supported symbols, excludes thin or blacklisted symbols, and selects the highest-volume symbols.
-- If any scanner request fails or no eligible common market remains, the engine falls back to the existing `config.symbols` list.
+- Startup is cache-first: a fresh `runtime/market_scanner.json` snapshot is used immediately, otherwise the engine starts immediately with the existing `config.symbols` list.
+- Dynamic REST scans run in a bounded background timeout path. A successful scan refreshes QuoteEngine, WebSocket symbols, and the Bithumb quote cache; a failed scan preserves the current active symbols and records blockers.
+- If any scanner request fails or no eligible common market remains, paper monitoring continues without waiting for scanner recovery.
 - This monitoring change does not relax live-order guards or add any withdrawal, deposit, address, transfer, Futures, Margin, or P2P capability.
 
 ## Dynamic slippage and latency-aware paper fills

@@ -820,6 +820,21 @@ function renderRuntimeServices(scanner={}, store={}, rateLimit={}) {
   setText('runtime-store-writes', fmt(store.snapshot_write_count));
   setText('runtime-store-fails', fmt(store.snapshot_fail_count));
   setText('runtime-store-age', store.snapshot_age_sec==null ? '--' : ageText(store.snapshot_age_sec));
+  let scannerStatusEl = document.getElementById('scanner-cache-status');
+  if (!scannerStatusEl) {
+    const anchor = document.getElementById('scanner-active-symbols');
+    if (anchor?.parentElement) {
+      scannerStatusEl = document.createElement('div');
+      scannerStatusEl.id = 'scanner-cache-status';
+      scannerStatusEl.className = 'active-symbol-list';
+      anchor.parentElement.append(scannerStatusEl);
+    }
+  }
+  if (scannerStatusEl) {
+    const blockers=(scanner.blockers||[]).join(', ')||'none';
+    const cacheAge=scanner.scanner_cache_age_sec==null ? '--' : ageText(scanner.scanner_cache_age_sec);
+    scannerStatusEl.textContent=`Scanner Cache: ${scanner.scanner_cache_used?'USED':'NOT USED'} | Cache Age ${cacheAge} | Startup ${scanner.scanner_startup_mode||'--'} | Last Refresh ${scanner.scanner_last_refresh_status||'--'} | Fail Count ${fmt(scanner.scanner_fail_count)} | Blockers ${blockers}`;
+  }
   let rateLimitEl = document.getElementById('rate-limit-status');
   if (!rateLimitEl) {
     const anchor = document.getElementById('scanner-active-symbols');

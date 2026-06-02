@@ -1,7 +1,9 @@
 import argparse
 import json
 import os
+import queue
 import sys
+import threading
 import time
 from collections import deque
 
@@ -97,6 +99,33 @@ def _cleanup_quote_history(quote_history, active_symbols) -> int:
     return len(stale_keys)
 
 
+def _merge_scanner_snapshot(current_snapshot, next_snapshot, active_symbols):
+    if next_snapshot.get('source') != 'fallback':
+        return next_snapshot
+    return {
+        **next_snapshot,
+        'active_symbols': list(active_symbols),
+        'standby_symbols': current_snapshot.get('standby_symbols', []),
+        'common_upbit_binance': current_snapshot.get('common_upbit_binance', list(active_symbols)),
+        'common_upbit_bithumb': current_snapshot.get('common_upbit_bithumb', list(active_symbols)),
+    }
+
+
+def _start_background_scanner_refresh(market_scanner, timeout_sec):
+    results = queue.Queue(maxsize=1)
+
+    def refresh():
+        snapshot = market_scanner.scan_with_timeout(timeout_sec)
+        try:
+            results.put(snapshot, block=False)
+        except queue.Full:
+            pass
+
+    thread = threading.Thread(target=refresh, name='market-scanner-refresh', daemon=True)
+    thread.start()
+    return thread, results
+
+
 def main():
     parser = argparse.ArgumentParser(description="KARB_REALTIME_V1 Engine")
     parser.add_argument('--once', action='store_true', help='Run once and exit')
@@ -129,13 +158,20 @@ def main():
         run_id = ''
         started_at = time.time()
 
+    base_dir     = os.path.dirname(os.path.abspath(__file__))
+    runtime_dir  = os.path.normpath(os.path.join(base_dir, '..', 'runtime'))
+    os.makedirs(runtime_dir, exist_ok=True)
+    scanner_path = os.path.join(runtime_dir, 'market_scanner.json')
+
     # ── 컴포넌트 초기화 ──────────────────────────────────────────────────
     upbit_pub    = UpbitPublic()
     binance_pub  = BinancePublic()
     bithumb_pub  = BithumbPublic()
     market_scanner = MarketScanner()
     scanner_snapshot = (
-        market_scanner.scan() if cfg.use_dynamic_symbols
+        market_scanner.get_startup_snapshot(
+            scanner_path, cfg.symbols, cfg.market_scanner_cache_max_age_sec
+        ) if cfg.use_dynamic_symbols
         else market_scanner.fallback('DYNAMIC_SYMBOLS_DISABLED')
     )
     active_symbols = scanner_snapshot.get('active_symbols') or list(cfg.symbols)
@@ -167,9 +203,6 @@ def main():
     collector    = BoundedCollector()
 
     # ── 경로 ─────────────────────────────────────────────────────────────
-    base_dir     = os.path.dirname(os.path.abspath(__file__))
-    runtime_dir  = os.path.normpath(os.path.join(base_dir, '..', 'runtime'))
-    os.makedirs(runtime_dir, exist_ok=True)
     state_path   = os.path.join(runtime_dir, 'state.json')
     quotes_path  = os.path.join(runtime_dir, 'latest_quotes.json')
     telemetry_path = os.path.join(runtime_dir, 'telemetry.json')
@@ -177,7 +210,6 @@ def main():
     opportunities_path = os.path.join(runtime_dir, 'latest_opportunities.json')
     performance_path = os.path.join(runtime_dir, 'performance_summary.json')
     execution_plan_path = os.path.join(runtime_dir, 'last_execution_plan.json')
-    scanner_path = os.path.join(runtime_dir, 'market_scanner.json')
     runtime_store_status_path = os.path.join(runtime_dir, 'runtime_store_status.json')
     snapshot_paths = {
         'latest_quotes': quotes_path,
@@ -238,18 +270,29 @@ def main():
     skipped_bithumb_quote_reasons: dict[str, int] = {}
     quote_history_cleanup_count = 0
     last_quote_history_cleanup_at = 0.0
+    scanner_refresh_thread = None
+    scanner_refresh_results = None
+    if cfg.use_dynamic_symbols and cfg.market_scanner_background_refresh_on_start:
+        scanner_refresh_thread, scanner_refresh_results = _start_background_scanner_refresh(
+            market_scanner, cfg.market_scanner_timeout_sec
+        )
 
     while True:
         loop_start = time.time()
         total_loops += 1
 
-        if (
-            cfg.use_dynamic_symbols
-            and loop_start - last_scanner_refresh >= cfg.dynamic_symbol_refresh_sec
-        ):
-            next_scanner_snapshot = market_scanner.scan()
+        next_scanner_snapshot = None
+        if scanner_refresh_results:
+            try:
+                next_scanner_snapshot = scanner_refresh_results.get_nowait()
+            except queue.Empty:
+                pass
+        if next_scanner_snapshot:
+            next_scanner_snapshot = _merge_scanner_snapshot(
+                scanner_snapshot, next_scanner_snapshot, active_symbols
+            )
             next_symbols = next_scanner_snapshot.get('active_symbols') or list(cfg.symbols)
-            if next_symbols != active_symbols:
+            if next_scanner_snapshot.get('source') != 'fallback' and next_symbols != active_symbols:
                 if ws_market_data:
                     ws_market_data.stop()
                 active_symbols = next_symbols
@@ -269,6 +312,15 @@ def main():
                 print(f"[KARB] Active symbols refreshed: {len(active_symbols)} ({next_scanner_snapshot.get('source')})")
             scanner_snapshot = next_scanner_snapshot
             runtime_store.set_state('market_scanner', scanner_snapshot)
+            market_scanner.save_cached_snapshot(scanner_path, scanner_snapshot)
+        if (
+            cfg.use_dynamic_symbols
+            and loop_start - last_scanner_refresh >= cfg.dynamic_symbol_refresh_sec
+            and not (scanner_refresh_thread and scanner_refresh_thread.is_alive())
+        ):
+            scanner_refresh_thread, scanner_refresh_results = _start_background_scanner_refresh(
+                market_scanner, cfg.market_scanner_timeout_sec
+            )
             last_scanner_refresh = loop_start
 
         # ── graceful stop 체크 ────────────────────────────────────────────
@@ -588,6 +640,14 @@ def main():
             'quote_history_key_count': len(quote_history),
             'quote_history_cleanup_count': quote_history_cleanup_count,
             'last_quote_history_cleanup_at': last_quote_history_cleanup_at,
+            'scanner_source': scanner_snapshot.get('source', 'fallback'),
+            'scanner_cache_used': scanner_snapshot.get('scanner_cache_used', False),
+            'scanner_cache_age_sec': scanner_snapshot.get('scanner_cache_age_sec'),
+            'scanner_last_refresh_status': scanner_snapshot.get('scanner_last_refresh_status', 'INIT'),
+            'scanner_last_error': scanner_snapshot.get('scanner_last_error', ''),
+            'scanner_refresh_count': scanner_snapshot.get('scanner_refresh_count', 0),
+            'scanner_fail_count': scanner_snapshot.get('scanner_fail_count', 0),
+            'scanner_startup_mode': scanner_snapshot.get('scanner_startup_mode', cfg.market_scanner_startup_mode),
         }
         perf_tracker.update_runtime_metrics(runtime_metrics)
         runtime_store.set_state('latest_quotes', quotes)

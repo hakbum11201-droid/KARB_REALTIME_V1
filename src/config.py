@@ -140,6 +140,16 @@ class Config:
     @property
     def dynamic_symbol_refresh_sec(self): return self.get('dynamic_symbol_refresh_sec', 300)
     @property
+    def market_scanner_cache_enabled(self): return self.get('market_scanner_cache_enabled', True)
+    @property
+    def market_scanner_cache_max_age_sec(self): return self.get('market_scanner_cache_max_age_sec', 3600)
+    @property
+    def market_scanner_startup_mode(self): return self.get('market_scanner_startup_mode', 'cache_first')
+    @property
+    def market_scanner_timeout_sec(self): return self.get('market_scanner_timeout_sec', 3.0)
+    @property
+    def market_scanner_background_refresh_on_start(self): return self.get('market_scanner_background_refresh_on_start', True)
+    @property
     def min_24h_quote_volume_krw(self): return self.get('min_24h_quote_volume_krw', 1000000000)
     @property
     def symbol_blacklist(self): return self.get('symbol_blacklist', [])

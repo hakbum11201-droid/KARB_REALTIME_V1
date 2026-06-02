@@ -63,6 +63,11 @@ skip_missing_bithumb_quotes: true
 use_dynamic_symbols: true
 dynamic_symbol_top_n: 20
 dynamic_symbol_refresh_sec: 300
+market_scanner_cache_enabled: true
+market_scanner_cache_max_age_sec: 3600
+market_scanner_startup_mode: cache_first
+market_scanner_timeout_sec: 3.0
+market_scanner_background_refresh_on_start: true
 min_24h_quote_volume_krw: 1000000000
 symbol_blacklist: []
 exclude_stablecoin_symbols: true
