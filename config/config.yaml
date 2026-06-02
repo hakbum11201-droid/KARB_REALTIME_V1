@@ -55,6 +55,11 @@ upbit_bithumb_max_order_krw: 20000
 upbit_bithumb_daily_loss_limit_krw: 10000
 upbit_bithumb_max_trades_per_day: 5
 bithumb_min_order_krw: 5000
+bithumb_quote_cache_enabled: true
+bithumb_quote_cache_refresh_ms: 700
+bithumb_quote_cache_stale_ms: 3000
+bithumb_quote_cache_max_failures: 10
+skip_missing_bithumb_quotes: true
 use_dynamic_symbols: true
 dynamic_symbol_top_n: 20
 dynamic_symbol_refresh_sec: 300

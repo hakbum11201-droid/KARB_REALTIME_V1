@@ -773,6 +773,25 @@ function renderLongRunTelemetry(t={}) {
   setText('stale-status', `STALE ${fmt(stale)}`);
   setClass('stale-status', `source-badge ${stale?'stale':'ok'}`);
   setText('no-go-top3', `NO-GO top 3: ${noGo.map(([reason,count])=>`${reason} ${count}`).join(' / ')||'--'}`);
+  renderBithumbCacheStatus(t);
+}
+
+function renderBithumbCacheStatus(t={}) {
+  const cache=t.bithumb_quote_cache_status||{};
+  let cacheEl=document.getElementById('bithumb-cache-status');
+  if (!cacheEl) {
+    const anchor=document.getElementById('scanner-active-symbols');
+    if (anchor?.parentElement) {
+      cacheEl=document.createElement('div');
+      cacheEl.id='bithumb-cache-status';
+      cacheEl.className='active-symbol-list';
+      anchor.parentElement.append(cacheEl);
+    }
+  }
+  if (cacheEl) {
+    const lastSuccess=cache.last_success_at ? ageText(Date.now()/1000-cache.last_success_at) : '--';
+    cacheEl.textContent=`Bithumb Cache: ${cache.enabled?'ON':'OFF'} | Running ${cache.running?'YES':'NO'} | Quote Count ${fmt(cache.quote_count)} | Stale Count ${fmt(cache.stale_count)} | Last Success ${lastSuccess} | Fail Count ${fmt(cache.fail_count)} | Skipped Bithumb Symbols ${fmt(t.skipped_bithumb_symbol_count)} | Quote History Keys ${fmt(t.quote_history_key_count)}`;
+  }
 }
 
 async function fetchRuntimeServices() {

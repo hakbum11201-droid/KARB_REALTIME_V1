@@ -27,6 +27,7 @@ from runtime_store import RuntimeStore
 from market_scanner import MarketScanner
 from paper_fill_simulator import simulate_paper_fill
 from rate_limiter import rate_limiter
+from bithumb_quote_cache import BithumbQuoteCache
 
 
 def _decision_record(calc_res, reason, is_safe, quote_source, quote_age_ms):
@@ -75,6 +76,27 @@ def _percentile(values, pct: int) -> float:
     return round(sorted_values[idx], 2)
 
 
+def _bithumb_skip_reason(upbit_quote, bithumb_quote) -> str:
+    if not upbit_quote:
+        return 'MISSING_UPBIT_QUOTE'
+    if not bithumb_quote:
+        return 'MISSING_BITHUMB_QUOTE'
+    if bithumb_quote.get('stale'):
+        return 'STALE_BITHUMB_QUOTE'
+    if not bithumb_quote.get('ok'):
+        return 'BITHUMB_QUOTE_NOT_OK'
+    return ''
+
+
+def _cleanup_quote_history(quote_history, active_symbols) -> int:
+    keep = set(active_symbols)
+    keep.update(f'UPBIT_BITHUMB:{symbol}' for symbol in active_symbols)
+    stale_keys = [key for key in quote_history if key not in keep]
+    for key in stale_keys:
+        del quote_history[key]
+    return len(stale_keys)
+
+
 def main():
     parser = argparse.ArgumentParser(description="KARB_REALTIME_V1 Engine")
     parser.add_argument('--once', action='store_true', help='Run once and exit')
@@ -120,6 +142,14 @@ def main():
     print(f"[KARB] Active symbols: {len(active_symbols)} ({scanner_snapshot.get('source', 'fallback')})")
     fx_oracle    = FxOracle(upbit_pub, binance_pub)
     quote_engine = QuoteEngine(upbit_pub, binance_pub, active_symbols)
+    bithumb_quote_cache = BithumbQuoteCache(
+        bithumb_pub,
+        enabled=cfg.bithumb_public_enabled and cfg.bithumb_quote_cache_enabled,
+        refresh_ms=cfg.bithumb_quote_cache_refresh_ms,
+        stale_ms=cfg.bithumb_quote_cache_stale_ms,
+        max_failures=cfg.bithumb_quote_cache_max_failures,
+    )
+    bithumb_quote_cache.start(active_symbols)
     ws_market_data = None
     if cfg.use_websocket_market_data:
         ws_market_data = WebSocketMarketData(
@@ -204,6 +234,10 @@ def main():
     last_percentile_calc = 0.0
     cached_p95_loop_latency_ms = 0.0
     cached_p95_quote_latency_ms = 0.0
+    skipped_bithumb_symbol_count = 0
+    skipped_bithumb_quote_reasons: dict[str, int] = {}
+    quote_history_cleanup_count = 0
+    last_quote_history_cleanup_at = 0.0
 
     while True:
         loop_start = time.time()
@@ -219,6 +253,11 @@ def main():
                 if ws_market_data:
                     ws_market_data.stop()
                 active_symbols = next_symbols
+                bithumb_quote_cache.update_symbols(active_symbols)
+                removed_history_keys = _cleanup_quote_history(quote_history, active_symbols)
+                if removed_history_keys:
+                    quote_history_cleanup_count += removed_history_keys
+                    last_quote_history_cleanup_at = loop_start
                 quote_engine = QuoteEngine(upbit_pub, binance_pub, active_symbols)
                 ws_market_data = None
                 if cfg.use_websocket_market_data:
@@ -265,10 +304,12 @@ def main():
             event_logger.log_error('quote_engine', e)
             quotes = {}
             error_count += 1
-        bithumb_quotes = (
-            bithumb_pub.fetch_all_order_books(active_symbols)
-            if cfg.bithumb_public_enabled else {}
-        )
+        if not cfg.bithumb_public_enabled:
+            bithumb_quotes = {}
+        elif cfg.bithumb_quote_cache_enabled:
+            bithumb_quotes = bithumb_quote_cache.get_snapshot()
+        else:
+            bithumb_quotes = bithumb_pub.fetch_all_order_books(active_symbols)
         loop_opportunities = []
 
         best_sym_this_loop    = ''
@@ -381,6 +422,13 @@ def main():
         if cfg.upbit_bithumb_paper_enabled:
             for sym, q in quotes.items():
                 bithumb_q = bithumb_quotes.get(sym, {})
+                skip_reason = _bithumb_skip_reason(q.get('upbit', {}), bithumb_q)
+                if cfg.skip_missing_bithumb_quotes and skip_reason:
+                    skipped_bithumb_symbol_count += 1
+                    skipped_bithumb_quote_reasons[skip_reason] = (
+                        skipped_bithumb_quote_reasons.get(skip_reason, 0) + 1
+                    )
+                    continue
                 domestic_quotes['UPBIT_BITHUMB'][sym] = {
                     'upbit': q.get('upbit', {}),
                     'bithumb': bithumb_q,
@@ -488,6 +536,7 @@ def main():
             } for sym, q in quotes.items()],
         }
         rate_limit_status = ws_metrics.get('rate_limit_status') or rate_limiter.get_status()
+        bithumb_quote_cache_status = bithumb_quote_cache.get_status()
         top_symbol_by_signal = max(signal_counts, key=signal_counts.get) if signal_counts else ''
         top_symbol_by_surplus = max(symbol_surplus_max, key=symbol_surplus_max.get) if symbol_surplus_max else ''
         runtime_metrics = {
@@ -533,6 +582,12 @@ def main():
             'paper_edge_pass_count': paper_edge_counts.get('PAPER_EDGE_PASS', 0),
             'paper_edge_fail_count': paper_edge_counts.get('PAPER_EDGE_FAIL', 0),
             'avg_latency_used_ms':  round(sum(paper_latency_list) / len(paper_latency_list), 2) if paper_latency_list else 0.0,
+            'bithumb_quote_cache_status': bithumb_quote_cache_status,
+            'skipped_bithumb_symbol_count': skipped_bithumb_symbol_count,
+            'skipped_bithumb_quote_reasons': skipped_bithumb_quote_reasons,
+            'quote_history_key_count': len(quote_history),
+            'quote_history_cleanup_count': quote_history_cleanup_count,
+            'last_quote_history_cleanup_at': last_quote_history_cleanup_at,
         }
         perf_tracker.update_runtime_metrics(runtime_metrics)
         runtime_store.set_state('latest_quotes', quotes)
@@ -612,6 +667,13 @@ def main():
     ended_at = time.time()
     if ws_market_data:
         ws_market_data.stop()
+    bithumb_quote_cache.stop()
+    final_runtime_metrics = runtime_store.get_state('telemetry', {})
+    if isinstance(final_runtime_metrics, dict):
+        final_runtime_metrics['bithumb_quote_cache_status'] = bithumb_quote_cache.get_status()
+        runtime_store.set_state('telemetry', final_runtime_metrics)
+        if not cfg.runtime_store_enabled:
+            _write_json(telemetry_path, final_runtime_metrics)
     runtime_store.stop_background_writer(snapshot_paths, runtime_store_status_path)
 
     if args.until_stop:

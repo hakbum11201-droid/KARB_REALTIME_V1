@@ -252,6 +252,14 @@ API keys alone never enable an order. If `PARTIAL_RISK` appears, stop new entrie
 - Loop and quote P95 percentiles are refreshed on a configured interval instead of sorting samples every loop.
 - This monitoring change does not modify order execution, live-order gates, withdrawal policy, or risk thresholds.
 
+## Bithumb quote cache
+
+- Domestic `UPBIT_BITHUMB` paper monitoring reads Bithumb public quotes from a bounded in-memory background cache instead of synchronously waiting for Bithumb REST on every engine loop.
+- A failed refresh retains the last successful snapshot and marks aged quotes as stale. Missing, unavailable, or stale Bithumb quotes skip only domestic calculations; `UPBIT_BINANCE` monitoring continues independently.
+- Dynamic symbol refresh removes inactive cross-border and `UPBIT_BITHUMB:{symbol}` quote-history keys.
+- Dashboard telemetry and `GET /api/bithumb/cache-status` expose cache health, skipped domestic symbols, and quote-history key count.
+- This monitoring change does not alter paper entry/exit logic, order execution, or live-order safety defaults.
+
 ## Emergency Close Once
 
 - `PARTIAL_RISK` still disarms tiny-live and blocks new entries until operator review and manual clear.

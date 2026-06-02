@@ -124,6 +124,16 @@ class Config:
     @property
     def bithumb_min_order_krw(self): return self.get('bithumb_min_order_krw', 5000)
     @property
+    def bithumb_quote_cache_enabled(self): return self.get('bithumb_quote_cache_enabled', True)
+    @property
+    def bithumb_quote_cache_refresh_ms(self): return self.get('bithumb_quote_cache_refresh_ms', 700)
+    @property
+    def bithumb_quote_cache_stale_ms(self): return self.get('bithumb_quote_cache_stale_ms', 3000)
+    @property
+    def bithumb_quote_cache_max_failures(self): return self.get('bithumb_quote_cache_max_failures', 10)
+    @property
+    def skip_missing_bithumb_quotes(self): return self.get('skip_missing_bithumb_quotes', True)
+    @property
     def use_dynamic_symbols(self): return self.get('use_dynamic_symbols', True)
     @property
     def dynamic_symbol_top_n(self): return self.get('dynamic_symbol_top_n', 20)

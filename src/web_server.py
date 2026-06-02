@@ -230,6 +230,18 @@ def _bithumb_status_payload():
     }
 
 
+def _bithumb_cache_status_payload():
+    telemetry = _read_json(os.path.join(RUNTIME_DIR, 'telemetry.json'))
+    return {
+        'ok': True, 'error': '', 'blockers': [],
+        'cache': telemetry.get('bithumb_quote_cache_status', {}),
+        'skipped_bithumb_symbol_count': telemetry.get('skipped_bithumb_symbol_count', 0),
+        'skipped_bithumb_quote_reasons': telemetry.get('skipped_bithumb_quote_reasons', {}),
+        'quote_history_key_count': telemetry.get('quote_history_key_count', 0),
+        'quote_history_cleanup_count': telemetry.get('quote_history_cleanup_count', 0),
+    }
+
+
 def _bithumb_balances_payload():
     return BithumbPrivateClient().get_balances()
 
@@ -410,6 +422,9 @@ class KarbHandler(SimpleHTTPRequestHandler):
 
         elif path == '/api/bithumb/status':
             self._send_guarded_json(_bithumb_status_payload)
+
+        elif path == '/api/bithumb/cache-status':
+            self._send_guarded_json(_bithumb_cache_status_payload)
 
         elif path == '/api/bithumb/balances':
             self._send_guarded_json(_bithumb_balances_payload)
