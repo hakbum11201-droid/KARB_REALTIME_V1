@@ -418,6 +418,21 @@ body {
 .inventory-balances strong { color:var(--text-primary); font-family:var(--font-mono); }
 .inventory-readiness { display:flex; gap:10px; align-items:center; padding:10px 12px; border-radius:var(--radius-sm); margin-bottom:8px; }
 .inventory-readiness.yes { color:var(--accent-green); background:rgba(72,187,120,.12); }
+.pair-performance-panel { margin:16px 0 20px; }
+.pair-performance-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:12px; }
+.pair-performance-card { background:var(--bg-card); border:1px solid var(--border); border-radius:var(--radius); padding:14px; }
+.pair-performance-card.positive { border-color:rgba(72,187,120,.35); }
+.pair-performance-card.negative { border-color:rgba(252,129,129,.35); }
+.pair-performance-card.testing { border-color:rgba(246,224,94,.35); }
+.pair-performance-title { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:10px; }
+.pair-performance-title strong { color:var(--text-secondary); font-family:var(--font-mono); font-size:11px; }
+.pair-performance-card.positive .pair-performance-title strong { color:var(--accent-green); }
+.pair-performance-card.negative .pair-performance-title strong { color:var(--accent-red); }
+.pair-performance-card.testing .pair-performance-title strong { color:var(--accent-yellow); }
+.pair-performance-stats { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:8px; }
+.pair-performance-stats div { display:flex; flex-direction:column; gap:4px; padding:7px; background:rgba(255,255,255,.035); border-radius:var(--radius-sm); }
+.pair-performance-stats span { color:var(--text-muted); font-size:10px; text-transform:uppercase; }
+.pair-performance-stats strong { color:var(--text-primary); font-family:var(--font-mono); font-size:11px; overflow-wrap:anywhere; }
 .inventory-readiness.no { color:var(--accent-orange); background:rgba(237,137,54,.12); }
 .inventory-blockers { color:var(--text-secondary); font-family:var(--font-mono); font-size:11px; margin-bottom:14px; }
 .inventory-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:12px; }

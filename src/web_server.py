@@ -140,6 +140,18 @@ def _last_plan_payload():
     return _with_plan_quote_source(_read_json(os.path.join(RUNTIME_DIR, 'tiny_live_last_preflight.json')))
 
 
+def _pair_performance_payload():
+    perf = _read_json(os.path.join(RUNTIME_DIR, 'performance_summary.json'))
+    return {
+        'ok': True,
+        'pair_summary': perf.get('pair_summary', {}),
+        'best_pair_by_pnl': perf.get('best_pair_by_pnl', ''),
+        'best_pair_by_win_rate': perf.get('best_pair_by_win_rate', ''),
+        'most_active_pair': perf.get('most_active_pair', ''),
+        'updated_at': perf.get('updated_at', 0),
+    }
+
+
 def _tiny_live_status_payload():
     status = tiny_live_executor.status()
     if status.get('last_preflight'):
@@ -351,6 +363,9 @@ class KarbHandler(SimpleHTTPRequestHandler):
 
         elif self.path == '/api/performance':
             self._send_json(_read_json(os.path.join(RUNTIME_DIR, 'performance_summary.json')))
+
+        elif self.path == '/api/performance/pairs':
+            self._send_guarded_json(_pair_performance_payload)
 
         elif self.path == '/api/telemetry':
             self._send_guarded_json(_telemetry_payload)

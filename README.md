@@ -236,7 +236,13 @@ API keys alone never enable an order. If `PARTIAL_RISK` appears, stop new entrie
 - `UPBIT_BITHUMB` opportunities now enter and exit through the paper engine when their existing paper guards return `OK`.
 - Paper inventory is tracked separately for Upbit, Binance, and Bithumb. Each paper entry and exit records venue balance deltas.
 - Domestic exits use the matching Upbit and Bithumb quotes and preserve `pair_id` in recent closed trades.
-- Pair-specific performance rollups are still a later reporting step. Live and tiny-live execution behavior is unchanged.
+- Live and tiny-live execution behavior is unchanged.
+
+## Pair-level paper performance
+
+- Review 24-hour paper results by venue pair, not only as one combined PnL number.
+- `UPBIT_BINANCE` and `UPBIT_BITHUMB` have different profit structures, quote paths, and inventory requirements.
+- Runtime and session summaries expose `pair_summary` so the next tuning decision can be made per pair.
 
 ## REST fallback load guards
 

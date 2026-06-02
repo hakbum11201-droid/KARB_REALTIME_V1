@@ -137,6 +137,7 @@ async function fetchData() {
     renderBanner(d.state||{}, d.control||{});
     renderTelemetry(d.state||{}, d.engine||{}, d.control||{});
     renderPaperProfitSummary(d.performance||{}, d.limits||{});
+    renderPairPerformance(d.performance||{});
     renderStrategyPairs(latestStrategyPairs, latestStrategy);
     renderQuotes(d.quotes||{});
     setText('last-update', new Date().toLocaleTimeString('ko-KR'));
@@ -201,6 +202,30 @@ function renderPaperProfitSummary(perf, limits) {
     ready.innerHTML = `<span>TINY LIVE READY</span><strong>${readiness.ready?'YES':'NO'}</strong>`;
   }
   setText('paper-tiny-reasons', readiness.ready ? 'DISPLAY CHECK PASSED' : readiness.reasons.join(' / '));
+}
+
+function renderPairPerformance(perf) {
+  const grid = $('pair-performance-grid');
+  if (!grid) return;
+  grid.setAttribute('aria-label', 'Pair Performance');
+  const summary = perf.pair_summary||{};
+  grid.innerHTML = ['UPBIT_BINANCE','UPBIT_BITHUMB'].map(pairId => {
+    const row = summary[pairId]||{}, count=Number(row.closed_trade_count||0);
+    const pnl=Number(row.net_pnl_krw||0), avg=Number(row.avg_pnl_krw||0), dd=Number(row.max_drawdown_krw||0);
+    const status=!count?'NO DATA':count<10?'TESTING':pnl>=0?'POSITIVE':'NEGATIVE';
+    const statusClass=status==='POSITIVE'?'positive':status==='NEGATIVE'?'negative':status==='TESTING'?'testing':'no-data';
+    return `<div class="pair-performance-card ${statusClass}">
+      <div class="pair-performance-title"><span class="pair-badge ${pairMeta(pairId).badge}">${esc(pairMeta(pairId).label)}</span><strong>${status}</strong></div>
+      <div class="pair-performance-stats">
+        <div><span>Closed Trades</span><strong>${fmt(count)}</strong></div>
+        <div><span>Win Rate</span><strong>${Number(row.win_rate||0).toFixed(1)}%</strong></div>
+        <div><span>Net PnL</span><strong style="color:${pnlC(pnl)}">${pnl>=0?'+':''}${fmt(pnl)} KRW</strong></div>
+        <div><span>Avg PnL</span><strong>${avg>=0?'+':''}${fmt(avg)} KRW</strong></div>
+        <div><span>Max DD</span><strong>${fmt(dd)} KRW</strong></div>
+        <div><span>Best / Worst</span><strong>${fmt(row.best_trade_krw)} / ${fmt(row.worst_trade_krw)} KRW</strong></div>
+      </div>
+    </div>`;
+  }).join('');
 }
 
 function judgementClass(judgement) {

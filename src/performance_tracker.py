@@ -10,6 +10,56 @@ import time
 from collections import deque, Counter
 
 
+PAIR_IDS = ('UPBIT_BINANCE', 'UPBIT_BITHUMB', 'UNKNOWN')
+
+
+def summarize_pair_trades(trades: list[dict]) -> dict:
+    grouped = {pair_id: [] for pair_id in PAIR_IDS}
+    for trade in trades:
+        pair_id = trade.get('pair_id') or 'UNKNOWN'
+        grouped.setdefault(pair_id, []).append(trade)
+
+    summary = {}
+    for pair_id, pair_trades in grouped.items():
+        pnls = [float(trade.get('realized_pnl_krw', 0) or 0) for trade in pair_trades]
+        running = peak = max_drawdown = 0.0
+        for pnl in pnls:
+            running += pnl
+            peak = max(peak, running)
+            max_drawdown = max(max_drawdown, peak - running)
+        wins = sum(1 for trade in pair_trades if trade.get('win'))
+        losses = len(pair_trades) - wins
+        summary[pair_id] = {
+            'pair_id': pair_id,
+            'closed_trade_count': len(pair_trades),
+            'win_count': wins,
+            'loss_count': losses,
+            'win_rate': round(wins / len(pair_trades) * 100, 2) if pair_trades else 0.0,
+            'net_pnl_krw': round(sum(pnls), 2),
+            'gross_profit_krw': round(sum(pnl for pnl in pnls if pnl > 0), 2),
+            'gross_loss_krw': round(abs(sum(pnl for pnl in pnls if pnl < 0)), 2),
+            'avg_pnl_krw': round(sum(pnls) / len(pnls), 2) if pnls else 0.0,
+            'best_trade_krw': round(max(pnls), 2) if pnls else 0.0,
+            'worst_trade_krw': round(min(pnls), 2) if pnls else 0.0,
+            'max_drawdown_krw': round(max_drawdown, 2),
+            'last_trade_at': max(
+                (float(trade.get('exit_time', 0) or 0) for trade in pair_trades), default=0
+            ),
+        }
+    return summary
+
+
+def pair_summary_leaders(pair_summary: dict) -> dict:
+    active = [row for row in pair_summary.values() if row.get('closed_trade_count', 0) > 0]
+    if not active:
+        return {'best_pair_by_pnl': '', 'best_pair_by_win_rate': '', 'most_active_pair': ''}
+    return {
+        'best_pair_by_pnl': max(active, key=lambda row: row['net_pnl_krw'])['pair_id'],
+        'best_pair_by_win_rate': max(active, key=lambda row: row['win_rate'])['pair_id'],
+        'most_active_pair': max(active, key=lambda row: row['closed_trade_count'])['pair_id'],
+    }
+
+
 class PerformanceTracker:
     MAX_TRADES = 500
 
@@ -91,6 +141,7 @@ class PerformanceTracker:
         quote_summary = self._runtime_metrics.get('quote_source_summary', {})
         source_total = sum(float(quote_summary.get(key, 0) or 0) for key in ('ws', 'rest'))
         ws_ratio = round(float(quote_summary.get('ws', 0) or 0) / source_total * 100, 2) if source_total else 0.0
+        pair_summary = summarize_pair_trades(trades)
         s = {
             'paper_trade_count':   total,
             'open_trade_count':    self._open_count,
@@ -122,6 +173,8 @@ class PerformanceTracker:
             'rest_fallback_skip_count': self._runtime_metrics.get('rest_fallback_skip_count', 0),
             'rate_limit_throttle_count': self._runtime_metrics.get('rate_limit_throttle_count', 0),
             'api_429_count': self._runtime_metrics.get('api_429_count', 0),
+            'pair_summary':        pair_summary,
+            **pair_summary_leaders(pair_summary),
             'updated_at':          time.time(),
             **self._runtime_metrics,
         }
