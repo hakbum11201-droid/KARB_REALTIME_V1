@@ -6,11 +6,22 @@ inventory_manager.py - config 기반 paper inventory 관리.
 - live inventory: 인터페이스만 유지 (미구현)
 """
 import copy
+import threading
+from functools import wraps
 from config import cfg
+
+
+def _inventory_locked(method):
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return wrapped
 
 
 class InventoryManager:
     def __init__(self):
+        self._lock = threading.RLock()
         # paper 초기 잔고 (config 기반)
         initial_coins = {
             sym: float(cfg.paper_initial_coin_qty.get(sym, 0))
@@ -26,6 +37,7 @@ class InventoryManager:
     # Paper 잔고 조회
     # ──────────────────────────────────────────────────────────────────────
 
+    @_inventory_locked
     def paper_snapshot(self) -> dict:
         """현재 paper 잔고 스냅샷 반환."""
         venues = copy.deepcopy(self._paper_inventory)
@@ -204,8 +216,9 @@ class InventoryManager:
         """Return read-only Upbit/Bithumb domestic KRW inventory sufficiency."""
         opportunities = opportunities or []
         if mode == 'paper':
-            upbit = self._paper_inventory['UPBIT']
-            bithumb = self._paper_inventory['BITHUMB']
+            venues = self.paper_snapshot()['venues']
+            upbit = venues['UPBIT']
+            bithumb = venues['BITHUMB']
             upbit_balances = {'KRW': upbit['KRW'], **upbit['coins']}
             bithumb_balances = {'KRW': bithumb['KRW'], **bithumb['coins']}
             blockers, source = [], 'paper_config_inventory'
@@ -289,6 +302,7 @@ class InventoryManager:
     # 진입 가능 여부 확인
     # ──────────────────────────────────────────────────────────────────────
 
+    @_inventory_locked
     def check_paper_entry(
         self, symbol: str, direction: str, qty: float, krw_usdt: float,
         upbit_ask: float, binance_ask: float = 0,
@@ -337,6 +351,7 @@ class InventoryManager:
     # Entry / Exit 가상 정산
     # ──────────────────────────────────────────────────────────────────────
 
+    @_inventory_locked
     def apply_paper_entry(
         self, symbol: str, direction: str, qty: float, krw_usdt: float,
         upbit_ask: float, binance_ask: float = 0,
@@ -369,6 +384,7 @@ class InventoryManager:
         self._paper_inventory['UPBIT']['KRW'] -= fee_krw
         return self._inventory_delta(before)
 
+    @_inventory_locked
     def apply_paper_exit(
         self, symbol: str, direction: str, qty: float,
         realized_pnl_krw: float, krw_usdt: float,
@@ -441,6 +457,7 @@ class InventoryManager:
         """실제 잔고 조회 – 미구현. live 모드 전용."""
         raise NotImplementedError("fetch_live_balance: live mode not yet implemented.")
 
+    @_inventory_locked
     def check_balance(self, exchange: str, asset: str, required_amount: float) -> bool:
         """하위 호환 인터페이스 유지."""
         if exchange == 'upbit':

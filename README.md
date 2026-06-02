@@ -175,6 +175,9 @@ API keys alone never enable an order. If `PARTIAL_RISK` appears, stop new entrie
 ## Order tracker and emergency scaffold
 
 - `OrderTracker` records each tiny-live plan and its Upbit/Binance Spot legs in overwrite-only runtime snapshots. Duplicate fill updates replace leg values instead of adding them again.
+- `OrderTracker` and paper `InventoryManager` protect in-memory state changes with
+  `RLock`. Order ledger snapshot file writes occur after the state snapshot is
+  captured, outside the lock.
 - Any one-sided failure, timeout, or partial fill becomes `PARTIAL_RISK`. The executor disarms and blocks new entries until an operator reviews both exchanges and resolves any remaining Spot exposure.
 - `EmergencyLiquidator` is a guarded scaffold only. `emergency_liquidation_enabled=false` and `emergency_auto_execute=false` are the defaults, so it returns a manual action guide instead of placing an order.
 - `MANUAL CLEAR PARTIAL RISK` records an operator-provided reason and returns the tracker to `DISARMED`. It never places an order.

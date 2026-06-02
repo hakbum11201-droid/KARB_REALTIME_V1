@@ -2,8 +2,10 @@
 import json
 import os
 import tempfile
+import threading
 import time
 from collections import deque
+from functools import wraps
 
 from config import cfg
 
@@ -60,12 +62,28 @@ def _leg(venue: str, side: str, requested_qty=0, requested_quote=0) -> dict:
     }
 
 
+def _state_locked(save=False):
+    def decorate(method):
+        @wraps(method)
+        def wrapped(self, *args, **kwargs):
+            with self._lock:
+                result = method(self, *args, **kwargs)
+            if save:
+                self.save()
+            return result
+        return wrapped
+    return decorate
+
+
 class OrderTracker:
     def __init__(self):
+        self._lock = threading.RLock()
+        self._save_lock = threading.Lock()
         self.state = _read_json(STATE_FILE)
         recent = _read_json(RECENT_FILE).get('events', [])
         self._recent = deque(recent, maxlen=cfg.order_tracker_recent_max_items)
 
+    @_state_locked(save=True)
     def start_plan(self, plan: dict) -> dict:
         now = time.time()
         qty = float(plan.get('normalized_qty', plan.get('qty', 0)) or 0)
@@ -88,9 +106,9 @@ class OrderTracker:
             'emergency_manual_action': '', 'suggested_manual_action': '',
         }
         self._event('START_PLAN')
-        self.save()
         return self.to_dict()
 
+    @_state_locked(save=True)
     def mark_submitted(self, venue: str, response: dict) -> dict:
         leg = self._get_leg(venue)
         response = response or {}
@@ -101,9 +119,9 @@ class OrderTracker:
         leg['raw_response_sanitized'] = _sanitize(response)
         self.state['status'] = 'SUBMITTED'
         self._event('SUBMITTED', venue)
-        self.save()
         return self.to_dict()
 
+    @_state_locked(save=True)
     def mark_filled(self, venue: str, fill_result: dict) -> dict:
         leg = self._get_leg(venue)
         fill_result = fill_result or {}
@@ -121,35 +139,35 @@ class OrderTracker:
         leg['raw_response_sanitized'] = _sanitize(fill_result)
         self._event(leg['status'], venue)
         self.compute_exposure()
-        self.save()
         return self.to_dict()
 
+    @_state_locked(save=True)
     def mark_waiting_fill(self, venue: str) -> dict:
         leg = self._get_leg(venue)
         leg['status'] = 'WAITING_FILL'
         self.state['status'] = 'WAITING_FILL'
         self._event('WAITING_FILL', venue)
-        self.save()
         return self.to_dict()
 
+    @_state_locked(save=True)
     def mark_failed(self, venue: str, error) -> dict:
         leg = self._get_leg(venue)
         leg['status'] = 'FAILED'
         leg['raw_response_sanitized'] = {'error': str(error)}
         self._event('FAILED', venue)
         self.compute_exposure()
-        self.save()
         return self.to_dict()
 
+    @_state_locked(save=True)
     def mark_timeout(self, venue: str) -> dict:
         leg = self._get_leg(venue)
         if leg.get('status') != 'FILLED':
             leg['status'] = 'PARTIAL_FILLED' if leg.get('filled_qty', 0) else 'FAILED'
         self._event('TIMEOUT', venue)
         self.compute_exposure()
-        self.save()
         return self.to_dict()
 
+    @_state_locked()
     def compute_exposure(self) -> dict:
         left, right = self._legs()
         signed = sum(
@@ -181,6 +199,7 @@ class OrderTracker:
         self.state['updated_at'] = time.time()
         return self.to_dict()
 
+    @_state_locked()
     def is_partial_risk(self) -> bool:
         legs = list(self._legs())
         filled = [float(leg.get('filled_qty', 0) or 0) for leg in legs]
@@ -191,13 +210,14 @@ class OrderTracker:
             or 'PARTIAL_FILLED' in statuses
         )
 
+    @_state_locked(save=True)
     def require_emergency(self) -> dict:
         self.state['emergency_required'] = True
         self.state['status'] = 'EMERGENCY_PENDING'
         self._event('EMERGENCY_PENDING')
-        self.save()
         return self.to_dict()
 
+    @_state_locked(save=True)
     def mark_partial_risk(self, suggested_manual_action: str) -> dict:
         self.state['status'] = 'PARTIAL_RISK'
         self.state['emergency_required'] = True
@@ -205,9 +225,9 @@ class OrderTracker:
         self.state['emergency_manual_action'] = suggested_manual_action
         self.state['emergency_status'] = 'EMERGENCY_REQUIRED'
         self._event('PARTIAL_RISK')
-        self.save()
         return self.to_dict()
 
+    @_state_locked(save=True)
     def mark_emergency_attempted(self, emergency_plan=None) -> dict:
         today = time.strftime('%Y-%m-%d')
         if self.state.get('emergency_attempt_date') != today:
@@ -219,9 +239,9 @@ class OrderTracker:
         self.state['emergency_status'] = 'EMERGENCY_PENDING'
         self.state['emergency_strategy'] = (emergency_plan or {}).get('strategy', cfg.emergency_strategy)
         self._event('EMERGENCY_ATTEMPTED')
-        self.save()
         return self.to_dict()
 
+    @_state_locked(save=True)
     def mark_emergency_result(self, ok: bool, result=None) -> dict:
         result = result or {}
         self.state['status'] = 'EMERGENCY_DONE' if ok else 'EMERGENCY_FAILED'
@@ -234,9 +254,9 @@ class OrderTracker:
         if order_id:
             self.state['emergency_order_ids'] = [*self.state.get('emergency_order_ids', []), order_id]
         self._event(self.state['status'], detail=str(result.get('error', '')))
-        self.save()
         return self.to_dict()
 
+    @_state_locked(save=True)
     def set_emergency_preview(self, check: dict, manual_action: str) -> dict:
         plan = check.get('plan') or {}
         self.state['emergency_required'] = True
@@ -247,9 +267,9 @@ class OrderTracker:
         if float(plan.get('order_krw', 0) or 0) > 0:
             self.state['exposure_notional_krw'] = round(float(plan.get('order_krw', 0) or 0), 2)
         self._event('EMERGENCY_PREVIEW')
-        self.save()
         return self.to_dict()
 
+    @_state_locked(save=True)
     def manual_clear(self, reason: str) -> dict:
         if not reason.strip():
             raise ValueError('CLEARING_REASON_REQUIRED')
@@ -262,18 +282,24 @@ class OrderTracker:
             'emergency_status': 'MANUALLY_CLEARED',
             'suggested_manual_action': f'Manually cleared after operator review: {reason.strip()}',
         }
-        self.save()
         return self.to_dict()
 
+    @_state_locked()
     def to_dict(self) -> dict:
         return _sanitize(dict(self.state))
 
     def save(self) -> None:
-        if self.state:
-            self.state['updated_at'] = time.time()
-        _write_json(STATE_FILE, self.to_dict())
-        _write_json(RECENT_FILE, {'updated_at': time.time(), 'events': list(self._recent)})
+        with self._save_lock:
+            with self._lock:
+                now = time.time()
+                if self.state:
+                    self.state['updated_at'] = now
+                state = _sanitize(dict(self.state))
+                recent = {'updated_at': now, 'events': list(self._recent)}
+            _write_json(STATE_FILE, state)
+            _write_json(RECENT_FILE, recent)
 
+    @_state_locked()
     def recent(self) -> list[dict]:
         return list(reversed(self._recent))
 
