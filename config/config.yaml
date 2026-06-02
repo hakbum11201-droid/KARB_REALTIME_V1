@@ -31,6 +31,16 @@ tiny_live_freshness_observe_only: true
 paper_active_symbol_count: 20
 live_active_symbols: [BTC, ETH, XRP, SOL, DOGE, ADA, TRX, SUI]
 live_use_dynamic_symbols: false
+stale_recheck_enabled: true
+stale_recheck_paper_only: true
+stale_recheck_pair_ids: [UPBIT_BITHUMB]
+stale_recheck_min_surplus_bp_extra: 10
+stale_recheck_min_net_profit_krw: 10
+stale_recheck_allowed_liquidity: [GOOD, NORMAL]
+stale_recheck_cooldown_sec: 5
+stale_recheck_max_per_minute: 20
+stale_recheck_max_queue_size: 50
+stale_recheck_result_ttl_sec: 10
 use_websocket_market_data: true
 rest_fallback_enabled: true
 rate_limiter_enabled: true

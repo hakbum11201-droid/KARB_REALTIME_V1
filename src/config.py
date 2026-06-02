@@ -84,6 +84,26 @@ class Config:
     @property
     def live_use_dynamic_symbols(self): return self.get('live_use_dynamic_symbols', False)
     @property
+    def stale_recheck_enabled(self): return self.get('stale_recheck_enabled', True)
+    @property
+    def stale_recheck_paper_only(self): return self.get('stale_recheck_paper_only', True)
+    @property
+    def stale_recheck_pair_ids(self): return self.get('stale_recheck_pair_ids', ['UPBIT_BITHUMB'])
+    @property
+    def stale_recheck_min_surplus_bp_extra(self): return self.get('stale_recheck_min_surplus_bp_extra', 10)
+    @property
+    def stale_recheck_min_net_profit_krw(self): return self.get('stale_recheck_min_net_profit_krw', 10)
+    @property
+    def stale_recheck_allowed_liquidity(self): return self.get('stale_recheck_allowed_liquidity', ['GOOD', 'NORMAL'])
+    @property
+    def stale_recheck_cooldown_sec(self): return self.get('stale_recheck_cooldown_sec', 5)
+    @property
+    def stale_recheck_max_per_minute(self): return self.get('stale_recheck_max_per_minute', 20)
+    @property
+    def stale_recheck_max_queue_size(self): return self.get('stale_recheck_max_queue_size', 50)
+    @property
+    def stale_recheck_result_ttl_sec(self): return self.get('stale_recheck_result_ttl_sec', 10)
+    @property
     def use_websocket_market_data(self): return self.get('use_websocket_market_data', True)
     @property
     def rest_fallback_enabled(self): return self.get('rest_fallback_enabled', True)

@@ -205,6 +205,30 @@ def _telemetry_payload():
     return {'ok': True, 'error': '', 'blockers': [], 'telemetry': telemetry}
 
 
+def _stale_recheck_status_payload():
+    telemetry = _read_json(os.path.join(RUNTIME_DIR, 'telemetry.json'))
+    return {
+        'ok': True,
+        'error': '',
+        'blockers': [],
+        'enabled': telemetry.get('stale_recheck_enabled', cfg.stale_recheck_enabled),
+        'paper_only': telemetry.get('stale_recheck_paper_only', cfg.stale_recheck_paper_only),
+        'request_count': telemetry.get('stale_recheck_request_count', 0),
+        'execute_count': telemetry.get('stale_recheck_execute_count', 0),
+        'pass_count': telemetry.get('stale_recheck_pass_count', 0),
+        'fail_count': telemetry.get('stale_recheck_fail_count', 0),
+        'timeout_count': telemetry.get('stale_recheck_timeout_count', 0),
+        'skip_cooldown_count': telemetry.get('stale_recheck_skip_cooldown_count', 0),
+        'skip_rate_limit_count': telemetry.get('stale_recheck_skip_rate_limit_count', 0),
+        'queue_size': telemetry.get('stale_recheck_queue_size', 0),
+        'last_symbol': telemetry.get('stale_recheck_last_symbol', ''),
+        'last_status': telemetry.get('stale_recheck_last_status', 'NONE'),
+        'avg_elapsed_ms': telemetry.get('stale_recheck_avg_elapsed_ms', 0),
+        'pass_ratio': telemetry.get('stale_recheck_pass_ratio', 0),
+        'recent': telemetry.get('stale_recheck_recent', [])[:20],
+    }
+
+
 def _rate_limit_status_payload():
     telemetry = _read_json(os.path.join(RUNTIME_DIR, 'telemetry.json'))
     status = telemetry.get('rate_limit_status') or rate_limiter.get_status()
@@ -462,6 +486,9 @@ class KarbHandler(SimpleHTTPRequestHandler):
 
         elif self.path == '/api/rate-limit/status':
             self._send_guarded_json(_rate_limit_status_payload)
+
+        elif self.path == '/api/stale-recheck/status':
+            self._send_guarded_json(_stale_recheck_status_payload)
 
         elif self.path == '/api/decisions/recent':
             self._send_guarded_json(_decisions_payload)

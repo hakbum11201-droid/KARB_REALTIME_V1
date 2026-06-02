@@ -329,6 +329,7 @@ function renderLegacyQuotes(quotes) {
     const quoteSource=(sourceState.quote_source||q.source||up.source||bn.source||'rest').toUpperCase();
     const quoteAge=Number(sourceState.quote_age_ms!=null?sourceState.quote_age_ms/1000:q.quote_age_sec||0);
     const stale=Boolean(sourceState.stale);
+    const recheck=c.stale_recheck_status&&c.stale_recheck_status!=='NONE'?c.stale_recheck_status:'';
     const reason=c.reason_no_trade||'', isGo=reason==='OK';
     const ub=fmt(up.bid||0), ua=fmt(up.ask||0);
     const bb=Number(bn.bid||0).toFixed(4), ba=Number(bn.ask||0).toFixed(4);
@@ -348,6 +349,7 @@ function renderLegacyQuotes(quotes) {
       <div class="qc-metrics">
         <span class="qc-metric">${quoteSource} ${quoteAge.toFixed(2)}s</span>
         <span class="qc-metric">${stale?'STALE':'FRESH'}</span>
+        ${recheck?`<span class="qc-metric">${esc(recheck)}</span>`:''}
         <span class="qc-metric">Upbit ${(sourceState.upbit_source||up.source||'rest').toUpperCase()}</span>
         <span class="qc-metric">Binance ${(sourceState.binance_source||bn.source||'rest').toUpperCase()}</span>
         <span class="qc-metric">Dir ${dir}</span>
@@ -407,6 +409,7 @@ function renderOpportunityCard(row) {
   const sourceState=(latestTelemetry.symbol_quote_status||[]).find(item=>item.symbol===sym)||{};
   const quoteSource=(row.quote_source||sourceState.quote_source||'rest').toUpperCase();
   const quoteAge=Number(sourceState.quote_age_ms!=null?sourceState.quote_age_ms/1000:0), stale=Boolean(sourceState.stale);
+  const recheck=row.stale_recheck_status&&row.stale_recheck_status!=='NONE'?row.stale_recheck_status:'';
   const rightBid=domestic?row.bithumb_bid:row.binance_bid, rightAsk=domestic?row.bithumb_ask:row.binance_ask;
   const rightVenue=domestic?'Bithumb':'Binance', rightUnit=domestic?'KRW':'USDT';
   const gapLabel=domestic?'Domestic Gap':'Kimp', gapValue=domestic?`${surplus>=0?'+':''}${surplus.toFixed(1)} bp`:`${Number(row.kimchi_premium_pct||0).toFixed(2)}%`;
@@ -421,7 +424,7 @@ function renderOpportunityCard(row) {
     <div class="qc-direction"><strong>${esc(row.best_direction||'--')}</strong><span>${esc(directionText(pairId,row.best_direction))}</span></div>
     <div class="qc-direction"><span>${requiredAssetsText(row)}</span></div>
     <div class="qc-metrics">
-      <span class="qc-metric">${quoteSource} ${quoteAge.toFixed(2)}s</span><span class="qc-metric">${stale?'STALE':'FRESH'}</span>
+      <span class="qc-metric">${quoteSource} ${quoteAge.toFixed(2)}s</span><span class="qc-metric">${stale?'STALE':'FRESH'}</span>${recheck?`<span class="qc-metric">${esc(recheck)}</span>`:''}
       <span class="qc-metric">${domestic?'FX 없음':`FX ${fmt(row.krw_usdt,1)} KRW/USDT`}</span><span class="qc-metric">Net Surplus ${surplus.toFixed(1)} bp</span>
       <span class="qc-metric">Net ${fmt(net)} KRW</span><span class="qc-metric">Order KRW ${fmt(row.order_krw_used)}</span>
       <span class="qc-metric">Effective Qty ${Number((row.effective_qty??row.selected_qty??row.max_fillable_qty)||0).toFixed(4)}</span>
@@ -774,6 +777,7 @@ function renderLongRunTelemetry(t={}) {
   setClass('stale-status', `source-badge ${stale?'stale':'ok'}`);
   setText('no-go-top3', `NO-GO top 3: ${noGo.map(([reason,count])=>`${reason} ${count}`).join(' / ')||'--'}`);
   renderLiveFreshnessTelemetry(t);
+  renderStaleRecheckTelemetry(t);
   renderWebSocketHealth(t);
   renderMemoryTelemetry(t);
   renderBithumbCacheStatus(t);
@@ -793,6 +797,22 @@ function renderLiveFreshnessTelemetry(t={}) {
   }
   if (!el) return;
   el.textContent=`Live Freshness | Quote Age All ${fmt(t.p95_quote_age_all_ms,1)} ms | Tradable ${fmt(t.p95_quote_age_tradable_ms,1)} ms | Domestic ${fmt(t.p95_quote_age_domestic_ms,1)} ms | Cross-border ${fmt(t.p95_quote_age_cross_border_ms,1)} ms | Best ${fmt(t.best_opportunity_quote_age_ms,1)} ms | Live Fresh ${fmt(t.live_fresh_candidate_count)} | Tiny Live Fresh ${fmt(t.tiny_live_fresh_candidate_count)} | Quote-age blocked live/tiny ${fmt(t.live_blocked_quote_age_count)}/${fmt(t.tiny_live_blocked_quote_age_count)} | Stale Grace blocked live/tiny ${fmt(t.live_blocked_stale_grace_count)}/${fmt(t.tiny_live_blocked_stale_grace_count)} | Watchlist blocked ${fmt(t.symbol_not_in_live_watchlist_count)}`;
+}
+
+function renderStaleRecheckTelemetry(t={}) {
+  let el=document.getElementById('stale-recheck-status');
+  if (!el) {
+    const anchor=document.getElementById('live-freshness-telemetry')||document.getElementById('no-go-top3');
+    if (anchor?.parentElement) {
+      el=document.createElement('div');
+      el.id='stale-recheck-status';
+      el.className='active-symbol-list';
+      anchor.parentElement.append(el);
+    }
+  }
+  if (!el) return;
+  const passRatio=Number(t.stale_recheck_pass_ratio||0)*100;
+  el.textContent=`Stale Recheck | Enabled ${String(Boolean(t.stale_recheck_enabled??true))} | Paper Only ${String(Boolean(t.stale_recheck_paper_only??true))} | Requests ${fmt(t.stale_recheck_request_count)} | Execute ${fmt(t.stale_recheck_execute_count)} | Pass / Fail / Timeout ${fmt(t.stale_recheck_pass_count)} / ${fmt(t.stale_recheck_fail_count)} / ${fmt(t.stale_recheck_timeout_count)} | Pass Ratio ${fmt(passRatio,1)}% | Queue ${fmt(t.stale_recheck_queue_size)} | Last ${t.stale_recheck_last_symbol||'--'} ${t.stale_recheck_last_status||'NONE'} | Avg Elapsed ${fmt(t.stale_recheck_avg_elapsed_ms,1)} ms`;
 }
 
 function renderMemoryTelemetry(t={}) {

@@ -1,5 +1,6 @@
 """Background Bithumb public quote cache for domestic KRW paper calculations."""
 import copy
+from collections import deque
 import threading
 import time
 
@@ -8,6 +9,7 @@ class BithumbQuoteCache:
     def __init__(
         self, client, enabled=True, refresh_ms=700, stale_ms=5000,
         grace_ms=3000, allow_last_good_on_stale=True, max_failures=10,
+        recheck_cooldown_sec=5, recheck_max_queue_size=50,
     ):
         self.client = client
         self.enabled = bool(enabled)
@@ -16,6 +18,8 @@ class BithumbQuoteCache:
         self.grace_ms = max(0, int(grace_ms))
         self.allow_last_good_on_stale = bool(allow_last_good_on_stale)
         self.max_failures = max(1, int(max_failures))
+        self.recheck_cooldown_sec = max(0.0, float(recheck_cooldown_sec))
+        self.recheck_max_queue_size = max(1, int(recheck_max_queue_size))
         self._lock = threading.RLock()
         self._stop_event = threading.Event()
         self._thread = None
@@ -28,6 +32,17 @@ class BithumbQuoteCache:
         self._fail_count = 0
         self._quote_ts_fallback_count = 0
         self._quote_ts_normalized_count = 0
+        self._recheck_queue = deque()
+        self._recheck_enqueued = set()
+        self._recheck_last_requested_at = {}
+        self._recheck_request_count = 0
+        self._recheck_execute_count = 0
+        self._recheck_skip_cooldown_count = 0
+        self._recheck_fail_count = 0
+        self._recheck_last_symbol = ''
+        self._recheck_last_pair_id = ''
+        self._recheck_last_at = 0.0
+        self._recheck_last_error = ''
 
     def start(self, symbols):
         self.update_symbols(symbols)
@@ -101,9 +116,52 @@ class BithumbQuoteCache:
                 'stale_hard_count': stale_hard_count,
                 'stale_soft_count': stale_grace_count + stale_hard_count,
                 'quote_count': len(snapshot),
+                **self.get_recheck_status(),
+            }
+
+    def request_priority_refresh(self, symbol, reason=None):
+        now = time.time()
+        symbol = str(symbol or '').upper()
+        if not self.enabled or not symbol:
+            return {'ok': False, 'queued': False, 'reason': 'DISABLED_OR_EMPTY_SYMBOL'}
+        key = ('UPBIT_BITHUMB', symbol)
+        with self._lock:
+            last = self._recheck_last_requested_at.get(key, 0.0)
+            if now - last < self.recheck_cooldown_sec:
+                self._recheck_skip_cooldown_count += 1
+                return {'ok': False, 'queued': False, 'reason': 'RECHECK_COOLDOWN'}
+            if key in self._recheck_enqueued:
+                self._recheck_skip_cooldown_count += 1
+                return {'ok': False, 'queued': False, 'reason': 'RECHECK_ALREADY_QUEUED'}
+            if len(self._recheck_queue) >= self.recheck_max_queue_size:
+                return {'ok': False, 'queued': False, 'reason': 'RECHECK_QUEUE_FULL'}
+            self._recheck_queue.append({
+                'pair_id': 'UPBIT_BITHUMB', 'symbol': symbol,
+                'reason': reason or '', 'requested_at': now,
+            })
+            self._recheck_enqueued.add(key)
+            self._recheck_last_requested_at[key] = now
+            self._recheck_request_count += 1
+            self._recheck_last_symbol = symbol
+            self._recheck_last_pair_id = 'UPBIT_BITHUMB'
+            return {'ok': True, 'queued': True, 'reason': 'RECHECK_REQUESTED'}
+
+    def get_recheck_status(self):
+        with self._lock:
+            return {
+                'recheck_queue_size': len(self._recheck_queue),
+                'recheck_request_count': self._recheck_request_count,
+                'recheck_execute_count': self._recheck_execute_count,
+                'recheck_skip_cooldown_count': self._recheck_skip_cooldown_count,
+                'recheck_fail_count': self._recheck_fail_count,
+                'recheck_last_symbol': self._recheck_last_symbol,
+                'recheck_last_pair_id': self._recheck_last_pair_id,
+                'recheck_last_at': self._recheck_last_at,
+                'recheck_last_error': self._recheck_last_error,
             }
 
     def refresh_once(self):
+        self._process_priority_queue()
         with self._lock:
             symbols = list(self._symbols)
         if not symbols:
@@ -134,6 +192,44 @@ class BithumbQuoteCache:
                 self._refresh_count += 1
                 self._fail_count += 1
                 self._last_error = f'{type(exc).__name__}: {exc}'
+
+    def _pop_priority_request(self):
+        with self._lock:
+            if not self._recheck_queue:
+                return None
+            request = self._recheck_queue.popleft()
+            self._recheck_enqueued.discard((request['pair_id'], request['symbol']))
+            return request
+
+    def _process_priority_queue(self):
+        while True:
+            request = self._pop_priority_request()
+            if not request:
+                return
+            now = time.time()
+            try:
+                fetched = self.client.fetch_all_order_books([request['symbol']])
+                quote = (fetched or {}).get(request['symbol'], {})
+                with self._lock:
+                    self._recheck_execute_count += 1
+                    self._recheck_last_symbol = request['symbol']
+                    self._recheck_last_pair_id = request['pair_id']
+                    self._recheck_last_at = time.time()
+                    if isinstance(quote, dict) and quote.get('ok'):
+                        self._quotes[request['symbol']] = self._normalize_quote_ts(quote, now)
+                        self._last_success_at = time.time()
+                        self._last_error = ''
+                    else:
+                        self._recheck_fail_count += 1
+                        self._recheck_last_error = self._failure_reason(fetched)
+            except Exception as exc:
+                with self._lock:
+                    self._recheck_execute_count += 1
+                    self._recheck_fail_count += 1
+                    self._recheck_last_symbol = request['symbol']
+                    self._recheck_last_pair_id = request['pair_id']
+                    self._recheck_last_at = time.time()
+                    self._recheck_last_error = f'{type(exc).__name__}: {exc}'
 
     def _normalize_quote_ts(self, quote, fetch_time):
         quote = dict(quote)

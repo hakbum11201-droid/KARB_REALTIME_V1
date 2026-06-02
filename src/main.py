@@ -167,6 +167,144 @@ def _start_background_scanner_refresh(market_scanner, timeout_sec):
     return thread, results
 
 
+def _stale_recheck_key(item):
+    return (item.get('pair_id', 'UPBIT_BINANCE'), item.get('symbol', ''))
+
+
+def _stale_recheck_candidate(item):
+    if not cfg.stale_recheck_enabled:
+        return False
+    if cfg.stale_recheck_paper_only and cfg.mode != 'paper':
+        return False
+    if item.get('pair_id', 'UPBIT_BINANCE') not in cfg.stale_recheck_pair_ids:
+        return False
+    stale_like = (
+        item.get('reason_no_trade') == 'STALE_QUOTE'
+        or item.get('has_stale_quote')
+        or item.get('stale')
+        or item.get('quote_source') == 'rest'
+    )
+    if not stale_like:
+        return False
+    threshold = cfg.min_net_surplus_bp + cfg.stale_recheck_min_surplus_bp_extra
+    if float(item.get('best_net_surplus_bp', -9999) or -9999) < threshold:
+        return False
+    if float(item.get('net_expected_profit_krw', 0) or 0) < cfg.stale_recheck_min_net_profit_krw:
+        return False
+    return item.get('liquidity_class', 'NORMAL') in cfg.stale_recheck_allowed_liquidity
+
+
+def _record_stale_recheck_event(recent, event):
+    recent.appendleft({'time': time.time(), **event})
+
+
+def _request_stale_recheck(item, pending, request_times, counters, recent, rest_cache, bithumb_cache):
+    now = time.time()
+    while request_times and now - request_times[0] > 60:
+        request_times.popleft()
+    key = _stale_recheck_key(item)
+    if key in pending:
+        counters['skip_cooldown'] += 1
+        return {'stale_recheck_status': 'REQUESTED', 'stale_recheck_reason': 'RECHECK_ALREADY_PENDING'}
+    if len(request_times) >= cfg.stale_recheck_max_per_minute:
+        counters['skip_rate_limit'] += 1
+        return {'stale_recheck_status': 'NONE', 'stale_recheck_reason': 'RECHECK_RATE_LIMIT'}
+    pair_id, symbol = key
+    if pair_id == 'UPBIT_BITHUMB':
+        result = bithumb_cache.request_priority_refresh(symbol, reason=item.get('reason_no_trade'))
+    else:
+        result = rest_cache.request_priority_refresh(pair_id, symbol, reason=item.get('reason_no_trade'))
+    if result.get('queued'):
+        request_times.append(now)
+        threshold = cfg.min_net_surplus_bp + cfg.stale_recheck_min_surplus_bp_extra
+        pending[key] = {
+            'pair_id': pair_id,
+            'symbol': symbol,
+            'requested_at': now,
+            'threshold_bp': threshold,
+            'original_surplus_bp': float(item.get('best_net_surplus_bp', 0) or 0),
+            'original_net_krw': float(item.get('net_expected_profit_krw', 0) or 0),
+            'reason': item.get('reason_no_trade', ''),
+        }
+        counters['request'] += 1
+        _record_stale_recheck_event(recent, {
+            'pair_id': pair_id, 'symbol': symbol, 'status': 'RECHECK_REQUESTED',
+            'original_surplus_bp': pending[key]['original_surplus_bp'],
+            'original_net_krw': pending[key]['original_net_krw'],
+        })
+        return {
+            'stale_recheck_status': 'REQUESTED',
+            'stale_recheck_original_surplus_bp': pending[key]['original_surplus_bp'],
+            'stale_recheck_original_net_krw': pending[key]['original_net_krw'],
+            'stale_recheck_reason': 'RECHECK_REQUESTED',
+        }
+    reason = result.get('reason', 'RECHECK_NOT_QUEUED')
+    if 'COOLDOWN' in reason or 'QUEUED' in reason:
+        counters['skip_cooldown'] += 1
+    else:
+        counters['skip_rate_limit'] += 1
+    return {'stale_recheck_status': 'NONE', 'stale_recheck_reason': reason}
+
+
+def _resolve_stale_recheck(item, pending, counters, recent):
+    key = _stale_recheck_key(item)
+    request = pending.get(key)
+    if not request:
+        return {}
+    now = time.time()
+    fresh = (
+        item.get('reason_no_trade') != 'STALE_QUOTE'
+        and not item.get('has_stale_quote')
+        and not item.get('stale')
+    )
+    elapsed_ms = round((now - request['requested_at']) * 1000, 2)
+    if not fresh:
+        if now - request['requested_at'] <= cfg.stale_recheck_result_ttl_sec:
+            return {'stale_recheck_status': 'REQUESTED', 'stale_recheck_elapsed_ms': elapsed_ms}
+        status = 'RECHECK_TIMEOUT'
+        counters['timeout'] += 1
+    else:
+        new_surplus = float(item.get('best_net_surplus_bp', -9999) or -9999)
+        new_net = float(item.get('net_expected_profit_krw', 0) or 0)
+        status = 'RECHECK_PASS' if new_surplus >= request['threshold_bp'] and new_net > 0 else 'RECHECK_FAIL'
+        counters['pass' if status == 'RECHECK_PASS' else 'fail'] += 1
+    pending.pop(key, None)
+    result = {
+        'stale_recheck_status': status,
+        'stale_recheck_original_surplus_bp': request['original_surplus_bp'],
+        'stale_recheck_new_surplus_bp': float(item.get('best_net_surplus_bp', 0) or 0),
+        'stale_recheck_original_net_krw': request['original_net_krw'],
+        'stale_recheck_new_net_krw': float(item.get('net_expected_profit_krw', 0) or 0),
+        'stale_recheck_elapsed_ms': elapsed_ms,
+        'stale_recheck_reason': status,
+    }
+    _record_stale_recheck_event(recent, {
+        'pair_id': key[0], 'symbol': key[1], 'status': status,
+        'elapsed_ms': elapsed_ms,
+        'original_surplus_bp': request['original_surplus_bp'],
+        'new_surplus_bp': result['stale_recheck_new_surplus_bp'],
+    })
+    return result
+
+
+def _expire_stale_rechecks(pending, counters, recent):
+    now = time.time()
+    expired = [
+        key for key, item in pending.items()
+        if now - item['requested_at'] > cfg.stale_recheck_result_ttl_sec
+    ]
+    for key in expired:
+        item = pending.pop(key)
+        elapsed_ms = round((now - item['requested_at']) * 1000, 2)
+        counters['timeout'] += 1
+        _record_stale_recheck_event(recent, {
+            'pair_id': key[0], 'symbol': key[1], 'status': 'RECHECK_TIMEOUT',
+            'elapsed_ms': elapsed_ms,
+            'original_surplus_bp': item['original_surplus_bp'],
+            'new_surplus_bp': None,
+        })
+
+
 def main():
     parser = argparse.ArgumentParser(description="KARB_REALTIME_V1 Engine")
     parser.add_argument('--once', action='store_true', help='Run once and exit')
@@ -236,6 +374,8 @@ def main():
         rest_cache_binance_refresh_ms=cfg.rest_cache_binance_refresh_ms,
         rest_cache_skip_upbit_when_ws_ok=cfg.rest_cache_skip_upbit_when_ws_ok,
         rest_cache_ws_fresh_threshold_ms=cfg.rest_cache_ws_fresh_threshold_ms,
+        recheck_cooldown_sec=cfg.stale_recheck_cooldown_sec,
+        recheck_max_queue_size=cfg.stale_recheck_max_queue_size,
     )
     rest_fallback_cache.start(active_symbols)
     bithumb_quote_cache = BithumbQuoteCache(
@@ -246,6 +386,8 @@ def main():
         grace_ms=cfg.bithumb_quote_cache_grace_ms,
         allow_last_good_on_stale=cfg.bithumb_quote_cache_allow_last_good_on_stale,
         max_failures=cfg.bithumb_quote_cache_max_failures,
+        recheck_cooldown_sec=cfg.stale_recheck_cooldown_sec,
+        recheck_max_queue_size=cfg.stale_recheck_max_queue_size,
     )
     bithumb_quote_cache.start(active_symbols)
     ws_market_data = None
@@ -344,6 +486,13 @@ def main():
     tiny_live_blocked_stale_grace_count = 0
     symbol_not_in_live_watchlist_count = 0
     stale_grace_opportunity_count = 0
+    stale_recheck_pending = {}
+    stale_recheck_recent = deque(maxlen=20)
+    stale_recheck_request_times = deque()
+    stale_recheck_counters = {
+        'request': 0, 'pass': 0, 'fail': 0, 'timeout': 0,
+        'skip_cooldown': 0, 'skip_rate_limit': 0,
+    }
     skipped_bithumb_symbol_count = 0
     skipped_bithumb_quote_reasons: dict[str, int] = {}
     skipped_bithumb_timestamps: deque[float] = deque()
@@ -537,6 +686,20 @@ def main():
             # ── RiskGuard ─────────────────────────────────────────────────
             is_safe = risk_guard.check_trade(calc_res)
             reason  = calc_res.get('reason_no_trade', '')
+            calc_res['quote_source'] = q.get('source', 'rest')
+            recheck_update = _resolve_stale_recheck(
+                calc_res, stale_recheck_pending, stale_recheck_counters, stale_recheck_recent
+            )
+            if recheck_update:
+                calc_res.update(recheck_update)
+            elif _stale_recheck_candidate(calc_res):
+                calc_res.update(_request_stale_recheck(
+                    calc_res, stale_recheck_pending, stale_recheck_request_times,
+                    stale_recheck_counters, stale_recheck_recent,
+                    rest_fallback_cache, bithumb_quote_cache,
+                ))
+            else:
+                calc_res.setdefault('stale_recheck_status', 'NONE')
             reason_counts[reason] = reason_counts.get(reason, 0) + 1
             best_reason_this_loop = reason
 
@@ -636,6 +799,20 @@ def main():
                     domestic.update(simulate_paper_fill(domestic, domestic_history, cfg))
                 domestic_reason = domestic.get('reason_no_trade', '')
                 domestic_safe = domestic_reason == 'OK'
+                domestic['quote_source'] = 'rest'
+                recheck_update = _resolve_stale_recheck(
+                    domestic, stale_recheck_pending, stale_recheck_counters, stale_recheck_recent
+                )
+                if recheck_update:
+                    domestic.update(recheck_update)
+                elif _stale_recheck_candidate(domestic):
+                    domestic.update(_request_stale_recheck(
+                        domestic, stale_recheck_pending, stale_recheck_request_times,
+                        stale_recheck_counters, stale_recheck_recent,
+                        rest_fallback_cache, bithumb_quote_cache,
+                    ))
+                else:
+                    domestic.setdefault('stale_recheck_status', 'NONE')
                 domestic_surplus = domestic.get('best_net_surplus_bp', -9999)
                 bithumb_age_ms = max(0, time.time() - float(bithumb_q.get('ts', 0) or 0)) * 1000
                 decisions.append(_decision_record(
@@ -759,6 +936,19 @@ def main():
         symbol_status_count = len(ws_metrics.get('symbols', []))
         top_symbol_by_signal = max(signal_counts, key=signal_counts.get) if signal_counts else ''
         top_symbol_by_surplus = max(symbol_surplus_max, key=symbol_surplus_max.get) if symbol_surplus_max else ''
+        _expire_stale_rechecks(stale_recheck_pending, stale_recheck_counters, stale_recheck_recent)
+        stale_recheck_elapsed = [
+            float(item.get('elapsed_ms', 0) or 0)
+            for item in stale_recheck_recent if item.get('elapsed_ms') is not None
+        ]
+        stale_recheck_done = (
+            stale_recheck_counters['pass'] + stale_recheck_counters['fail']
+            + stale_recheck_counters['timeout']
+        )
+        stale_recheck_pass_ratio = round(
+            stale_recheck_counters['pass'] / max(1, stale_recheck_done), 4
+        )
+        stale_recheck_last = next(iter(stale_recheck_recent), {})
         runtime_metrics = {
             'started_at':           started_at,
             'loop_count':           total_loops,
@@ -789,6 +979,30 @@ def main():
             'live_blocked_stale_grace_count': live_blocked_stale_grace_count,
             'tiny_live_blocked_stale_grace_count': tiny_live_blocked_stale_grace_count,
             'symbol_not_in_live_watchlist_count': symbol_not_in_live_watchlist_count,
+            'stale_recheck_enabled': cfg.stale_recheck_enabled,
+            'stale_recheck_paper_only': cfg.stale_recheck_paper_only,
+            'stale_recheck_request_count': stale_recheck_counters['request'],
+            'stale_recheck_execute_count': (
+                rest_fallback_cache.get_recheck_status().get('recheck_execute_count', 0)
+                + bithumb_quote_cache.get_recheck_status().get('recheck_execute_count', 0)
+            ),
+            'stale_recheck_pass_count': stale_recheck_counters['pass'],
+            'stale_recheck_fail_count': stale_recheck_counters['fail'],
+            'stale_recheck_timeout_count': stale_recheck_counters['timeout'],
+            'stale_recheck_skip_cooldown_count': stale_recheck_counters['skip_cooldown'],
+            'stale_recheck_skip_rate_limit_count': stale_recheck_counters['skip_rate_limit'],
+            'stale_recheck_queue_size': (
+                rest_fallback_cache.get_recheck_status().get('recheck_queue_size', 0)
+                + bithumb_quote_cache.get_recheck_status().get('recheck_queue_size', 0)
+                + len(stale_recheck_pending)
+            ),
+            'stale_recheck_last_symbol': stale_recheck_last.get('symbol', ''),
+            'stale_recheck_last_status': stale_recheck_last.get('status', 'NONE'),
+            'stale_recheck_avg_elapsed_ms': round(
+                sum(stale_recheck_elapsed) / len(stale_recheck_elapsed), 2
+            ) if stale_recheck_elapsed else 0.0,
+            'stale_recheck_pass_ratio': stale_recheck_pass_ratio,
+            'stale_recheck_recent': list(stale_recheck_recent),
             'last_quote_age_sec':   round(max(0.0, now - last_quote_at), 2) if last_quote_at else None,
             'updated_at':           now,
             'last_update_at':       now,
