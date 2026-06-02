@@ -15,6 +15,10 @@ class RestFallbackQuoteCache:
         refresh_ms=1000,
         stale_ms=3000,
         skip_on_backoff=True,
+        rest_cache_upbit_refresh_ms=3000,
+        rest_cache_binance_refresh_ms=1000,
+        rest_cache_skip_upbit_when_ws_ok=True,
+        rest_cache_ws_fresh_threshold_ms=1500,
     ):
         self.upbit = upbit_public
         self.binance = binance_public
@@ -22,6 +26,10 @@ class RestFallbackQuoteCache:
         self.refresh_sec = max(0.05, float(refresh_ms) / 1000)
         self.stale_ms = max(1.0, float(stale_ms))
         self.skip_on_backoff = bool(skip_on_backoff)
+        self.upbit_refresh_sec = max(0.05, float(rest_cache_upbit_refresh_ms) / 1000)
+        self.binance_refresh_sec = max(0.05, float(rest_cache_binance_refresh_ms) / 1000)
+        self.skip_upbit_when_ws_ok = bool(rest_cache_skip_upbit_when_ws_ok)
+        self.ws_fresh_threshold_ms = max(1.0, float(rest_cache_ws_fresh_threshold_ms))
         self._lock = threading.RLock()
         self._stop = threading.Event()
         self._thread = None
@@ -37,6 +45,9 @@ class RestFallbackQuoteCache:
         self._binance_429_skip_count = 0
         self._quote_ts_fallback_count = 0
         self._quote_ts_normalized_count = 0
+        self._last_exchange_refresh_at = {'upbit': 0.0, 'binance': 0.0}
+        self._upbit_ws_fresh_at = {}
+        self._upbit_ws_fresh_skip_count = 0
 
     def start(self, symbols):
         self.update_symbols(symbols)
@@ -62,6 +73,17 @@ class RestFallbackQuoteCache:
                 symbol: self._quotes.get(symbol, {})
                 for symbol in items
             }
+            self._upbit_ws_fresh_at = {
+                symbol: ts for symbol, ts in self._upbit_ws_fresh_at.items()
+                if symbol in items
+            }
+
+    def update_ws_fresh_symbols(self, symbols):
+        now = time.time()
+        with self._lock:
+            self._upbit_ws_fresh_at = {
+                symbol: now for symbol in symbols if symbol in self._symbols
+            }
 
     def get_snapshot(self):
         now = time.time()
@@ -81,6 +103,9 @@ class RestFallbackQuoteCache:
 
     def get_status(self):
         now = time.time()
+        upbit_rate = rate_limiter.get_status().get('exchanges', {}).get('upbit', {})
+        upbit_calls = upbit_rate.get('rest_call_counts', {})
+        upbit_429 = upbit_rate.get('api_429_counts', {})
         with self._lock:
             quotes = copy.deepcopy(self._quotes)
             last_success_at = self._last_success_at
@@ -102,6 +127,9 @@ class RestFallbackQuoteCache:
                 'binance_429_skip_count': self._binance_429_skip_count,
                 'quote_ts_fallback_count': self._quote_ts_fallback_count,
                 'quote_ts_normalized_count': self._quote_ts_normalized_count,
+                'upbit_ws_fresh_skip_count': self._upbit_ws_fresh_skip_count,
+                'upbit_rest_call_count_rest_cache': upbit_calls.get('rest_cache', 0),
+                'upbit_429_count_rest_cache': upbit_429.get('rest_cache', 0),
                 'last_success_age_ms': (
                     round(max(0.0, now - last_success_at) * 1000, 2)
                     if last_success_at else None
@@ -117,18 +145,29 @@ class RestFallbackQuoteCache:
             self._last_update_at = fetch_time
         updated = False
         try:
+            refresh_upbit = self._exchange_refresh_due('upbit', fetch_time)
+            refresh_binance = self._exchange_refresh_due('binance', fetch_time)
             for symbol in symbols:
                 legs = {}
-                if self._backoff_active('upbit'):
+                if not refresh_upbit:
+                    pass
+                elif self._upbit_ws_is_fresh(symbol, fetch_time):
+                    with self._lock:
+                        self._upbit_ws_fresh_skip_count += 1
+                elif self._backoff_active('upbit'):
                     self._record_backoff_skip('upbit')
                 else:
-                    quote = self.upbit.fetch_order_book(symbol)
+                    with rate_limiter.source('rest_cache'):
+                        quote = self.upbit.fetch_order_book(symbol)
                     if quote:
                         legs['upbit'] = self._normalize_quote(quote, fetch_time)
-                if self._backoff_active('binance'):
+                if not refresh_binance:
+                    pass
+                elif self._backoff_active('binance'):
                     self._record_backoff_skip('binance')
                 else:
-                    quote = self.binance.fetch_order_book(symbol)
+                    with rate_limiter.source('rest_cache'):
+                        quote = self.binance.fetch_order_book(symbol)
                     if quote:
                         legs['binance'] = self._normalize_quote(quote, fetch_time)
                 if legs:
@@ -138,6 +177,11 @@ class RestFallbackQuoteCache:
                         if previous.get('upbit') and previous.get('binance'):
                             self._quotes[symbol] = self._build_symbol_quote(symbol, previous)
                     updated = True
+            with self._lock:
+                if refresh_upbit:
+                    self._last_exchange_refresh_at['upbit'] = fetch_time
+                if refresh_binance:
+                    self._last_exchange_refresh_at['binance'] = fetch_time
             with self._lock:
                 if updated:
                     self._last_success_at = time.time()
@@ -157,6 +201,19 @@ class RestFallbackQuoteCache:
 
     def _backoff_active(self, exchange):
         return self.skip_on_backoff and rate_limiter.should_backoff(exchange)
+
+    def _exchange_refresh_due(self, exchange, now):
+        with self._lock:
+            last = self._last_exchange_refresh_at[exchange]
+        interval = self.upbit_refresh_sec if exchange == 'upbit' else self.binance_refresh_sec
+        return now - last >= interval
+
+    def _upbit_ws_is_fresh(self, symbol, now):
+        if not self.skip_upbit_when_ws_ok:
+            return False
+        with self._lock:
+            updated_at = self._upbit_ws_fresh_at.get(symbol, 0.0)
+        return updated_at and (now - updated_at) * 1000 <= self.ws_fresh_threshold_ms
 
     def _record_backoff_skip(self, exchange):
         with self._lock:

@@ -123,6 +123,23 @@ def _memory_telemetry(enabled):
         return {'process_memory_mb': None, 'memory_metric_available': False}
 
 
+def _upbit_rest_metrics(rate_limit_status):
+    upbit = rate_limit_status.get('exchanges', {}).get('upbit', {})
+    calls = upbit.get('rest_call_counts', {})
+    errors = upbit.get('api_429_counts', {})
+    return {
+        'upbit_rest_call_count_total': sum(calls.values()),
+        'upbit_rest_call_count_rest_cache': calls.get('rest_cache', 0),
+        'upbit_rest_call_count_scanner': calls.get('scanner', 0),
+        'upbit_rest_call_count_fx': calls.get('fx', 0),
+        'upbit_rest_call_count_other': calls.get('other', 0),
+        'upbit_429_count_rest_cache': errors.get('rest_cache', 0),
+        'upbit_429_count_scanner': errors.get('scanner', 0),
+        'upbit_429_count_fx': errors.get('fx', 0),
+        'upbit_429_count_other': errors.get('other', 0),
+    }
+
+
 def _merge_scanner_snapshot(current_snapshot, next_snapshot, active_symbols):
     if next_snapshot.get('source') != 'fallback':
         return next_snapshot
@@ -215,6 +232,10 @@ def main():
         refresh_ms=cfg.rest_fallback_cache_refresh_ms,
         stale_ms=cfg.rest_fallback_cache_stale_ms,
         skip_on_backoff=cfg.rest_fallback_cache_skip_on_backoff,
+        rest_cache_upbit_refresh_ms=cfg.rest_cache_upbit_refresh_ms,
+        rest_cache_binance_refresh_ms=cfg.rest_cache_binance_refresh_ms,
+        rest_cache_skip_upbit_when_ws_ok=cfg.rest_cache_skip_upbit_when_ws_ok,
+        rest_cache_ws_fresh_threshold_ms=cfg.rest_cache_ws_fresh_threshold_ms,
     )
     rest_fallback_cache.start(active_symbols)
     bithumb_quote_cache = BithumbQuoteCache(
@@ -289,6 +310,7 @@ def main():
     surplus_bp_list: deque[float]   = deque(maxlen=1000)
     loop_lat_list:   deque[float]   = deque(maxlen=1000)
     quote_lat_list:  deque[float]   = deque(maxlen=1000)
+    quote_age_list:  deque[float]   = deque(maxlen=1000)
     latest_reason    = ''
     last_quote_at    = 0.0
     latest_decision_at = 0.0
@@ -305,8 +327,10 @@ def main():
     last_percentile_calc = 0.0
     cached_p95_loop_latency_ms = 0.0
     cached_p95_quote_latency_ms = 0.0
+    cached_p95_quote_age_ms = 0.0
     skipped_bithumb_symbol_count = 0
     skipped_bithumb_quote_reasons: dict[str, int] = {}
+    skipped_bithumb_timestamps: deque[float] = deque()
     quote_history_cleanup_count = 0
     last_quote_history_cleanup_at = 0.0
     scanner_refresh_thread = None
@@ -370,7 +394,8 @@ def main():
 
         # ── FX 환율 ──────────────────────────────────────────────────────
         try:
-            krw_usdt, fx_status = fx_oracle.get_krw_usdt_rate()
+            with rate_limiter.source('fx'):
+                krw_usdt, fx_status = fx_oracle.get_krw_usdt_rate()
         except Exception as e:
             event_logger.log_error('fx_oracle', e)
             fx_status = "ERROR"
@@ -388,6 +413,10 @@ def main():
 
         # ── 호가 수집 ────────────────────────────────────────────────────
         try:
+            if ws_market_data:
+                rest_fallback_cache.update_ws_fresh_symbols(
+                    ws_market_data.fresh_symbols('upbit')
+                )
             quotes = (
                 ws_market_data.fetch_all(
                     quote_engine if cfg.rest_direct_fallback_enabled else None,
@@ -411,6 +440,8 @@ def main():
         else:
             bithumb_quotes = bithumb_pub.fetch_all_order_books(active_symbols)
         loop_opportunities = []
+        skipped_bithumb_symbol_count_last_loop = 0
+        skipped_bithumb_quote_reasons_last_loop: dict[str, int] = {}
 
         best_sym_this_loop    = ''
         best_dir_this_loop    = ''
@@ -430,6 +461,13 @@ def main():
             max_q_lat = max(u_lat, b_lat)
             quote_lat_list.append(max_q_lat)
             last_quote_at = max(last_quote_at, upbit_q.get('ts', 0), binance_q.get('ts', 0))
+            quote_age_list.append(max(
+                0.0,
+                time.time() - min(
+                    float(upbit_q.get('ts', 0) or 0),
+                    float(binance_q.get('ts', 0) or 0),
+                ),
+            ) * 1000)
 
             if cfg.bounded_collector_enabled:
                 collector.push(sym, {'upbit': upbit_q, 'binance': binance_q, 'symbol': sym})
@@ -525,8 +563,13 @@ def main():
                 skip_reason = _bithumb_skip_reason(q.get('upbit', {}), bithumb_q)
                 if cfg.skip_missing_bithumb_quotes and skip_reason:
                     skipped_bithumb_symbol_count += 1
+                    skipped_bithumb_symbol_count_last_loop += 1
+                    skipped_bithumb_timestamps.append(time.time())
                     skipped_bithumb_quote_reasons[skip_reason] = (
                         skipped_bithumb_quote_reasons.get(skip_reason, 0) + 1
+                    )
+                    skipped_bithumb_quote_reasons_last_loop[skip_reason] = (
+                        skipped_bithumb_quote_reasons_last_loop.get(skip_reason, 0) + 1
                     )
                     continue
                 domestic_quotes['UPBIT_BITHUMB'][sym] = {
@@ -552,6 +595,9 @@ def main():
                 quote_count += 1
                 quote_lat_list.append(float(bithumb_q.get('latency_ms', 0) or 0))
                 last_quote_at = max(last_quote_at, float(bithumb_q.get('ts', 0) or 0))
+                quote_age_list.append(max(
+                    0.0, time.time() - float(bithumb_q.get('ts', 0) or 0)
+                ) * 1000)
                 surplus_bp_list.append(domestic_surplus)
                 dynamic_slippage_list.append(float(domestic.get('dynamic_slippage_bp', 0) or 0))
                 paper_latency_list.append(float(domestic.get('latency_used_ms', 0) or 0))
@@ -621,6 +667,7 @@ def main():
         if now - last_percentile_calc >= cfg.telemetry_percentile_interval_sec:
             cached_p95_loop_latency_ms = _percentile(loop_lat_list, 95)
             cached_p95_quote_latency_ms = _percentile(quote_lat_list, 95)
+            cached_p95_quote_age_ms = _percentile(quote_age_list, 95)
             last_percentile_calc = now
         ws_metrics = ws_market_data.metrics() if ws_market_data else {
             'ws_connected': False,
@@ -650,6 +697,12 @@ def main():
         fx_cache_status = fx_oracle.get_status()
         quote_history_row_count = sum(len(rows) for rows in quote_history.values())
         memory_telemetry = _memory_telemetry(cfg.memory_telemetry_enabled)
+        while skipped_bithumb_timestamps and now - skipped_bithumb_timestamps[0] > 60:
+            skipped_bithumb_timestamps.popleft()
+        stale_symbol_count = sum(
+            1 for item in ws_metrics.get('symbols', []) if item.get('stale')
+        )
+        symbol_status_count = len(ws_metrics.get('symbols', []))
         top_symbol_by_signal = max(signal_counts, key=signal_counts.get) if signal_counts else ''
         top_symbol_by_surplus = max(symbol_surplus_max, key=symbol_surplus_max.get) if symbol_surplus_max else ''
         runtime_metrics = {
@@ -659,6 +712,8 @@ def main():
             'last_loop_latency_ms': round(loop_ms, 2),
             'p95_loop_latency_ms':  cached_p95_loop_latency_ms,
             'p95_quote_latency_ms': cached_p95_quote_latency_ms,
+            'p95_quote_fetch_latency_ms': cached_p95_quote_latency_ms,
+            'p95_quote_age_ms':     cached_p95_quote_age_ms,
             'last_quote_age_sec':   round(max(0.0, now - last_quote_at), 2) if last_quote_at else None,
             'updated_at':           now,
             'last_update_at':       now,
@@ -679,11 +734,15 @@ def main():
             'rest_fallback_cache_stale_count': ws_metrics.get('rest_fallback_cache_stale_count', 0),
             'rest_direct_call_count': ws_metrics.get('rest_direct_call_count', 0),
             'rest_fallback_older_than_ws_drop_count': ws_metrics.get('rest_fallback_older_than_ws_drop_count', 0),
+            'upbit_ws_fresh_skip_count': rest_fallback_cache_status.get('upbit_ws_fresh_skip_count', 0),
             **fx_cache_status,
             'rate_limit_throttle_count': rate_limit_status.get('total_throttle_count', 0),
             'api_429_count':        rate_limit_status.get('total_api_429_count', 0),
             'rate_limit_status':    rate_limit_status,
+            **_upbit_rest_metrics(rate_limit_status),
             'quote_stale_count':    ws_metrics.get('quote_stale_count', 0),
+            'stale_symbol_count':   stale_symbol_count,
+            'stale_symbol_ratio':   round(stale_symbol_count / max(1, symbol_status_count), 4),
             'symbol_quote_status':  ws_metrics.get('symbols', []),
             'last_msg_at':          ws_metrics.get('last_msg_at', 0.0),
             'last_msg_age_ms':      ws_metrics.get('last_msg_age_ms'),
@@ -715,6 +774,11 @@ def main():
             'bithumb_quote_cache_status': bithumb_quote_cache_status,
             'skipped_bithumb_symbol_count': skipped_bithumb_symbol_count,
             'skipped_bithumb_quote_reasons': skipped_bithumb_quote_reasons,
+            'skipped_bithumb_symbol_count_total': skipped_bithumb_symbol_count,
+            'skipped_bithumb_symbol_count_window': len(skipped_bithumb_timestamps),
+            'skipped_bithumb_symbol_count_last_loop': skipped_bithumb_symbol_count_last_loop,
+            'skipped_bithumb_quote_reasons_total': skipped_bithumb_quote_reasons,
+            'skipped_bithumb_quote_reasons_last_loop': skipped_bithumb_quote_reasons_last_loop,
             'quote_history_key_count': len(quote_history),
             'quote_history_row_count': quote_history_row_count,
             'quote_history_max_rows_per_key': cfg.quote_history_maxlen,

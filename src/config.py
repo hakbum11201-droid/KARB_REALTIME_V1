@@ -62,7 +62,7 @@ class Config:
     @property
     def rate_limiter_enabled(self): return self.get('rate_limiter_enabled', True)
     @property
-    def rate_limit_upbit_per_sec(self): return self.get('rate_limit_upbit_per_sec', 6)
+    def rate_limit_upbit_per_sec(self): return self.get('rate_limit_upbit_per_sec', 5)
     @property
     def rate_limit_bithumb_per_sec(self): return self.get('rate_limit_bithumb_per_sec', 8)
     @property
@@ -70,7 +70,9 @@ class Config:
     @property
     def rate_limit_burst(self): return self.get('rate_limit_burst', 5)
     @property
-    def rate_limit_429_backoff_sec(self): return self.get('rate_limit_429_backoff_sec', 10)
+    def rate_limit_429_backoff_sec(self): return self.get('rate_limit_429_backoff_sec', 30)
+    @property
+    def upbit_429_backoff_sec(self): return self.get('upbit_429_backoff_sec', 30)
     @property
     def rest_fallback_min_interval_ms(self): return self.get('rest_fallback_min_interval_ms', 1000)
     @property
@@ -85,6 +87,14 @@ class Config:
     def rest_direct_fallback_enabled(self): return self.get('rest_direct_fallback_enabled', False)
     @property
     def rest_direct_call_warn_threshold(self): return self.get('rest_direct_call_warn_threshold', 1)
+    @property
+    def rest_cache_upbit_refresh_ms(self): return self.get('rest_cache_upbit_refresh_ms', 3000)
+    @property
+    def rest_cache_binance_refresh_ms(self): return self.get('rest_cache_binance_refresh_ms', 1000)
+    @property
+    def rest_cache_skip_upbit_when_ws_ok(self): return self.get('rest_cache_skip_upbit_when_ws_ok', True)
+    @property
+    def rest_cache_ws_fresh_threshold_ms(self): return self.get('rest_cache_ws_fresh_threshold_ms', 1500)
     @property
     def fx_cache_enabled(self): return self.get('fx_cache_enabled', True)
     @property

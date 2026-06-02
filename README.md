@@ -302,3 +302,13 @@ known value, while an FX value older than `fx_cache_max_age_sec` is marked
 background REST cache state. During smoke tests, verify direct REST calls stay
 at zero, cache hits can increase, older-than-WS drops can increase, and
 `fx_cache_age_sec` refreshes normally.
+
+For long paper smoke tests, the recommended checks are:
+
+- `Api429Delta` stays zero or nearly zero over a long interval.
+- `DirectRest` stays zero.
+- When the Bithumb cache reports zero stale quotes, `Bithumb Skipped Last Loop`
+  should also stay zero.
+- `P95Loop` should preferably remain below 100 ms.
+- `p95_quote_age_ms` reports freshness age, while
+  `p95_quote_fetch_latency_ms` reports REST fetch latency.

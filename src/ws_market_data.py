@@ -77,6 +77,12 @@ class WebSocketMarketData:
             self.cache.update('binance', symbol, quote['binance'], source='rest')
         return self.cache.snapshot(require_fresh=True)
 
+    def fresh_symbols(self, exchange):
+        return [
+            symbol for symbol, quote in self.cache.snapshot(require_fresh=True).items()
+            if quote.get(exchange, {}).get('source') == 'ws'
+        ]
+
     def _merge_rest_cache(self, quotes, rest_fallback_cache):
         fallback = rest_fallback_cache.get_snapshot()
         cache_status = rest_fallback_cache.get_status()

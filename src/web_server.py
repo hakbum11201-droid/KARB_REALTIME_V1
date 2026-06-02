@@ -241,6 +241,8 @@ def _bithumb_cache_status_payload():
         'skipped_bithumb_quote_reasons': telemetry.get('skipped_bithumb_quote_reasons', {}),
         'quote_history_key_count': telemetry.get('quote_history_key_count', 0),
         'quote_history_cleanup_count': telemetry.get('quote_history_cleanup_count', 0),
+        'skipped_bithumb_symbol_count_last_loop': telemetry.get('skipped_bithumb_symbol_count_last_loop', 0),
+        'skipped_bithumb_quote_reasons_last_loop': telemetry.get('skipped_bithumb_quote_reasons_last_loop', {}),
     }
 
 
@@ -254,6 +256,23 @@ def _rest_fallback_cache_status_payload():
         'rest_fallback_cache_miss_count': telemetry.get('rest_fallback_cache_miss_count', 0),
         'rest_fallback_cache_stale_count': telemetry.get('rest_fallback_cache_stale_count', 0),
         'rest_fallback_older_than_ws_drop_count': telemetry.get('rest_fallback_older_than_ws_drop_count', 0),
+        'upbit_rest_call_count_total': telemetry.get('upbit_rest_call_count_total', 0),
+        'upbit_rest_call_count_rest_cache': telemetry.get('upbit_rest_call_count_rest_cache', 0),
+        'upbit_rest_call_count_scanner': telemetry.get('upbit_rest_call_count_scanner', 0),
+        'upbit_rest_call_count_fx': telemetry.get('upbit_rest_call_count_fx', 0),
+        'upbit_rest_call_count_other': telemetry.get('upbit_rest_call_count_other', 0),
+        'upbit_429_count_rest_cache': telemetry.get('upbit_429_count_rest_cache', 0),
+        'upbit_429_count_scanner': telemetry.get('upbit_429_count_scanner', 0),
+        'upbit_429_count_fx': telemetry.get('upbit_429_count_fx', 0),
+        'upbit_429_count_other': telemetry.get('upbit_429_count_other', 0),
+        'upbit_ws_fresh_skip_count': telemetry.get(
+            'rest_fallback_cache_status', {}
+        ).get('upbit_ws_fresh_skip_count', 0),
+        'skipped_bithumb_symbol_count_last_loop': telemetry.get('skipped_bithumb_symbol_count_last_loop', 0),
+        'skipped_bithumb_quote_reasons_last_loop': telemetry.get('skipped_bithumb_quote_reasons_last_loop', {}),
+        'p95_quote_age_ms': telemetry.get('p95_quote_age_ms', 0),
+        'p95_quote_fetch_latency_ms': telemetry.get('p95_quote_fetch_latency_ms', 0),
+        'stale_symbol_ratio': telemetry.get('stale_symbol_ratio', 0),
     }
 
 

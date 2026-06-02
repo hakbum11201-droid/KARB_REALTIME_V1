@@ -20,11 +20,12 @@ tiny_live_require_inventory_ok: true
 use_websocket_market_data: true
 rest_fallback_enabled: true
 rate_limiter_enabled: true
-rate_limit_upbit_per_sec: 6
+rate_limit_upbit_per_sec: 5
 rate_limit_bithumb_per_sec: 8
 rate_limit_binance_per_sec: 10
 rate_limit_burst: 5
-rate_limit_429_backoff_sec: 10
+rate_limit_429_backoff_sec: 30
+upbit_429_backoff_sec: 30
 rest_fallback_min_interval_ms: 1000
 rest_fallback_cache_enabled: true
 rest_fallback_cache_refresh_ms: 1000
@@ -32,6 +33,10 @@ rest_fallback_cache_stale_ms: 3000
 rest_fallback_cache_skip_on_backoff: true
 rest_direct_fallback_enabled: false
 rest_direct_call_warn_threshold: 1
+rest_cache_upbit_refresh_ms: 3000
+rest_cache_binance_refresh_ms: 1000
+rest_cache_skip_upbit_when_ws_ok: true
+rest_cache_ws_fresh_threshold_ms: 1500
 fx_cache_enabled: true
 fx_cache_interval_sec: 60
 fx_cache_max_age_sec: 300

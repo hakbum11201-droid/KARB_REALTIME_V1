@@ -1,4 +1,5 @@
 """Shared token-bucket guards for public REST market-data calls."""
+from contextlib import contextmanager
 import threading
 import time
 
@@ -7,11 +8,13 @@ from config import cfg
 
 class TokenBucketRateLimiter:
     EXCHANGES = ('upbit', 'bithumb', 'binance')
+    SOURCES = ('rest_cache', 'scanner', 'fx', 'other')
 
     def __init__(self, config=None):
         self._cfg = config or cfg
         self._enabled = bool(self._cfg.rate_limiter_enabled)
         self._lock = threading.Lock()
+        self._local = threading.local()
         self._states = {}
         now = time.time()
         for exchange in self.EXCHANGES:
@@ -26,6 +29,8 @@ class TokenBucketRateLimiter:
                 'api_429_count': 0,
                 'backoff_until': 0.0,
                 'last_error': '',
+                'rest_call_counts': {source: 0 for source in self.SOURCES},
+                'api_429_counts': {source: 0 for source in self.SOURCES},
             }
 
     def acquire(self, exchange, weight=1) -> bool:
@@ -45,6 +50,7 @@ class TokenBucketRateLimiter:
                 return False
             if state['tokens'] >= weight:
                 state['tokens'] -= weight
+                state['rest_call_counts'][self._current_source()] += 1
                 return True
             state['throttle_count'] += 1
             state['last_error'] = 'RATE_LIMIT_THROTTLED'
@@ -57,16 +63,22 @@ class TokenBucketRateLimiter:
             if now < state['backoff_until'] or state['tokens'] < weight:
                 return False
             state['tokens'] -= weight
+            state['rest_call_counts'][self._current_source()] += 1
             return True
 
-    def record_429(self, exchange) -> None:
+    def record_429(self, exchange, source=None) -> None:
         exchange = self._normalize_exchange(exchange)
+        source = self._normalize_source(source or self._current_source())
         with self._lock:
             state = self._states[exchange]
             state['api_429_count'] += 1
+            state['api_429_counts'][source] += 1
             state['backoff_until'] = max(
                 state['backoff_until'],
-                time.time() + float(self._cfg.rate_limit_429_backoff_sec),
+                time.time() + float(
+                    self._cfg.upbit_429_backoff_sec
+                    if exchange == 'upbit' else self._cfg.rate_limit_429_backoff_sec
+                ),
             )
             state['last_error'] = 'HTTP_429'
 
@@ -74,6 +86,15 @@ class TokenBucketRateLimiter:
         exchange = self._normalize_exchange(exchange)
         with self._lock:
             return time.time() < self._states[exchange]['backoff_until']
+
+    @contextmanager
+    def source(self, source):
+        previous = getattr(self._local, 'source', 'other')
+        self._local.source = self._normalize_source(source)
+        try:
+            yield
+        finally:
+            self._local.source = previous
 
     def get_status(self) -> dict:
         with self._lock:
@@ -83,6 +104,8 @@ class TokenBucketRateLimiter:
                 self._refill(state, now)
                 exchanges[exchange] = {
                     **state,
+                    'rest_call_counts': dict(state['rest_call_counts']),
+                    'api_429_counts': dict(state['api_429_counts']),
                     'tokens': round(state['tokens'], 3),
                     'backoff_active': now < state['backoff_until'],
                 }
@@ -99,6 +122,13 @@ class TokenBucketRateLimiter:
         if exchange not in self._states:
             raise ValueError(f'Unsupported exchange: {exchange}')
         return exchange
+
+    def _normalize_source(self, source) -> str:
+        source = str(source or 'other').lower()
+        return source if source in self.SOURCES else 'other'
+
+    def _current_source(self) -> str:
+        return self._normalize_source(getattr(self._local, 'source', 'other'))
 
     @staticmethod
     def _refill(state, now) -> None:
