@@ -235,6 +235,121 @@ def _stale_recheck_pass_status(elapsed_ms):
     )
 
 
+def _is_actionable_stale_recheck(item, request, elapsed_ms, new_surplus, new_net):
+    if float(elapsed_ms or 0) > cfg.stale_recheck_fast_pass_ms:
+        return False
+    original_surplus = float(request.get('original_surplus_bp', 0) or 0)
+    threshold = float(request.get('threshold_bp', 0) or 0)
+    surplus_ok = new_surplus >= original_surplus * 0.7 or new_surplus >= threshold
+    liquidity_ok = item.get('liquidity_class', 'NORMAL') in ('GOOD', 'NORMAL')
+    stale_blocked = any(bool(item.get(name)) for name in (
+        'stale', 'has_stale_quote', 'stale_grace', 'bithumb_stale_grace',
+    ))
+    source = str(item.get('quote_source') or item.get('source') or '').lower()
+    source_ok = source in ('ws', 'rest', 'rest_cache', 'bithumb_cache', 'targeted_refresh', 'fresh')
+    return surplus_ok and new_net > 0 and liquidity_ok and not stale_blocked and source_ok
+
+
+def _stale_recheck_summary_bucket():
+    return {
+        'request_count': 0,
+        'fast_pass_count': 0,
+        'late_pass_count': 0,
+        'actionable_fast_pass_count': 0,
+        'fail_count': 0,
+        'timeout_count': 0,
+        '_elapsed_sum': 0.0,
+        '_elapsed_count': 0,
+        '_new_surplus_sum': 0.0,
+        '_new_surplus_count': 0,
+    }
+
+
+def _finalize_stale_recheck_summary(bucket):
+    done = (
+        bucket['fast_pass_count'] + bucket['late_pass_count']
+        + bucket['fail_count'] + bucket['timeout_count']
+    )
+    bucket['avg_elapsed_ms'] = round(
+        bucket['_elapsed_sum'] / bucket['_elapsed_count'], 2
+    ) if bucket['_elapsed_count'] else 0.0
+    bucket['avg_new_surplus_bp'] = round(
+        bucket['_new_surplus_sum'] / bucket['_new_surplus_count'], 2
+    ) if bucket['_new_surplus_count'] else 0.0
+    bucket['pass_ratio'] = round(
+        (bucket['fast_pass_count'] + bucket['late_pass_count']) / max(1, done), 4
+    )
+    bucket['fast_pass_ratio'] = round(bucket['fast_pass_count'] / max(1, done), 4)
+    bucket['actionable_fast_pass_ratio'] = round(
+        bucket['actionable_fast_pass_count'] / max(1, done), 4
+    )
+    bucket.pop('_elapsed_sum', None)
+    bucket.pop('_elapsed_count', None)
+    bucket.pop('_new_surplus_sum', None)
+    bucket.pop('_new_surplus_count', None)
+    return bucket
+
+
+def _stale_recheck_summaries(recent):
+    by_pair = {}
+    by_symbol = {}
+    for event in recent:
+        pair_id = event.get('pair_id') or 'UNKNOWN'
+        symbol = event.get('symbol') or ''
+        pair_bucket = by_pair.setdefault(pair_id, _stale_recheck_summary_bucket())
+        symbol_bucket = by_symbol.setdefault(symbol, _stale_recheck_summary_bucket()) if symbol else None
+        buckets = [pair_bucket] + ([symbol_bucket] if symbol_bucket is not None else [])
+        status = event.get('status', '')
+        for bucket in buckets:
+            if status == 'RECHECK_REQUESTED':
+                bucket['request_count'] += 1
+            elif status in ('RECHECK_FAST_PASS', 'RECHECK_ACTIONABLE_FAST_PASS'):
+                bucket['fast_pass_count'] += 1
+                if status == 'RECHECK_ACTIONABLE_FAST_PASS' or event.get('actionable_fast_pass'):
+                    bucket['actionable_fast_pass_count'] += 1
+            elif status == 'RECHECK_LATE_PASS':
+                bucket['late_pass_count'] += 1
+            elif status == 'RECHECK_FAIL':
+                bucket['fail_count'] += 1
+            elif status == 'RECHECK_TIMEOUT':
+                bucket['timeout_count'] += 1
+            elapsed = event.get('elapsed_total_ms', event.get('elapsed_ms'))
+            if elapsed is not None:
+                bucket['_elapsed_sum'] += float(elapsed or 0)
+                bucket['_elapsed_count'] += 1
+            new_surplus = event.get('new_surplus_bp')
+            if new_surplus is not None:
+                bucket['_new_surplus_sum'] += float(new_surplus or 0)
+                bucket['_new_surplus_count'] += 1
+    by_pair = {
+        pair: _finalize_stale_recheck_summary(bucket)
+        for pair, bucket in by_pair.items()
+    }
+    by_symbol_items = [
+        {'symbol': symbol, **_finalize_stale_recheck_summary(bucket)}
+        for symbol, bucket in by_symbol.items()
+    ]
+    by_symbol_items.sort(
+        key=lambda item: (
+            item.get('actionable_fast_pass_count', 0),
+            item.get('fast_pass_count', 0),
+            item.get('request_count', 0),
+        ),
+        reverse=True,
+    )
+    return by_pair, by_symbol_items[:10]
+
+
+def _stale_recheck_health(avg_elapsed_ms, timeout_ratio, queue_size, api_429_delta=0):
+    if avg_elapsed_ms > 3000 or timeout_ratio > 0.4 or queue_size > cfg.stale_recheck_max_queue_size // 2:
+        return 'BAD'
+    if avg_elapsed_ms <= 1500 and timeout_ratio <= 0.2 and api_429_delta <= 0 and queue_size <= 5:
+        return 'GOOD'
+    if avg_elapsed_ms <= 3000 and timeout_ratio <= 0.4:
+        return 'WATCH'
+    return 'BAD'
+
+
 def _request_stale_recheck(item, pending, request_times, counters, recent, rest_cache, bithumb_cache):
     now = time.time()
     while request_times and now - request_times[0] > 60:
@@ -331,6 +446,9 @@ def _resolve_stale_recheck(item, pending, counters, recent):
         status = _stale_recheck_pass_status(elapsed_ms) if new_surplus >= request['threshold_bp'] and new_net > 0 else 'RECHECK_FAIL'
         if status == 'RECHECK_FAST_PASS':
             counters['fast_pass'] += 1
+            if _is_actionable_stale_recheck(item, request, elapsed_ms, new_surplus, new_net):
+                status = 'RECHECK_ACTIONABLE_FAST_PASS'
+                counters['actionable_fast_pass'] += 1
         elif status == 'RECHECK_LATE_PASS':
             counters['late_pass'] += 1
         else:
@@ -348,6 +466,7 @@ def _resolve_stale_recheck(item, pending, counters, recent):
         'stale_recheck_elapsed_fetch_ms': breakdown['elapsed_fetch_ms'],
         'stale_recheck_elapsed_decision_wait_ms': breakdown['elapsed_decision_wait_ms'],
         'stale_recheck_reason': status,
+        'stale_recheck_actionable_fast_pass': status == 'RECHECK_ACTIONABLE_FAST_PASS',
     }
     _record_stale_recheck_event(recent, {
         'pair_id': key[0], 'symbol': key[1], 'status': status,
@@ -355,6 +474,10 @@ def _resolve_stale_recheck(item, pending, counters, recent):
         **breakdown,
         'original_surplus_bp': request['original_surplus_bp'],
         'new_surplus_bp': result['stale_recheck_new_surplus_bp'],
+        'new_net_krw': result['stale_recheck_new_net_krw'],
+        'liquidity_class': item.get('liquidity_class', ''),
+        'quote_source': item.get('quote_source', item.get('source', '')),
+        'actionable_fast_pass': status == 'RECHECK_ACTIONABLE_FAST_PASS',
     })
     return result
 
@@ -570,11 +693,11 @@ def main():
     symbol_not_in_live_watchlist_count = 0
     stale_grace_opportunity_count = 0
     stale_recheck_pending = {}
-    stale_recheck_recent = deque(maxlen=20)
+    stale_recheck_recent = deque(maxlen=100)
     stale_recheck_request_times = deque()
     stale_recheck_counters = {
         'request': 0, 'fast_pass': 0, 'late_pass': 0, 'fail': 0, 'timeout': 0,
-        'skip_cooldown': 0, 'skip_rate_limit': 0,
+        'actionable_fast_pass': 0, 'skip_cooldown': 0, 'skip_rate_limit': 0,
     }
     skipped_bithumb_symbol_count = 0
     skipped_bithumb_quote_reasons: dict[str, int] = {}
@@ -1082,7 +1205,30 @@ def main():
         stale_recheck_late_pass_ratio = round(
             stale_recheck_counters['late_pass'] / max(1, stale_recheck_done), 4
         )
+        stale_recheck_actionable_fast_pass_ratio = round(
+            stale_recheck_counters['actionable_fast_pass'] / max(1, stale_recheck_done), 4
+        )
+        stale_recheck_timeout_ratio = round(
+            stale_recheck_counters['timeout'] / max(1, stale_recheck_done), 4
+        )
         stale_recheck_last = next(iter(stale_recheck_recent), {})
+        stale_recheck_by_pair, stale_recheck_by_symbol = _stale_recheck_summaries(stale_recheck_recent)
+        stale_recheck_queue_size = (
+            rest_fallback_cache.get_recheck_status().get('recheck_queue_size', 0)
+            + bithumb_quote_cache.get_recheck_status().get('recheck_queue_size', 0)
+            + len(stale_recheck_pending)
+        )
+        api_429_delta = sum(
+            int(exchange.get('api_429_count', 0) or 0)
+            for exchange in (rate_limit_status.get('exchanges', {}) or {}).values()
+        )
+        stale_recheck_health = _stale_recheck_health(
+            round(sum(stale_recheck_elapsed) / len(stale_recheck_elapsed), 2)
+            if stale_recheck_elapsed else 0.0,
+            stale_recheck_timeout_ratio,
+            stale_recheck_queue_size,
+            api_429_delta,
+        )
         runtime_metrics = {
             'started_at':           started_at,
             'loop_count':           total_loops,
@@ -1123,15 +1269,12 @@ def main():
             'stale_recheck_pass_count': stale_recheck_pass_count,
             'stale_recheck_fast_pass_count': stale_recheck_counters['fast_pass'],
             'stale_recheck_late_pass_count': stale_recheck_counters['late_pass'],
+            'stale_recheck_actionable_fast_pass_count': stale_recheck_counters['actionable_fast_pass'],
             'stale_recheck_fail_count': stale_recheck_counters['fail'],
             'stale_recheck_timeout_count': stale_recheck_counters['timeout'],
             'stale_recheck_skip_cooldown_count': stale_recheck_counters['skip_cooldown'],
             'stale_recheck_skip_rate_limit_count': stale_recheck_counters['skip_rate_limit'],
-            'stale_recheck_queue_size': (
-                rest_fallback_cache.get_recheck_status().get('recheck_queue_size', 0)
-                + bithumb_quote_cache.get_recheck_status().get('recheck_queue_size', 0)
-                + len(stale_recheck_pending)
-            ),
+            'stale_recheck_queue_size': stale_recheck_queue_size,
             'stale_recheck_priority_worker_wake_count': priority_worker_wake_count,
             'stale_recheck_priority_symbol_fetch_count': priority_symbol_fetch_count,
             'stale_recheck_priority_full_refresh_fallback_count': priority_full_refresh_fallback_count,
@@ -1160,6 +1303,18 @@ def main():
             'stale_recheck_pass_ratio': stale_recheck_pass_ratio,
             'stale_recheck_fast_pass_ratio': stale_recheck_fast_pass_ratio,
             'stale_recheck_late_pass_ratio': stale_recheck_late_pass_ratio,
+            'stale_recheck_actionable_fast_pass_ratio': stale_recheck_actionable_fast_pass_ratio,
+            'stale_recheck_timeout_ratio': stale_recheck_timeout_ratio,
+            'stale_recheck_health': stale_recheck_health,
+            'stale_recheck_by_pair': stale_recheck_by_pair,
+            'stale_recheck_by_symbol': stale_recheck_by_symbol,
+            'stale_recheck_avg_new_surplus_bp': round(
+                sum(
+                    float(item.get('new_surplus_bp', 0) or 0)
+                    for item in stale_recheck_recent if item.get('new_surplus_bp') is not None
+                ) / max(1, sum(1 for item in stale_recheck_recent if item.get('new_surplus_bp') is not None)),
+                2,
+            ),
             'stale_recheck_recent': list(stale_recheck_recent),
             'last_quote_age_sec':   round(max(0.0, now - last_quote_at), 2) if last_quote_at else None,
             'updated_at':           now,

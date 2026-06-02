@@ -222,7 +222,69 @@ def _stale_recheck_status_payload():
             for item in cache_statuses if float(item.get(name, 0) or 0) > 0
         ]
         return round(sum(values) / len(values), 2) if values else 0.0
-    recent = telemetry.get('stale_recheck_recent', [])[:20]
+    def summary_bucket():
+        return {
+            'request_count': 0, 'fast_pass_count': 0, 'late_pass_count': 0,
+            'actionable_fast_pass_count': 0, 'fail_count': 0, 'timeout_count': 0,
+            '_elapsed_sum': 0.0, '_elapsed_count': 0,
+            '_new_surplus_sum': 0.0, '_new_surplus_count': 0,
+        }
+    def finalize_bucket(bucket):
+        done = (
+            bucket['fast_pass_count'] + bucket['late_pass_count']
+            + bucket['fail_count'] + bucket['timeout_count']
+        )
+        bucket['avg_elapsed_ms'] = round(bucket['_elapsed_sum'] / bucket['_elapsed_count'], 2) if bucket['_elapsed_count'] else 0.0
+        bucket['avg_new_surplus_bp'] = round(bucket['_new_surplus_sum'] / bucket['_new_surplus_count'], 2) if bucket['_new_surplus_count'] else 0.0
+        bucket['pass_ratio'] = round((bucket['fast_pass_count'] + bucket['late_pass_count']) / max(1, done), 4)
+        bucket['fast_pass_ratio'] = round(bucket['fast_pass_count'] / max(1, done), 4)
+        bucket['actionable_fast_pass_ratio'] = round(bucket['actionable_fast_pass_count'] / max(1, done), 4)
+        bucket.pop('_elapsed_sum', None); bucket.pop('_elapsed_count', None)
+        bucket.pop('_new_surplus_sum', None); bucket.pop('_new_surplus_count', None)
+        return bucket
+    def summarize_recent(items):
+        by_pair = {}
+        by_symbol = {}
+        for item in items:
+            pair = item.get('pair_id') or 'UNKNOWN'
+            symbol = item.get('symbol') or ''
+            buckets = [by_pair.setdefault(pair, summary_bucket())]
+            if symbol:
+                buckets.append(by_symbol.setdefault(symbol, summary_bucket()))
+            status = item.get('status', '')
+            for bucket in buckets:
+                if status == 'RECHECK_REQUESTED':
+                    bucket['request_count'] += 1
+                elif status in ('RECHECK_FAST_PASS', 'RECHECK_ACTIONABLE_FAST_PASS'):
+                    bucket['fast_pass_count'] += 1
+                    if status == 'RECHECK_ACTIONABLE_FAST_PASS' or item.get('actionable_fast_pass'):
+                        bucket['actionable_fast_pass_count'] += 1
+                elif status == 'RECHECK_LATE_PASS':
+                    bucket['late_pass_count'] += 1
+                elif status == 'RECHECK_FAIL':
+                    bucket['fail_count'] += 1
+                elif status == 'RECHECK_TIMEOUT':
+                    bucket['timeout_count'] += 1
+                elapsed = item.get('elapsed_total_ms', item.get('elapsed_ms'))
+                if elapsed is not None:
+                    bucket['_elapsed_sum'] += float(elapsed or 0)
+                    bucket['_elapsed_count'] += 1
+                new_surplus = item.get('new_surplus_bp')
+                if new_surplus is not None:
+                    bucket['_new_surplus_sum'] += float(new_surplus or 0)
+                    bucket['_new_surplus_count'] += 1
+        symbol_rows = [{'symbol': symbol, **finalize_bucket(bucket)} for symbol, bucket in by_symbol.items()]
+        symbol_rows.sort(
+            key=lambda row: (
+                row.get('actionable_fast_pass_count', 0),
+                row.get('fast_pass_count', 0),
+                row.get('request_count', 0),
+            ),
+            reverse=True,
+        )
+        return {pair: finalize_bucket(bucket) for pair, bucket in by_pair.items()}, symbol_rows[:10]
+    recent = telemetry.get('stale_recheck_recent', [])[:100]
+    fallback_by_pair, fallback_by_symbol = summarize_recent(recent)
     fallback_fast = sum(
         1 for item in recent
         if item.get('status') == 'RECHECK_PASS'
@@ -244,6 +306,15 @@ def _stale_recheck_status_payload():
     )
     if not avg_total_elapsed_ms:
         avg_total_elapsed_ms = telemetry.get('stale_recheck_avg_elapsed_ms', 0)
+    timeout_count = telemetry.get('stale_recheck_timeout_count', 0)
+    done_count = (
+        fast_pass_count + late_pass_count
+        + telemetry.get('stale_recheck_fail_count', 0) + timeout_count
+    )
+    timeout_ratio = value_or(
+        'stale_recheck_timeout_ratio',
+        round(timeout_count / max(1, done_count), 4),
+    )
     return {
         'ok': True,
         'error': '',
@@ -255,8 +326,9 @@ def _stale_recheck_status_payload():
         'pass_count': telemetry.get('stale_recheck_pass_count', 0),
         'fast_pass_count': fast_pass_count,
         'late_pass_count': late_pass_count,
+        'actionable_fast_pass_count': telemetry.get('stale_recheck_actionable_fast_pass_count', 0),
         'fail_count': telemetry.get('stale_recheck_fail_count', 0),
-        'timeout_count': telemetry.get('stale_recheck_timeout_count', 0),
+        'timeout_count': timeout_count,
         'skip_cooldown_count': telemetry.get('stale_recheck_skip_cooldown_count', 0),
         'skip_rate_limit_count': telemetry.get('stale_recheck_skip_rate_limit_count', 0),
         'queue_size': telemetry.get('stale_recheck_queue_size', 0),
@@ -304,7 +376,14 @@ def _stale_recheck_status_payload():
             'stale_recheck_late_pass_ratio',
             round(late_pass_count / max(1, telemetry.get('stale_recheck_pass_count', 0)), 4),
         ),
-        'recent': recent,
+        'actionable_fast_pass_ratio': value_or('stale_recheck_actionable_fast_pass_ratio', 0),
+        'timeout_ratio': timeout_ratio,
+        'health': telemetry.get('stale_recheck_health', 'WATCH'),
+        'stale_recheck_health': telemetry.get('stale_recheck_health', 'WATCH'),
+        'avg_new_surplus_bp': telemetry.get('stale_recheck_avg_new_surplus_bp', 0),
+        'by_pair': telemetry.get('stale_recheck_by_pair') or fallback_by_pair,
+        'by_symbol': telemetry.get('stale_recheck_by_symbol') or fallback_by_symbol,
+        'recent': recent[:20],
     }
 
 

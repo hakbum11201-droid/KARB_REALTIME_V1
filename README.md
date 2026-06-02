@@ -349,6 +349,10 @@ For long paper smoke tests, the recommended checks are:
 - Passing rechecks are split into `RECHECK_FAST_PASS` and `RECHECK_LATE_PASS`.
   Only fast passes are useful for live-candidate analysis. Late passes mean the
   edge existed, but current refresh speed makes it weak for live use.
+- `RECHECK_ACTIONABLE_FAST_PASS` is a stricter analysis tag on top of fast pass:
+  the refreshed opportunity stayed fresh, liquid, positive, and close enough to
+  its original surplus. It is still not an order signal and does not connect to
+  live or tiny-live execution.
 - Priority recheck requests wake the background cache worker immediately and
   target only the requested symbol when the public client supports symbol-only
   fetch. Duplicate in-flight `(pair_id, symbol)` requests are deduped.
@@ -358,3 +362,8 @@ For long paper smoke tests, the recommended checks are:
   live, tiny-live, or market-order execution.
 - For 24-hour paper runs, review the recheck pass ratio and average surplus to
   separate real stale-hidden opportunities from stale-cache noise.
+- Before deciding any next step after a long paper run, review
+  `actionable_fast_pass_count`, `actionable_fast_pass_ratio`,
+  `avg_elapsed_ms`, `timeout_ratio`, `avg_new_surplus_bp`, and whether the same
+  symbols repeat in the top actionable list. The next decision should be based
+  on that evidence, not a direct jump from a single fast pass to tiny-live.
