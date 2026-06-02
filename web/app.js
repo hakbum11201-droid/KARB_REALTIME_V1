@@ -773,7 +773,25 @@ function renderLongRunTelemetry(t={}) {
   setText('stale-status', `STALE ${fmt(stale)}`);
   setClass('stale-status', `source-badge ${stale?'stale':'ok'}`);
   setText('no-go-top3', `NO-GO top 3: ${noGo.map(([reason,count])=>`${reason} ${count}`).join(' / ')||'--'}`);
+  renderWebSocketHealth(t);
   renderBithumbCacheStatus(t);
+}
+
+function renderWebSocketHealth(t={}) {
+  let wsHealthEl=document.getElementById('ws-health-status');
+  if (!wsHealthEl) {
+    const anchor=document.getElementById('no-go-top3');
+    if (anchor?.parentElement) {
+      wsHealthEl=document.createElement('div');
+      wsHealthEl.id='ws-health-status';
+      wsHealthEl.className='active-symbol-list';
+      anchor.parentElement.append(wsHealthEl);
+    }
+  }
+  if (wsHealthEl) {
+    const lastError=t.ws_last_error||'none';
+    wsHealthEl.textContent=`WebSocket: Last Msg Age ${fmt(t.last_msg_age_ms)} ms | Upbit ${fmt(t.upbit_last_msg_age_ms)} ms | Binance ${fmt(t.binance_last_msg_age_ms)} ms | Reconnect ${fmt(t.ws_reconnect_count)} | Last Error ${lastError} | Out-of-order Drops ${fmt(t.out_of_order_drop_count)}`;
+  }
 }
 
 function renderBithumbCacheStatus(t={}) {
@@ -820,6 +838,19 @@ function renderRuntimeServices(scanner={}, store={}, rateLimit={}) {
   setText('runtime-store-writes', fmt(store.snapshot_write_count));
   setText('runtime-store-fails', fmt(store.snapshot_fail_count));
   setText('runtime-store-age', store.snapshot_age_sec==null ? '--' : ageText(store.snapshot_age_sec));
+  let storeWarningEl = document.getElementById('runtime-store-warning');
+  if (!storeWarningEl) {
+    const anchor = document.getElementById('scanner-active-symbols');
+    if (anchor?.parentElement) {
+      storeWarningEl = document.createElement('div');
+      storeWarningEl.id = 'runtime-store-warning';
+      storeWarningEl.className = 'active-symbol-list';
+      anchor.parentElement.append(storeWarningEl);
+    }
+  }
+  if (storeWarningEl) {
+    storeWarningEl.textContent = store.enabled ? '' : 'RuntimeStore OFF: RUNTIME_STORE_DISABLED_WARNING. Long paper/live monitoring recommends runtime_store_enabled=true.';
+  }
   let scannerStatusEl = document.getElementById('scanner-cache-status');
   if (!scannerStatusEl) {
     const anchor = document.getElementById('scanner-active-symbols');

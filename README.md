@@ -262,6 +262,14 @@ API keys alone never enable an order. If `PARTIAL_RISK` appears, stop new entrie
 - Dashboard telemetry and `GET /api/bithumb/cache-status` expose cache health, skipped domestic symbols, and quote-history key count.
 - This monitoring change does not alter paper entry/exit logic, order execution, or live-order safety defaults.
 
+## WebSocket monitoring stability
+
+- WebSocket collectors record connection errors, reconnect counts, last message age, and per-exchange status without printing sensitive data.
+- The in-memory Upbit/Binance orderbook cache rejects out-of-order timestamps and exposes a bounded drop counter.
+- The local dashboard server uses `ThreadingHTTPServer` so polling and control requests do not block each other.
+- Keep `runtime_store_enabled=true` for long paper or live monitoring. The dashboard warns when RuntimeStore is disabled.
+- This stability patch intentionally avoids a full asyncio rewrite or Redis dependency and does not change order or paper-trading logic.
+
 ## Emergency Close Once
 
 - `PARTIAL_RISK` still disarms tiny-live and blocks new entries until operator review and manual clear.

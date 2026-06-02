@@ -23,6 +23,8 @@ class OrderbookCache:
         self._rest_fallback_count = 0
         self._stale_quote_count = 0
         self._stale_symbols = set()
+        self._last_msg_at = {'upbit': 0.0, 'binance': 0.0}
+        self._out_of_order_drop_count = 0
 
     def record_rest_fallback(self, count=1):
         with self._lock:
@@ -30,21 +32,40 @@ class OrderbookCache:
 
     def update(self, exchange: str, symbol: str, quote: dict, source='ws'):
         now = time.time()
+        event_ts = self._normalize_ts(quote.get('event_ts', quote.get('ts')), now)
         item = {
             'bid': float(quote['bid']),
             'ask': float(quote['ask']),
             'bid_size': float(quote.get('bid_size', 0) or 0),
             'ask_size': float(quote.get('ask_size', 0) or 0),
             'latency_ms': round(float(quote.get('latency_ms', 0) or 0), 2),
-            'ts': float(quote.get('ts', now) or now),
+            'ts': event_ts,
             'source': source,
             'bids': list(quote.get('bids', []))[:15],
             'asks': list(quote.get('asks', []))[:15],
         }
         with self._lock:
+            previous = self._quotes.setdefault(symbol, {}).get(exchange)
+            if previous and event_ts < float(previous.get('ts', 0) or 0):
+                self._out_of_order_drop_count += 1
+                return False
             self._quotes.setdefault(symbol, {})[exchange] = item
+            self._last_msg_at[exchange] = now
             self._quote_count += 1
             self._latencies.append(item['latency_ms'])
+        return True
+
+    @staticmethod
+    def _normalize_ts(value, fallback):
+        try:
+            ts = float(value or 0)
+        except (TypeError, ValueError):
+            return fallback
+        if ts <= 0:
+            return fallback
+        if ts > 10_000_000_000:
+            ts /= 1000
+        return ts
 
     def snapshot(self, require_fresh=True) -> dict:
         now = time.time()
@@ -98,6 +119,7 @@ class OrderbookCache:
                 'rest': sum(1 for item in symbols if item['quote_source'] == 'rest' and not item['stale']),
                 'stale': len(stale_symbols),
             }
+            last_msg_at = max(self._last_msg_at.values(), default=0.0)
             return {
                 'quote_count': self._quote_count,
                 'p95_quote_latency_ms': _percentile(self._latencies),
@@ -106,5 +128,13 @@ class OrderbookCache:
                 'ws_symbols_ok': source_summary['ws'],
                 'rest_fallback_count': self._rest_fallback_count,
                 'quote_stale_count': self._stale_quote_count,
+                'stale_symbols': sorted(stale_symbols),
+                'last_msg_at': last_msg_at,
+                'last_msg_age_ms': round(max(0.0, now - last_msg_at) * 1000, 2) if last_msg_at else None,
+                'upbit_last_msg_at': self._last_msg_at['upbit'],
+                'binance_last_msg_at': self._last_msg_at['binance'],
+                'upbit_last_msg_age_ms': round(max(0.0, now - self._last_msg_at['upbit']) * 1000, 2) if self._last_msg_at['upbit'] else None,
+                'binance_last_msg_age_ms': round(max(0.0, now - self._last_msg_at['binance']) * 1000, 2) if self._last_msg_at['binance'] else None,
+                'out_of_order_drop_count': self._out_of_order_drop_count,
                 'symbols': symbols,
             }

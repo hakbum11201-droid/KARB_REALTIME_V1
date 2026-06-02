@@ -12,7 +12,7 @@ web_server.py - KARB Realtime V1 HTTP 서버.
   POST /api/stop           – stop_requested=true (localhost만)
   GET  /api/health         – ok
 """
-from http.server import HTTPServer, SimpleHTTPRequestHandler
+from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 import json
 import os
 import sys
@@ -161,6 +161,8 @@ def _tiny_live_status_payload():
 
 def _telemetry_payload():
     telemetry = _read_json(os.path.join(RUNTIME_DIR, 'telemetry.json'))
+    if not cfg.runtime_store_enabled:
+        telemetry['runtime_store_warning'] = 'RUNTIME_STORE_DISABLED_WARNING'
     return {'ok': True, 'error': '', 'blockers': [], 'telemetry': telemetry}
 
 
@@ -458,7 +460,19 @@ class KarbHandler(SimpleHTTPRequestHandler):
             self._send_json(secrets_manager.get_key_status())
 
         elif self.path == '/api/health':
-            self._send_json({'status': 'ok'})
+            telemetry = _read_json(os.path.join(RUNTIME_DIR, 'telemetry.json'))
+            self._send_json({
+                'status': 'ok',
+                'ws_connected': telemetry.get('ws_connected', False),
+                'upbit_last_msg_age_ms': telemetry.get('upbit_last_msg_age_ms'),
+                'binance_last_msg_age_ms': telemetry.get('binance_last_msg_age_ms'),
+                'reconnect_count': telemetry.get('ws_reconnect_count', 0),
+                'last_error': telemetry.get('ws_last_error', ''),
+                'out_of_order_drop_count': telemetry.get('out_of_order_drop_count', 0),
+                'runtime_store_warning': (
+                    'RUNTIME_STORE_DISABLED_WARNING' if not cfg.runtime_store_enabled else ''
+                ),
+            })
 
         else:
             super().do_GET()
@@ -572,7 +586,7 @@ class KarbHandler(SimpleHTTPRequestHandler):
 
 
 def run(port=8000, once=False):
-    httpd = HTTPServer(('', port), KarbHandler)
+    httpd = ThreadingHTTPServer(('', port), KarbHandler)
     print(f"[WebServer] http://localhost:{port}")
     if once:
         httpd.handle_request()
