@@ -39,6 +39,7 @@ class BithumbPublic(ExchangeBase):
                 }
             response.raise_for_status()
             rows = response.json()
+            fetch_time = time.time()
             quotes = {}
             for row in rows if isinstance(rows, list) else []:
                 symbol = str(row.get('market', '')).replace('KRW-', '')
@@ -46,6 +47,9 @@ class BithumbPublic(ExchangeBase):
                 if symbol not in symbols or not units:
                     continue
                 top = units[0]
+                quote_ts, ts_fallback, ts_normalized = self._normalize_quote_ts(
+                    row.get('timestamp'), fetch_time
+                )
                 quotes[symbol] = {
                     'symbol': symbol,
                     'venue': 'BITHUMB',
@@ -53,8 +57,10 @@ class BithumbPublic(ExchangeBase):
                     'ask': float(top['ask_price']),
                     'bid_size': float(top['bid_size']),
                     'ask_size': float(top['ask_size']),
-                    'timestamp': float(row.get('timestamp', 0) or 0) / 1000 or time.time(),
-                    'ts': float(row.get('timestamp', 0) or 0) / 1000 or time.time(),
+                    'timestamp': quote_ts,
+                    'ts': quote_ts,
+                    'quote_ts_fallback': ts_fallback,
+                    'quote_ts_normalized': ts_normalized,
                     'latency_ms': latency_ms,
                     'source': 'rest',
                     'ok': True,
@@ -66,6 +72,20 @@ class BithumbPublic(ExchangeBase):
             }
         except Exception:
             return {symbol: self._unavailable(symbol) for symbol in symbols}
+
+    @staticmethod
+    def _normalize_quote_ts(value, fetch_time):
+        normalized = False
+        try:
+            ts = float(value or 0)
+            while ts > 10_000_000_000:
+                ts /= 1000
+                normalized = True
+            if ts <= 0 or abs(fetch_time - ts) > 60:
+                return fetch_time, True, normalized
+            return ts, False, normalized
+        except (TypeError, ValueError):
+            return fetch_time, True, normalized
 
     @staticmethod
     def _unavailable(symbol: str, blocker='BITHUMB_QUOTE_UNAVAILABLE') -> dict:

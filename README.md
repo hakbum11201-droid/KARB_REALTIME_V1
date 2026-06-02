@@ -259,10 +259,17 @@ API keys alone never enable an order. If `PARTIAL_RISK` appears, stop new entrie
 ## Bithumb quote cache
 
 - Domestic `UPBIT_BITHUMB` paper monitoring reads Bithumb public quotes from a bounded in-memory background cache instead of synchronously waiting for Bithumb REST on every engine loop.
+- Bithumb timestamps are normalized to seconds and fall back to refresh time when missing or implausible. Dashboard telemetry exposes stale/quote counts, timestamp fallbacks, and last-success age.
 - A failed refresh retains the last successful snapshot and marks aged quotes as stale. Missing, unavailable, or stale Bithumb quotes skip only domestic calculations; `UPBIT_BINANCE` monitoring continues independently.
 - Dynamic symbol refresh removes inactive cross-border and `UPBIT_BITHUMB:{symbol}` quote-history keys.
 - Dashboard telemetry and `GET /api/bithumb/cache-status` expose cache health, skipped domestic symbols, and quote-history key count.
 - This monitoring change does not alter paper entry/exit logic, order execution, or live-order safety defaults.
+
+### Paper smoke checks
+
+- Expect Bithumb `stale_count` to stay below `quote_count` after successful refreshes.
+- Upbit `api_429_count` should stop increasing during backoff. `rest_fallback_skip_count` may increase while REST fallback is intentionally skipped.
+- Verify stable process memory and confirm WebSocket error or reconnect counts are not rising rapidly.
 
 ## WebSocket monitoring stability
 

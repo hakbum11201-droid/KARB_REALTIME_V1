@@ -21,6 +21,8 @@ class BithumbQuoteCache:
         self._last_error = ''
         self._refresh_count = 0
         self._fail_count = 0
+        self._quote_ts_fallback_count = 0
+        self._quote_ts_normalized_count = 0
 
     def start(self, symbols):
         self.update_symbols(symbols)
@@ -68,9 +70,12 @@ class BithumbQuoteCache:
                 'symbols': list(self._symbols),
                 'last_update_at': self._last_update_at,
                 'last_success_at': self._last_success_at,
+                'last_success_age_ms': round(max(0.0, time.time() - self._last_success_at) * 1000, 2) if self._last_success_at else None,
                 'last_error': self._last_error,
                 'refresh_count': self._refresh_count,
                 'fail_count': self._fail_count,
+                'quote_ts_fallback_count': self._quote_ts_fallback_count,
+                'quote_ts_normalized_count': self._quote_ts_normalized_count,
                 'stale_count': sum(1 for quote in snapshot.values() if quote.get('stale')),
                 'quote_count': len(snapshot),
             }
@@ -84,7 +89,7 @@ class BithumbQuoteCache:
         try:
             fetched = self.client.fetch_all_order_books(symbols)
             valid = {
-                symbol: quote for symbol, quote in fetched.items()
+                symbol: self._normalize_quote_ts(quote, now) for symbol, quote in fetched.items()
                 if symbol in symbols and isinstance(quote, dict) and quote.get('ok')
             }
             invalid = [symbol for symbol in symbols if symbol not in valid]
@@ -106,6 +111,34 @@ class BithumbQuoteCache:
                 self._refresh_count += 1
                 self._fail_count += 1
                 self._last_error = f'{type(exc).__name__}: {exc}'
+
+    def _normalize_quote_ts(self, quote, fetch_time):
+        quote = dict(quote)
+        raw_ts = quote.get('ts', quote.get('timestamp'))
+        normalized = False
+        fallback = False
+        try:
+            ts = float(raw_ts or 0)
+            while ts > 10_000_000_000:
+                ts /= 1000
+                normalized = True
+            if ts <= 0 or abs(fetch_time - ts) * 1000 > self.stale_ms:
+                ts = fetch_time
+                fallback = True
+        except (TypeError, ValueError):
+            ts = fetch_time
+            fallback = True
+        normalized = normalized or bool(quote.get('quote_ts_normalized'))
+        fallback = fallback or bool(quote.get('quote_ts_fallback'))
+        quote['timestamp'] = ts
+        quote['ts'] = ts
+        quote['quote_ts_normalized'] = normalized
+        quote['quote_ts_fallback'] = fallback
+        if fallback:
+            self._quote_ts_fallback_count += 1
+        if normalized:
+            self._quote_ts_normalized_count += 1
+        return quote
 
     def _run(self):
         while not self._stop_event.is_set():

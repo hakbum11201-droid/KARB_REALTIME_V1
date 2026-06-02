@@ -825,8 +825,8 @@ function renderBithumbCacheStatus(t={}) {
     }
   }
   if (cacheEl) {
-    const lastSuccess=cache.last_success_at ? ageText(Date.now()/1000-cache.last_success_at) : '--';
-    cacheEl.textContent=`Bithumb Cache: ${cache.enabled?'ON':'OFF'} | Running ${cache.running?'YES':'NO'} | Quote Count ${fmt(cache.quote_count)} | Stale Count ${fmt(cache.stale_count)} | Last Success ${lastSuccess} | Fail Count ${fmt(cache.fail_count)} | Skipped Bithumb Symbols ${fmt(t.skipped_bithumb_symbol_count)} | Quote History Keys ${fmt(t.quote_history_key_count)}`;
+    const lastSuccess=cache.last_success_age_ms==null ? '--' : `${fmt(cache.last_success_age_ms)} ms`;
+    cacheEl.textContent=`Bithumb Cache: ${cache.enabled?'ON':'OFF'} | Running ${cache.running?'YES':'NO'} | Stale / Quote ${fmt(cache.stale_count)} / ${fmt(cache.quote_count)} | TS Fallback ${fmt(cache.quote_ts_fallback_count)} | TS Normalized ${fmt(cache.quote_ts_normalized_count)} | Last Success Age ${lastSuccess} | Fail Count ${fmt(cache.fail_count)} | Skipped Bithumb Symbols ${fmt(t.skipped_bithumb_symbol_count)} | Quote History Keys ${fmt(t.quote_history_key_count)}`;
   }
 }
 

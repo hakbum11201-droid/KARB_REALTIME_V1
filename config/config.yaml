@@ -20,12 +20,12 @@ tiny_live_require_inventory_ok: true
 use_websocket_market_data: true
 rest_fallback_enabled: true
 rate_limiter_enabled: true
-rate_limit_upbit_per_sec: 8
+rate_limit_upbit_per_sec: 6
 rate_limit_bithumb_per_sec: 8
 rate_limit_binance_per_sec: 10
 rate_limit_burst: 5
 rate_limit_429_backoff_sec: 10
-rest_fallback_min_interval_ms: 500
+rest_fallback_min_interval_ms: 1000
 block_new_entries_on_partial_risk: true
 order_ttl_sec: 1.5
 min_fill_ratio: 0.8
