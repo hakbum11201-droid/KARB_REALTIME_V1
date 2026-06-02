@@ -207,9 +207,21 @@ def _telemetry_payload():
 
 def _stale_recheck_status_payload():
     telemetry = _read_json(os.path.join(RUNTIME_DIR, 'telemetry.json'))
+    cache_statuses = [
+        telemetry.get('rest_fallback_cache_status', {}) or {},
+        telemetry.get('bithumb_quote_cache_status', {}) or {},
+    ]
     def value_or(name, fallback):
         value = telemetry.get(name)
         return fallback if value is None else value
+    def sum_cache_field(name):
+        return sum(int(item.get(name, 0) or 0) for item in cache_statuses)
+    def avg_cache_field(name):
+        values = [
+            float(item.get(name, 0) or 0)
+            for item in cache_statuses if float(item.get(name, 0) or 0) > 0
+        ]
+        return round(sum(values) / len(values), 2) if values else 0.0
     recent = telemetry.get('stale_recheck_recent', [])[:20]
     fallback_fast = sum(
         1 for item in recent
@@ -248,6 +260,34 @@ def _stale_recheck_status_payload():
         'skip_cooldown_count': telemetry.get('stale_recheck_skip_cooldown_count', 0),
         'skip_rate_limit_count': telemetry.get('stale_recheck_skip_rate_limit_count', 0),
         'queue_size': telemetry.get('stale_recheck_queue_size', 0),
+        'priority_worker_wake_count': value_or(
+            'stale_recheck_priority_worker_wake_count',
+            sum_cache_field('priority_worker_wake_count'),
+        ),
+        'priority_symbol_fetch_count': value_or(
+            'stale_recheck_priority_symbol_fetch_count',
+            sum_cache_field('priority_symbol_fetch_count'),
+        ),
+        'priority_full_refresh_fallback_count': value_or(
+            'stale_recheck_priority_full_refresh_fallback_count',
+            sum_cache_field('priority_full_refresh_fallback_count'),
+        ),
+        'priority_fetch_avg_ms': value_or(
+            'stale_recheck_priority_fetch_avg_ms',
+            avg_cache_field('priority_fetch_avg_ms'),
+        ),
+        'priority_fetch_last_ms': value_or(
+            'stale_recheck_priority_fetch_last_ms',
+            max(float(item.get('priority_fetch_last_ms', 0) or 0) for item in cache_statuses),
+        ),
+        'recheck_inflight_count': value_or(
+            'stale_recheck_inflight_count',
+            sum_cache_field('recheck_inflight_count'),
+        ),
+        'recheck_deduped_count': value_or(
+            'stale_recheck_deduped_count',
+            sum_cache_field('recheck_deduped_count'),
+        ),
         'last_symbol': telemetry.get('stale_recheck_last_symbol', ''),
         'last_status': telemetry.get('stale_recheck_last_status', 'NONE'),
         'avg_elapsed_ms': telemetry.get('stale_recheck_avg_elapsed_ms', 0),

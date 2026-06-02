@@ -349,6 +349,11 @@ For long paper smoke tests, the recommended checks are:
 - Passing rechecks are split into `RECHECK_FAST_PASS` and `RECHECK_LATE_PASS`.
   Only fast passes are useful for live-candidate analysis. Late passes mean the
   edge existed, but current refresh speed makes it weak for live use.
+- Priority recheck requests wake the background cache worker immediately and
+  target only the requested symbol when the public client supports symbol-only
+  fetch. Duplicate in-flight `(pair_id, symbol)` requests are deduped.
+- Upbit priority REST is skipped when a fresh WebSocket quote already exists,
+  or when cooldown/backoff/in-flight guards say the refresh should wait.
 - This stage improves measurement only. Recheck outcomes are not connected to
   live, tiny-live, or market-order execution.
 - For 24-hour paper runs, review the recheck pass ratio and average surplus to

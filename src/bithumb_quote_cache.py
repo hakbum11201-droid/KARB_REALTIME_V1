@@ -10,6 +10,9 @@ class BithumbQuoteCache:
         self, client, enabled=True, refresh_ms=700, stale_ms=5000,
         grace_ms=3000, allow_last_good_on_stale=True, max_failures=10,
         recheck_cooldown_sec=5, recheck_max_queue_size=50,
+        priority_worker_enabled=True, symbol_only_refresh=True,
+        inflight_dedupe=True, priority_fetch_timeout_ms=700,
+        priority_max_workers=1,
     ):
         self.client = client
         self.enabled = bool(enabled)
@@ -20,8 +23,14 @@ class BithumbQuoteCache:
         self.max_failures = max(1, int(max_failures))
         self.recheck_cooldown_sec = max(0.0, float(recheck_cooldown_sec))
         self.recheck_max_queue_size = max(1, int(recheck_max_queue_size))
+        self.priority_worker_enabled = bool(priority_worker_enabled)
+        self.symbol_only_refresh = bool(symbol_only_refresh)
+        self.inflight_dedupe = bool(inflight_dedupe)
+        self.priority_fetch_timeout_ms = max(1, int(priority_fetch_timeout_ms))
+        self.priority_max_workers = max(1, int(priority_max_workers))
         self._lock = threading.RLock()
         self._stop_event = threading.Event()
+        self._priority_event = threading.Event()
         self._thread = None
         self._symbols = []
         self._quotes = {}
@@ -34,15 +43,26 @@ class BithumbQuoteCache:
         self._quote_ts_normalized_count = 0
         self._recheck_queue = deque()
         self._recheck_enqueued = set()
+        self._recheck_inflight = set()
+        self._recheck_meta = {}
         self._recheck_last_requested_at = {}
         self._recheck_request_count = 0
         self._recheck_execute_count = 0
         self._recheck_skip_cooldown_count = 0
+        self._recheck_deduped_count = 0
         self._recheck_fail_count = 0
         self._recheck_last_symbol = ''
         self._recheck_last_pair_id = ''
         self._recheck_last_at = 0.0
         self._recheck_last_error = ''
+        self._priority_worker_wake_count = 0
+        self._priority_symbol_fetch_count = 0
+        self._priority_full_refresh_fallback_count = 0
+        self._priority_fetch_total_ms = 0.0
+        self._priority_fetch_samples = 0
+        self._priority_fetch_last_ms = 0.0
+        self._priority_fetch_last_symbol = ''
+        self._priority_fetch_last_error = ''
 
     def start(self, symbols):
         self.update_symbols(symbols)
@@ -59,6 +79,7 @@ class BithumbQuoteCache:
 
     def stop(self):
         self._stop_event.set()
+        self._priority_event.set()
         thread = self._thread
         if thread and thread.is_alive():
             thread.join(timeout=max(1.0, self.refresh_ms / 1000 + 0.5))
@@ -119,31 +140,53 @@ class BithumbQuoteCache:
                 **self.get_recheck_status(),
             }
 
-    def request_priority_refresh(self, symbol, reason=None):
+    def request_priority_refresh(
+        self, symbol, reason=None, pair_id=None,
+        original_surplus_bp=None, original_net_krw=None,
+    ):
         now = time.time()
         symbol = str(symbol or '').upper()
         if not self.enabled or not symbol:
             return {'ok': False, 'queued': False, 'reason': 'DISABLED_OR_EMPTY_SYMBOL'}
-        key = ('UPBIT_BITHUMB', symbol)
+        pair_id = str(pair_id or 'UPBIT_BITHUMB')
+        key = (pair_id, symbol)
         with self._lock:
+            if self.inflight_dedupe and (key in self._recheck_enqueued or key in self._recheck_inflight):
+                self._recheck_deduped_count += 1
+                self._recheck_meta[key] = {
+                    'pair_id': pair_id, 'symbol': symbol, 'reason': reason or '',
+                    'requested_at': now,
+                    'original_surplus_bp': original_surplus_bp,
+                    'original_net_krw': original_net_krw,
+                }
+                reason_code = 'SKIP_INFLIGHT' if key in self._recheck_inflight else 'RECHECK_ALREADY_QUEUED'
+                return {'ok': False, 'queued': False, 'reason': reason_code}
             last = self._recheck_last_requested_at.get(key, 0.0)
             if now - last < self.recheck_cooldown_sec:
                 self._recheck_skip_cooldown_count += 1
                 return {'ok': False, 'queued': False, 'reason': 'RECHECK_COOLDOWN'}
-            if key in self._recheck_enqueued:
-                self._recheck_skip_cooldown_count += 1
-                return {'ok': False, 'queued': False, 'reason': 'RECHECK_ALREADY_QUEUED'}
             if len(self._recheck_queue) >= self.recheck_max_queue_size:
                 return {'ok': False, 'queued': False, 'reason': 'RECHECK_QUEUE_FULL'}
             self._recheck_queue.append({
-                'pair_id': 'UPBIT_BITHUMB', 'symbol': symbol,
+                'pair_id': pair_id, 'symbol': symbol,
                 'reason': reason or '', 'requested_at': now,
+                'original_surplus_bp': original_surplus_bp,
+                'original_net_krw': original_net_krw,
             })
             self._recheck_enqueued.add(key)
+            self._recheck_meta[key] = {
+                'pair_id': pair_id, 'symbol': symbol, 'reason': reason or '',
+                'requested_at': now,
+                'original_surplus_bp': original_surplus_bp,
+                'original_net_krw': original_net_krw,
+            }
             self._recheck_last_requested_at[key] = now
             self._recheck_request_count += 1
             self._recheck_last_symbol = symbol
-            self._recheck_last_pair_id = 'UPBIT_BITHUMB'
+            self._recheck_last_pair_id = pair_id
+            if self.priority_worker_enabled:
+                self._priority_worker_wake_count += 1
+                self._priority_event.set()
             return {'ok': True, 'queued': True, 'reason': 'RECHECK_REQUESTED'}
 
     def get_recheck_status(self):
@@ -153,11 +196,23 @@ class BithumbQuoteCache:
                 'recheck_request_count': self._recheck_request_count,
                 'recheck_execute_count': self._recheck_execute_count,
                 'recheck_skip_cooldown_count': self._recheck_skip_cooldown_count,
+                'recheck_inflight_count': len(self._recheck_inflight),
+                'recheck_deduped_count': self._recheck_deduped_count,
+                'recheck_inflight_symbols': [f'{pair}:{symbol}' for pair, symbol in sorted(self._recheck_inflight)],
                 'recheck_fail_count': self._recheck_fail_count,
                 'recheck_last_symbol': self._recheck_last_symbol,
                 'recheck_last_pair_id': self._recheck_last_pair_id,
                 'recheck_last_at': self._recheck_last_at,
                 'recheck_last_error': self._recheck_last_error,
+                'priority_worker_wake_count': self._priority_worker_wake_count,
+                'priority_symbol_fetch_count': self._priority_symbol_fetch_count,
+                'priority_full_refresh_fallback_count': self._priority_full_refresh_fallback_count,
+                'priority_fetch_avg_ms': round(
+                    self._priority_fetch_total_ms / self._priority_fetch_samples, 2
+                ) if self._priority_fetch_samples else 0.0,
+                'priority_fetch_last_ms': round(self._priority_fetch_last_ms, 2),
+                'priority_fetch_last_symbol': self._priority_fetch_last_symbol,
+                'priority_fetch_last_error': self._priority_fetch_last_error,
             }
 
     def refresh_once(self):
@@ -198,7 +253,9 @@ class BithumbQuoteCache:
             if not self._recheck_queue:
                 return None
             request = self._recheck_queue.popleft()
-            self._recheck_enqueued.discard((request['pair_id'], request['symbol']))
+            key = (request['pair_id'], request['symbol'])
+            self._recheck_enqueued.discard(key)
+            self._recheck_inflight.add(key)
             return request
 
     def _process_priority_queue(self):
@@ -207,22 +264,44 @@ class BithumbQuoteCache:
             if not request:
                 return
             now = time.time()
+            started = time.time()
+            key = (request['pair_id'], request['symbol'])
             try:
-                fetched = self.client.fetch_all_order_books([request['symbol']])
+                if self.symbol_only_refresh and hasattr(self.client, 'fetch_order_book'):
+                    quote = self.client.fetch_order_book(request['symbol'])
+                    fetched = {request['symbol']: quote}
+                    symbol_fetch = True
+                else:
+                    with self._lock:
+                        symbols = list(self._symbols) or [request['symbol']]
+                    fetched = self.client.fetch_all_order_books(symbols)
+                    symbol_fetch = False
                 quote = (fetched or {}).get(request['symbol'], {})
+                elapsed_ms = (time.time() - started) * 1000
                 with self._lock:
                     self._recheck_execute_count += 1
                     self._recheck_last_symbol = request['symbol']
                     self._recheck_last_pair_id = request['pair_id']
                     self._recheck_last_at = time.time()
+                    self._priority_fetch_last_ms = elapsed_ms
+                    self._priority_fetch_last_symbol = request['symbol']
+                    self._priority_fetch_total_ms += elapsed_ms
+                    self._priority_fetch_samples += 1
+                    if symbol_fetch:
+                        self._priority_symbol_fetch_count += 1
+                    else:
+                        self._priority_full_refresh_fallback_count += 1
                     if isinstance(quote, dict) and quote.get('ok'):
                         self._quotes[request['symbol']] = self._normalize_quote_ts(quote, now)
                         self._last_success_at = time.time()
                         self._last_error = ''
+                        self._priority_fetch_last_error = ''
                     else:
                         self._recheck_fail_count += 1
                         self._recheck_last_error = self._failure_reason(fetched)
+                        self._priority_fetch_last_error = self._recheck_last_error
             except Exception as exc:
+                elapsed_ms = (time.time() - started) * 1000
                 with self._lock:
                     self._recheck_execute_count += 1
                     self._recheck_fail_count += 1
@@ -230,6 +309,15 @@ class BithumbQuoteCache:
                     self._recheck_last_pair_id = request['pair_id']
                     self._recheck_last_at = time.time()
                     self._recheck_last_error = f'{type(exc).__name__}: {exc}'
+                    self._priority_fetch_last_ms = elapsed_ms
+                    self._priority_fetch_last_symbol = request['symbol']
+                    self._priority_fetch_total_ms += elapsed_ms
+                    self._priority_fetch_samples += 1
+                    self._priority_fetch_last_error = self._recheck_last_error
+            finally:
+                with self._lock:
+                    self._recheck_inflight.discard(key)
+                    self._recheck_meta.pop(key, None)
 
     def _normalize_quote_ts(self, quote, fetch_time):
         quote = dict(quote)
@@ -261,8 +349,16 @@ class BithumbQuoteCache:
 
     def _run(self):
         while not self._stop_event.is_set():
+            if self.priority_worker_enabled and self._priority_event.is_set():
+                self._priority_event.clear()
+                self._process_priority_queue()
+                continue
             self.refresh_once()
-            self._stop_event.wait(self.refresh_ms / 1000)
+            if self.priority_worker_enabled:
+                self._priority_event.wait(self.refresh_ms / 1000)
+                self._priority_event.clear()
+            else:
+                self._stop_event.wait(self.refresh_ms / 1000)
 
     @staticmethod
     def _failure_reason(fetched):

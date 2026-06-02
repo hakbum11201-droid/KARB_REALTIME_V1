@@ -247,10 +247,19 @@ def _request_stale_recheck(item, pending, request_times, counters, recent, rest_
         counters['skip_rate_limit'] += 1
         return {'stale_recheck_status': 'NONE', 'stale_recheck_reason': 'RECHECK_RATE_LIMIT'}
     pair_id, symbol = key
+    original_surplus_bp = float(item.get('best_net_surplus_bp', 0) or 0)
+    original_net_krw = float(item.get('net_expected_profit_krw', 0) or 0)
+    request_meta = {
+        'reason': item.get('reason_no_trade'),
+        'original_surplus_bp': original_surplus_bp,
+        'original_net_krw': original_net_krw,
+    }
     if pair_id == 'UPBIT_BITHUMB':
-        result = bithumb_cache.request_priority_refresh(symbol, reason=item.get('reason_no_trade'))
+        result = bithumb_cache.request_priority_refresh(
+            symbol, pair_id=pair_id, **request_meta
+        )
     else:
-        result = rest_cache.request_priority_refresh(pair_id, symbol, reason=item.get('reason_no_trade'))
+        result = rest_cache.request_priority_refresh(pair_id, symbol, **request_meta)
     if result.get('queued'):
         request_times.append(now)
         threshold = cfg.min_net_surplus_bp + cfg.stale_recheck_min_surplus_bp_extra
@@ -262,8 +271,8 @@ def _request_stale_recheck(item, pending, request_times, counters, recent, rest_
             'refresh_started_at': None,
             'refreshed_at': None,
             'threshold_bp': threshold,
-            'original_surplus_bp': float(item.get('best_net_surplus_bp', 0) or 0),
-            'original_net_krw': float(item.get('net_expected_profit_krw', 0) or 0),
+            'original_surplus_bp': original_surplus_bp,
+            'original_net_krw': original_net_krw,
             'reason': item.get('reason_no_trade', ''),
         }
         counters['request'] += 1
@@ -441,6 +450,10 @@ def main():
         rest_cache_ws_fresh_threshold_ms=cfg.rest_cache_ws_fresh_threshold_ms,
         recheck_cooldown_sec=cfg.stale_recheck_cooldown_sec,
         recheck_max_queue_size=cfg.stale_recheck_max_queue_size,
+        priority_worker_enabled=cfg.stale_recheck_priority_worker_enabled,
+        inflight_dedupe=cfg.stale_recheck_inflight_dedupe,
+        priority_fetch_timeout_ms=cfg.stale_recheck_priority_fetch_timeout_ms,
+        priority_max_workers=cfg.stale_recheck_priority_max_workers,
     )
     rest_fallback_cache.start(active_symbols)
     bithumb_quote_cache = BithumbQuoteCache(
@@ -453,6 +466,11 @@ def main():
         max_failures=cfg.bithumb_quote_cache_max_failures,
         recheck_cooldown_sec=cfg.stale_recheck_cooldown_sec,
         recheck_max_queue_size=cfg.stale_recheck_max_queue_size,
+        priority_worker_enabled=cfg.stale_recheck_priority_worker_enabled,
+        symbol_only_refresh=cfg.stale_recheck_symbol_only_refresh,
+        inflight_dedupe=cfg.stale_recheck_inflight_dedupe,
+        priority_fetch_timeout_ms=cfg.stale_recheck_priority_fetch_timeout_ms,
+        priority_max_workers=cfg.stale_recheck_priority_max_workers,
     )
     bithumb_quote_cache.start(active_symbols)
     ws_market_data = None
@@ -990,6 +1008,35 @@ def main():
         rate_limit_status = ws_metrics.get('rate_limit_status') or rate_limiter.get_status()
         bithumb_quote_cache_status = bithumb_quote_cache.get_status()
         rest_fallback_cache_status = rest_fallback_cache.get_status()
+        priority_statuses = [rest_fallback_cache_status, bithumb_quote_cache_status]
+        priority_worker_wake_count = sum(
+            int(item.get('priority_worker_wake_count', 0) or 0) for item in priority_statuses
+        )
+        priority_symbol_fetch_count = sum(
+            int(item.get('priority_symbol_fetch_count', 0) or 0) for item in priority_statuses
+        )
+        priority_full_refresh_fallback_count = sum(
+            int(item.get('priority_full_refresh_fallback_count', 0) or 0) for item in priority_statuses
+        )
+        priority_fetch_samples = [
+            float(item.get('priority_fetch_avg_ms', 0) or 0)
+            for item in priority_statuses if float(item.get('priority_fetch_avg_ms', 0) or 0) > 0
+        ]
+        priority_fetch_avg_ms = round(
+            sum(priority_fetch_samples) / len(priority_fetch_samples), 2
+        ) if priority_fetch_samples else 0.0
+        priority_fetch_last_ms = max(
+            float(item.get('priority_fetch_last_ms', 0) or 0) for item in priority_statuses
+        )
+        recheck_inflight_count = sum(
+            int(item.get('recheck_inflight_count', 0) or 0) for item in priority_statuses
+        )
+        recheck_deduped_count = sum(
+            int(item.get('recheck_deduped_count', 0) or 0) for item in priority_statuses
+        )
+        recheck_inflight_symbols = []
+        for item in priority_statuses:
+            recheck_inflight_symbols.extend(item.get('recheck_inflight_symbols', []) or [])
         fx_cache_status = fx_oracle.get_status()
         quote_history_row_count = sum(len(rows) for rows in quote_history.values())
         memory_telemetry = _memory_telemetry(cfg.memory_telemetry_enabled)
@@ -1085,6 +1132,14 @@ def main():
                 + bithumb_quote_cache.get_recheck_status().get('recheck_queue_size', 0)
                 + len(stale_recheck_pending)
             ),
+            'stale_recheck_priority_worker_wake_count': priority_worker_wake_count,
+            'stale_recheck_priority_symbol_fetch_count': priority_symbol_fetch_count,
+            'stale_recheck_priority_full_refresh_fallback_count': priority_full_refresh_fallback_count,
+            'stale_recheck_priority_fetch_avg_ms': priority_fetch_avg_ms,
+            'stale_recheck_priority_fetch_last_ms': round(priority_fetch_last_ms, 2),
+            'stale_recheck_inflight_count': recheck_inflight_count,
+            'stale_recheck_deduped_count': recheck_deduped_count,
+            'stale_recheck_inflight_symbols': recheck_inflight_symbols,
             'stale_recheck_last_symbol': stale_recheck_last.get('symbol', ''),
             'stale_recheck_last_status': stale_recheck_last.get('status', 'NONE'),
             'stale_recheck_avg_elapsed_ms': round(
@@ -1275,11 +1330,45 @@ def main():
     bithumb_quote_cache.stop()
     final_runtime_metrics = runtime_store.get_state('telemetry', {})
     if isinstance(final_runtime_metrics, dict):
-        final_runtime_metrics['bithumb_quote_cache_status'] = bithumb_quote_cache.get_status()
-        final_runtime_metrics['rest_fallback_cache_status'] = rest_fallback_cache.get_status()
+        final_bithumb_status = bithumb_quote_cache.get_status()
+        final_rest_status = rest_fallback_cache.get_status()
+        final_priority_statuses = [final_rest_status, final_bithumb_status]
+        final_runtime_metrics['bithumb_quote_cache_status'] = final_bithumb_status
+        final_runtime_metrics['rest_fallback_cache_status'] = final_rest_status
+        final_runtime_metrics['stale_recheck_priority_worker_wake_count'] = sum(
+            int(item.get('priority_worker_wake_count', 0) or 0)
+            for item in final_priority_statuses
+        )
+        final_runtime_metrics['stale_recheck_priority_symbol_fetch_count'] = sum(
+            int(item.get('priority_symbol_fetch_count', 0) or 0)
+            for item in final_priority_statuses
+        )
+        final_runtime_metrics['stale_recheck_priority_full_refresh_fallback_count'] = sum(
+            int(item.get('priority_full_refresh_fallback_count', 0) or 0)
+            for item in final_priority_statuses
+        )
+        final_priority_fetch_avgs = [
+            float(item.get('priority_fetch_avg_ms', 0) or 0)
+            for item in final_priority_statuses
+            if float(item.get('priority_fetch_avg_ms', 0) or 0) > 0
+        ]
+        final_runtime_metrics['stale_recheck_priority_fetch_avg_ms'] = round(
+            sum(final_priority_fetch_avgs) / len(final_priority_fetch_avgs), 2
+        ) if final_priority_fetch_avgs else 0.0
+        final_runtime_metrics['stale_recheck_priority_fetch_last_ms'] = round(max(
+            float(item.get('priority_fetch_last_ms', 0) or 0)
+            for item in final_priority_statuses
+        ), 2)
+        final_runtime_metrics['stale_recheck_inflight_count'] = sum(
+            int(item.get('recheck_inflight_count', 0) or 0)
+            for item in final_priority_statuses
+        )
+        final_runtime_metrics['stale_recheck_deduped_count'] = sum(
+            int(item.get('recheck_deduped_count', 0) or 0)
+            for item in final_priority_statuses
+        )
         runtime_store.set_state('telemetry', final_runtime_metrics)
-        if not cfg.runtime_store_enabled:
-            _write_json(telemetry_path, final_runtime_metrics)
+        _write_json(telemetry_path, final_runtime_metrics)
     runtime_store.stop_background_writer(snapshot_paths, runtime_store_status_path)
 
     if args.until_stop:

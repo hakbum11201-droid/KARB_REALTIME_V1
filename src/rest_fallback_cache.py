@@ -22,6 +22,10 @@ class RestFallbackQuoteCache:
         rest_cache_ws_fresh_threshold_ms=1500,
         recheck_cooldown_sec=5,
         recheck_max_queue_size=50,
+        priority_worker_enabled=True,
+        inflight_dedupe=True,
+        priority_fetch_timeout_ms=700,
+        priority_max_workers=1,
     ):
         self.upbit = upbit_public
         self.binance = binance_public
@@ -35,8 +39,13 @@ class RestFallbackQuoteCache:
         self.ws_fresh_threshold_ms = max(1.0, float(rest_cache_ws_fresh_threshold_ms))
         self.recheck_cooldown_sec = max(0.0, float(recheck_cooldown_sec))
         self.recheck_max_queue_size = max(1, int(recheck_max_queue_size))
+        self.priority_worker_enabled = bool(priority_worker_enabled)
+        self.inflight_dedupe = bool(inflight_dedupe)
+        self.priority_fetch_timeout_ms = max(1, int(priority_fetch_timeout_ms))
+        self.priority_max_workers = max(1, int(priority_max_workers))
         self._lock = threading.RLock()
         self._stop = threading.Event()
+        self._priority_event = threading.Event()
         self._thread = None
         self._symbols = []
         self._quotes = {}
@@ -55,15 +64,26 @@ class RestFallbackQuoteCache:
         self._upbit_ws_fresh_skip_count = 0
         self._recheck_queue = deque()
         self._recheck_enqueued = set()
+        self._recheck_inflight = set()
+        self._recheck_meta = {}
         self._recheck_last_requested_at = {}
         self._recheck_request_count = 0
         self._recheck_execute_count = 0
         self._recheck_skip_cooldown_count = 0
+        self._recheck_deduped_count = 0
         self._recheck_fail_count = 0
         self._recheck_last_symbol = ''
         self._recheck_last_pair_id = ''
         self._recheck_last_at = 0.0
         self._recheck_last_error = ''
+        self._priority_worker_wake_count = 0
+        self._priority_symbol_fetch_count = 0
+        self._priority_full_refresh_fallback_count = 0
+        self._priority_fetch_total_ms = 0.0
+        self._priority_fetch_samples = 0
+        self._priority_fetch_last_ms = 0.0
+        self._priority_fetch_last_symbol = ''
+        self._priority_fetch_last_error = ''
 
     def start(self, symbols):
         self.update_symbols(symbols)
@@ -77,6 +97,7 @@ class RestFallbackQuoteCache:
 
     def stop(self):
         self._stop.set()
+        self._priority_event.set()
         thread = self._thread
         if thread and thread.is_alive():
             thread.join(timeout=min(1.0, self.refresh_sec + 0.1))
@@ -154,7 +175,10 @@ class RestFallbackQuoteCache:
                 **self.get_recheck_status(),
             }
 
-    def request_priority_refresh(self, pair_id, symbol, reason=None):
+    def request_priority_refresh(
+        self, pair_id, symbol, reason=None,
+        original_surplus_bp=None, original_net_krw=None,
+    ):
         now = time.time()
         symbol = str(symbol or '').upper()
         pair_id = str(pair_id or 'UPBIT_BINANCE')
@@ -162,24 +186,42 @@ class RestFallbackQuoteCache:
             return {'ok': False, 'queued': False, 'reason': 'DISABLED_OR_EMPTY_SYMBOL'}
         key = (pair_id, symbol)
         with self._lock:
+            if self.inflight_dedupe and (key in self._recheck_enqueued or key in self._recheck_inflight):
+                self._recheck_deduped_count += 1
+                self._recheck_meta[key] = {
+                    'pair_id': pair_id, 'symbol': symbol, 'reason': reason or '',
+                    'requested_at': now,
+                    'original_surplus_bp': original_surplus_bp,
+                    'original_net_krw': original_net_krw,
+                }
+                reason_code = 'SKIP_INFLIGHT' if key in self._recheck_inflight else 'RECHECK_ALREADY_QUEUED'
+                return {'ok': False, 'queued': False, 'reason': reason_code}
             last = self._recheck_last_requested_at.get(key, 0.0)
             if now - last < self.recheck_cooldown_sec:
                 self._recheck_skip_cooldown_count += 1
-                return {'ok': False, 'queued': False, 'reason': 'RECHECK_COOLDOWN'}
-            if key in self._recheck_enqueued:
-                self._recheck_skip_cooldown_count += 1
-                return {'ok': False, 'queued': False, 'reason': 'RECHECK_ALREADY_QUEUED'}
+                return {'ok': False, 'queued': False, 'reason': 'SKIP_COOLDOWN'}
             if len(self._recheck_queue) >= self.recheck_max_queue_size:
                 return {'ok': False, 'queued': False, 'reason': 'RECHECK_QUEUE_FULL'}
             self._recheck_queue.append({
                 'pair_id': pair_id, 'symbol': symbol, 'reason': reason or '',
                 'requested_at': now,
+                'original_surplus_bp': original_surplus_bp,
+                'original_net_krw': original_net_krw,
             })
             self._recheck_enqueued.add(key)
+            self._recheck_meta[key] = {
+                'pair_id': pair_id, 'symbol': symbol, 'reason': reason or '',
+                'requested_at': now,
+                'original_surplus_bp': original_surplus_bp,
+                'original_net_krw': original_net_krw,
+            }
             self._recheck_last_requested_at[key] = now
             self._recheck_request_count += 1
             self._recheck_last_symbol = symbol
             self._recheck_last_pair_id = pair_id
+            if self.priority_worker_enabled:
+                self._priority_worker_wake_count += 1
+                self._priority_event.set()
             return {'ok': True, 'queued': True, 'reason': 'RECHECK_REQUESTED'}
 
     def get_recheck_status(self):
@@ -189,11 +231,23 @@ class RestFallbackQuoteCache:
                 'recheck_request_count': self._recheck_request_count,
                 'recheck_execute_count': self._recheck_execute_count,
                 'recheck_skip_cooldown_count': self._recheck_skip_cooldown_count,
+                'recheck_inflight_count': len(self._recheck_inflight),
+                'recheck_deduped_count': self._recheck_deduped_count,
+                'recheck_inflight_symbols': [f'{pair}:{symbol}' for pair, symbol in sorted(self._recheck_inflight)],
                 'recheck_fail_count': self._recheck_fail_count,
                 'recheck_last_symbol': self._recheck_last_symbol,
                 'recheck_last_pair_id': self._recheck_last_pair_id,
                 'recheck_last_at': self._recheck_last_at,
                 'recheck_last_error': self._recheck_last_error,
+                'priority_worker_wake_count': self._priority_worker_wake_count,
+                'priority_symbol_fetch_count': self._priority_symbol_fetch_count,
+                'priority_full_refresh_fallback_count': self._priority_full_refresh_fallback_count,
+                'priority_fetch_avg_ms': round(
+                    self._priority_fetch_total_ms / self._priority_fetch_samples, 2
+                ) if self._priority_fetch_samples else 0.0,
+                'priority_fetch_last_ms': round(self._priority_fetch_last_ms, 2),
+                'priority_fetch_last_symbol': self._priority_fetch_last_symbol,
+                'priority_fetch_last_error': self._priority_fetch_last_error,
             }
 
     def refresh_once(self):
@@ -259,7 +313,9 @@ class RestFallbackQuoteCache:
             if not self._recheck_queue:
                 return None
             request = self._recheck_queue.popleft()
-            self._recheck_enqueued.discard((request['pair_id'], request['symbol']))
+            key = (request['pair_id'], request['symbol'])
+            self._recheck_enqueued.discard(key)
+            self._recheck_inflight.add(key)
             return request
 
     def _process_priority_queue(self, fetch_time):
@@ -268,50 +324,93 @@ class RestFallbackQuoteCache:
             if not request:
                 return
             symbol = request['symbol']
+            pair_id = request['pair_id']
+            key = (pair_id, symbol)
+            started = time.time()
             try:
                 legs = {}
-                if not self._backoff_active('upbit'):
+                skip_reasons = []
+                needs_binance = pair_id != 'UPBIT_BITHUMB'
+                if self._upbit_ws_is_fresh(symbol, fetch_time):
+                    skip_reasons.append('SKIP_UPBIT_WS_FRESH')
+                    with self._lock:
+                        self._upbit_ws_fresh_skip_count += 1
+                elif self._backoff_active('upbit'):
+                    skip_reasons.append('SKIP_BACKOFF')
+                    self._record_backoff_skip('upbit')
+                else:
                     with rate_limiter.source('rest_cache'):
                         quote = self.upbit.fetch_order_book(symbol)
                     if quote:
                         legs['upbit'] = self._normalize_quote(quote, fetch_time)
+                if not needs_binance:
+                    pass
+                elif self._backoff_active('binance'):
+                    skip_reasons.append('SKIP_BACKOFF')
+                    self._record_backoff_skip('binance')
                 else:
-                    self._record_backoff_skip('upbit')
-                if not self._backoff_active('binance'):
                     with rate_limiter.source('rest_cache'):
                         quote = self.binance.fetch_order_book(symbol)
                     if quote:
                         legs['binance'] = self._normalize_quote(quote, fetch_time)
-                else:
-                    self._record_backoff_skip('binance')
+                elapsed_ms = (time.time() - started) * 1000
                 with self._lock:
                     self._recheck_execute_count += 1
                     self._recheck_last_symbol = symbol
-                    self._recheck_last_pair_id = request['pair_id']
+                    self._recheck_last_pair_id = pair_id
                     self._recheck_last_at = time.time()
+                    self._priority_fetch_last_ms = elapsed_ms
+                    self._priority_fetch_last_symbol = symbol
+                    self._priority_fetch_total_ms += elapsed_ms
+                    self._priority_fetch_samples += 1
+                    self._priority_symbol_fetch_count += len(legs)
                     if legs:
                         previous = self._quotes.setdefault(symbol, {})
                         previous.update(legs)
-                        if previous.get('upbit') and previous.get('binance'):
+                        if needs_binance and previous.get('upbit') and previous.get('binance'):
                             self._quotes[symbol] = self._build_symbol_quote(symbol, previous)
                             self._last_success_at = time.time()
                             self._last_error = ''
+                        elif not needs_binance and previous.get('upbit'):
+                            self._quotes[symbol] = previous
+                            self._last_success_at = time.time()
+                            self._last_error = ''
+                        self._priority_fetch_last_error = ''
                     else:
                         self._recheck_fail_count += 1
-                        self._recheck_last_error = 'RECHECK_NO_QUOTES'
+                        self._recheck_last_error = skip_reasons[0] if skip_reasons else 'RECHECK_NO_QUOTES'
+                        self._priority_fetch_last_error = self._recheck_last_error
             except Exception as exc:
+                elapsed_ms = (time.time() - started) * 1000
                 with self._lock:
                     self._recheck_execute_count += 1
                     self._recheck_fail_count += 1
                     self._recheck_last_symbol = symbol
-                    self._recheck_last_pair_id = request['pair_id']
+                    self._recheck_last_pair_id = pair_id
                     self._recheck_last_at = time.time()
                     self._recheck_last_error = f'{type(exc).__name__}: {exc}'[:300]
+                    self._priority_fetch_last_ms = elapsed_ms
+                    self._priority_fetch_last_symbol = symbol
+                    self._priority_fetch_total_ms += elapsed_ms
+                    self._priority_fetch_samples += 1
+                    self._priority_fetch_last_error = self._recheck_last_error
+            finally:
+                with self._lock:
+                    self._recheck_inflight.discard(key)
+                    self._recheck_meta.pop(key, None)
 
     def _run(self):
         while not self._stop.is_set():
+            if self.priority_worker_enabled and self._priority_event.is_set():
+                self._priority_event.clear()
+                self._process_priority_queue(time.time())
+                continue
             self.refresh_once()
-            self._stop.wait(self.refresh_sec)
+            if self.priority_worker_enabled:
+                self._priority_event.wait(self.refresh_sec)
+                self._priority_event.clear()
+            else:
+                self._stop.wait(self.refresh_sec)
 
     def _backoff_active(self, exchange):
         return self.skip_on_backoff and rate_limiter.should_backoff(exchange)

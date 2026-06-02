@@ -108,6 +108,16 @@ class Config:
     @property
     def stale_recheck_result_ttl_sec(self): return self.get('stale_recheck_result_ttl_sec', 10)
     @property
+    def stale_recheck_priority_worker_enabled(self): return self.get('stale_recheck_priority_worker_enabled', True)
+    @property
+    def stale_recheck_symbol_only_refresh(self): return self.get('stale_recheck_symbol_only_refresh', True)
+    @property
+    def stale_recheck_inflight_dedupe(self): return self.get('stale_recheck_inflight_dedupe', True)
+    @property
+    def stale_recheck_priority_fetch_timeout_ms(self): return self.get('stale_recheck_priority_fetch_timeout_ms', 700)
+    @property
+    def stale_recheck_priority_max_workers(self): return self.get('stale_recheck_priority_max_workers', 1)
+    @property
     def use_websocket_market_data(self): return self.get('use_websocket_market_data', True)
     @property
     def rest_fallback_enabled(self): return self.get('rest_fallback_enabled', True)
