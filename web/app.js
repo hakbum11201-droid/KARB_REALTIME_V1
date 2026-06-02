@@ -774,7 +774,25 @@ function renderLongRunTelemetry(t={}) {
   setClass('stale-status', `source-badge ${stale?'stale':'ok'}`);
   setText('no-go-top3', `NO-GO top 3: ${noGo.map(([reason,count])=>`${reason} ${count}`).join(' / ')||'--'}`);
   renderWebSocketHealth(t);
+  renderMemoryTelemetry(t);
   renderBithumbCacheStatus(t);
+}
+
+function renderMemoryTelemetry(t={}) {
+  let memoryEl=document.getElementById('memory-telemetry-status');
+  if (!memoryEl) {
+    const anchor=document.getElementById('no-go-top3');
+    if (anchor?.parentElement) {
+      memoryEl=document.createElement('div');
+      memoryEl.id='memory-telemetry-status';
+      memoryEl.className='active-symbol-list';
+      anchor.parentElement.append(memoryEl);
+    }
+  }
+  if (memoryEl) {
+    const memory=t.memory_metric_available ? `${fmt(t.process_memory_mb,2)} MB` : 'unavailable';
+    memoryEl.textContent=`Quote History Keys ${fmt(t.quote_history_key_count)} | Quote History Rows ${fmt(t.quote_history_row_count)} | Process Memory ${memory} | Memory Metric Available ${String(Boolean(t.memory_metric_available))} | Per-leg Latency Model ${t.paper_fill_latency_model||'--'}`;
+  }
 }
 
 function renderWebSocketHealth(t={}) {

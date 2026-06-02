@@ -84,6 +84,9 @@ paper_bithumb_latency_ms: 60
 paper_binance_latency_ms: 80
 paper_latency_jitter_ms: 30
 paper_slippage_stress_bp: 5
+quote_history_maxlen: 120
+quote_history_lightweight_enabled: true
+memory_telemetry_enabled: true
 iceberg_enabled: false
 iceberg_execution_enabled: false
 iceberg_min_order_krw: 1000000

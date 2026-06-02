@@ -181,6 +181,12 @@ class Config:
     def paper_latency_jitter_ms(self): return self.get('paper_latency_jitter_ms', 30)
     @property
     def paper_slippage_stress_bp(self): return self.get('paper_slippage_stress_bp', 5)
+    @property
+    def quote_history_maxlen(self): return self.get('quote_history_maxlen', 120)
+    @property
+    def quote_history_lightweight_enabled(self): return self.get('quote_history_lightweight_enabled', True)
+    @property
+    def memory_telemetry_enabled(self): return self.get('memory_telemetry_enabled', True)
 
     # ── 심볼 / 루프 ────────────────────────────────────────────
     @property

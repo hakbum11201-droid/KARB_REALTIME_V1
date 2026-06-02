@@ -201,8 +201,10 @@ API keys alone never enable an order. If `PARTIAL_RISK` appears, stop new entrie
 ## Dynamic slippage and latency-aware paper fills
 
 - Paper opportunities use a conservative dynamic-slippage estimate. When depth levels are available the model estimates a weighted fill price; top-of-book-only quotes use the configured fallback slippage.
-- The paper fill simulator applies venue latency and bounded in-memory quote history. If an older latency-aligned quote is unavailable, it adds a configured slippage stress penalty.
-- Use these fields during long paper runs: dynamic slippage, depth available, liquidity class, simulated fill latency, and paper edge quality.
+- The paper fill simulator applies per-leg Upbit, Binance, and Bithumb venue latency against bounded in-memory quote history. If an older latency-aligned quote is unavailable, it adds a configured slippage stress penalty.
+- Quote history stores lightweight top-of-book snapshots only. It excludes calculation results, full orderbook depth, and raw tick append storage.
+- During long paper runs, watch quote-history row count and process memory telemetry alongside dynamic slippage, simulated fill latency, and paper edge quality.
+- This refinement intentionally avoids a full asyncio rewrite or Redis dependency.
 - This is paper evaluation only. It does not relax live-order guards or add Iceberg execution.
 ## Iceberg placeholder
 

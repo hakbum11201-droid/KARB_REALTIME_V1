@@ -99,6 +99,29 @@ def _cleanup_quote_history(quote_history, active_symbols) -> int:
     return len(stale_keys)
 
 
+def _light_quote(quote):
+    return {
+        key: quote.get(key)
+        for key in ('bid', 'ask', 'bid_size', 'ask_size', 'ts', 'source')
+        if key in quote
+    }
+
+
+def _history_row(**quotes):
+    return {'_ts': time.time(), **{venue: _light_quote(quote) for venue, quote in quotes.items()}}
+
+
+def _memory_telemetry(enabled):
+    if not enabled:
+        return {'process_memory_mb': None, 'memory_metric_available': False}
+    try:
+        import psutil
+        process_memory_mb = psutil.Process(os.getpid()).memory_info().rss / 1024 / 1024
+        return {'process_memory_mb': round(process_memory_mb, 2), 'memory_metric_available': True}
+    except Exception:
+        return {'process_memory_mb': None, 'memory_metric_available': False}
+
+
 def _merge_scanner_snapshot(current_snapshot, next_snapshot, active_symbols):
     if next_snapshot.get('source') != 'fallback':
         return next_snapshot
@@ -397,8 +420,8 @@ def main():
             calc_res['fx_status']   = fx_status
             calc_res['upbit_ts']    = upbit_q.get('ts')
             calc_res['binance_ts']  = binance_q.get('ts')
-            history = quote_history.setdefault(sym, deque(maxlen=120))
-            history.append({**q, '_ts': time.time()})
+            history = quote_history.setdefault(sym, deque(maxlen=cfg.quote_history_maxlen))
+            history.append(_history_row(upbit=upbit_q, binance=binance_q))
             if cfg.paper_latency_sim_enabled:
                 calc_res.update(simulate_paper_fill(calc_res, history, cfg))
             q['calc'] = calc_res
@@ -486,8 +509,10 @@ def main():
                     'bithumb': bithumb_q,
                 }
                 domestic = arb_calc.calculate_domestic_krw(sym, q.get('upbit', {}), bithumb_q)
-                domestic_history = quote_history.setdefault(f'UPBIT_BITHUMB:{sym}', deque(maxlen=120))
-                domestic_history.append({'upbit': q.get('upbit', {}), 'bithumb': bithumb_q, '_ts': time.time()})
+                domestic_history = quote_history.setdefault(
+                    f'UPBIT_BITHUMB:{sym}', deque(maxlen=cfg.quote_history_maxlen)
+                )
+                domestic_history.append(_history_row(upbit=q.get('upbit', {}), bithumb=bithumb_q))
                 if cfg.paper_latency_sim_enabled:
                     domestic.update(simulate_paper_fill(domestic, domestic_history, cfg))
                 domestic_reason = domestic.get('reason_no_trade', '')
@@ -596,6 +621,8 @@ def main():
         }
         rate_limit_status = ws_metrics.get('rate_limit_status') or rate_limiter.get_status()
         bithumb_quote_cache_status = bithumb_quote_cache.get_status()
+        quote_history_row_count = sum(len(rows) for rows in quote_history.values())
+        memory_telemetry = _memory_telemetry(cfg.memory_telemetry_enabled)
         top_symbol_by_signal = max(signal_counts, key=signal_counts.get) if signal_counts else ''
         top_symbol_by_surplus = max(symbol_surplus_max, key=symbol_surplus_max.get) if symbol_surplus_max else ''
         runtime_metrics = {
@@ -655,6 +682,12 @@ def main():
             'skipped_bithumb_symbol_count': skipped_bithumb_symbol_count,
             'skipped_bithumb_quote_reasons': skipped_bithumb_quote_reasons,
             'quote_history_key_count': len(quote_history),
+            'quote_history_row_count': quote_history_row_count,
+            'quote_history_max_rows_per_key': cfg.quote_history_maxlen,
+            'quote_history_estimated_items': quote_history_row_count,
+            'quote_history_lightweight_enabled': cfg.quote_history_lightweight_enabled,
+            **memory_telemetry,
+            'paper_fill_latency_model': 'per_leg',
             'quote_history_cleanup_count': quote_history_cleanup_count,
             'last_quote_history_cleanup_at': last_quote_history_cleanup_at,
             'scanner_source': scanner_snapshot.get('source', 'fallback'),
