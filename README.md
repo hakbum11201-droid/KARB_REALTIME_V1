@@ -294,3 +294,11 @@ default configuration. The cache uses an `RLock`, keeps only the latest
 top-of-book snapshot, and rejects an older REST fallback before it can replace a
 newer WebSocket quote. Direct REST fallback from the engine loop is disabled by
 default with `rest_direct_fallback_enabled: false`.
+
+The KRW/USDT FX rate uses a 60 second cache by default, so the engine loop does
+not request BTC FX quotes on every iteration. A failed refresh retains the last
+known value, while an FX value older than `fx_cache_max_age_sec` is marked
+`FX_STALE`. The dashboard and `/api/rest-fallback-cache/status` expose the
+background REST cache state. During smoke tests, verify direct REST calls stay
+at zero, cache hits can increase, older-than-WS drops can increase, and
+`fx_cache_age_sec` refreshes normally.

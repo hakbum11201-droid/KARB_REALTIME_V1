@@ -200,7 +200,13 @@ def main():
     )
     active_symbols = scanner_snapshot.get('active_symbols') or list(cfg.symbols)
     print(f"[KARB] Active symbols: {len(active_symbols)} ({scanner_snapshot.get('source', 'fallback')})")
-    fx_oracle    = FxOracle(upbit_pub, binance_pub)
+    fx_oracle    = FxOracle(
+        upbit_pub,
+        binance_pub,
+        cache_enabled=cfg.fx_cache_enabled,
+        cache_interval_sec=cfg.fx_cache_interval_sec,
+        cache_max_age_sec=cfg.fx_cache_max_age_sec,
+    )
     quote_engine = QuoteEngine(upbit_pub, binance_pub, active_symbols)
     rest_fallback_cache = RestFallbackQuoteCache(
         upbit_pub,
@@ -371,7 +377,7 @@ def main():
             krw_usdt  = None
             error_count += 1
 
-        if fx_status != "OK" or not krw_usdt:
+        if (fx_status != "OK" and not (cfg.mode == "paper" and fx_status == "FX_STALE")) or not krw_usdt:
             if args.once:
                 print(f"[FX] {fx_status} – 종료")
                 break
@@ -641,6 +647,7 @@ def main():
         rate_limit_status = ws_metrics.get('rate_limit_status') or rate_limiter.get_status()
         bithumb_quote_cache_status = bithumb_quote_cache.get_status()
         rest_fallback_cache_status = rest_fallback_cache.get_status()
+        fx_cache_status = fx_oracle.get_status()
         quote_history_row_count = sum(len(rows) for rows in quote_history.values())
         memory_telemetry = _memory_telemetry(cfg.memory_telemetry_enabled)
         top_symbol_by_signal = max(signal_counts, key=signal_counts.get) if signal_counts else ''
@@ -672,6 +679,7 @@ def main():
             'rest_fallback_cache_stale_count': ws_metrics.get('rest_fallback_cache_stale_count', 0),
             'rest_direct_call_count': ws_metrics.get('rest_direct_call_count', 0),
             'rest_fallback_older_than_ws_drop_count': ws_metrics.get('rest_fallback_older_than_ws_drop_count', 0),
+            **fx_cache_status,
             'rate_limit_throttle_count': rate_limit_status.get('total_throttle_count', 0),
             'api_429_count':        rate_limit_status.get('total_api_429_count', 0),
             'rate_limit_status':    rate_limit_status,

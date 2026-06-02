@@ -86,6 +86,12 @@ class Config:
     @property
     def rest_direct_call_warn_threshold(self): return self.get('rest_direct_call_warn_threshold', 1)
     @property
+    def fx_cache_enabled(self): return self.get('fx_cache_enabled', True)
+    @property
+    def fx_cache_interval_sec(self): return self.get('fx_cache_interval_sec', 60)
+    @property
+    def fx_cache_max_age_sec(self): return self.get('fx_cache_max_age_sec', 300)
+    @property
     def block_new_entries_on_partial_risk(self): return self.get('block_new_entries_on_partial_risk', True)
     @property
     def order_ttl_sec(self): return self.get('order_ttl_sec', 1.5)

@@ -32,6 +32,9 @@ rest_fallback_cache_stale_ms: 3000
 rest_fallback_cache_skip_on_backoff: true
 rest_direct_fallback_enabled: false
 rest_direct_call_warn_threshold: 1
+fx_cache_enabled: true
+fx_cache_interval_sec: 60
+fx_cache_max_age_sec: 300
 block_new_entries_on_partial_risk: true
 order_ttl_sec: 1.5
 min_fill_ratio: 0.8

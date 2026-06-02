@@ -244,6 +244,19 @@ def _bithumb_cache_status_payload():
     }
 
 
+def _rest_fallback_cache_status_payload():
+    telemetry = _read_json(os.path.join(RUNTIME_DIR, 'telemetry.json'))
+    return {
+        'ok': True, 'error': '', 'blockers': [],
+        'cache': telemetry.get('rest_fallback_cache_status', {}),
+        'rest_direct_call_count': telemetry.get('rest_direct_call_count', 0),
+        'rest_fallback_cache_hit_count': telemetry.get('rest_fallback_cache_hit_count', 0),
+        'rest_fallback_cache_miss_count': telemetry.get('rest_fallback_cache_miss_count', 0),
+        'rest_fallback_cache_stale_count': telemetry.get('rest_fallback_cache_stale_count', 0),
+        'rest_fallback_older_than_ws_drop_count': telemetry.get('rest_fallback_older_than_ws_drop_count', 0),
+    }
+
+
 def _bithumb_balances_payload():
     return BithumbPrivateClient().get_balances()
 
@@ -427,6 +440,9 @@ class KarbHandler(SimpleHTTPRequestHandler):
 
         elif path == '/api/bithumb/cache-status':
             self._send_guarded_json(_bithumb_cache_status_payload)
+
+        elif path == '/api/rest-fallback-cache/status':
+            self._send_guarded_json(_rest_fallback_cache_status_payload)
 
         elif path == '/api/bithumb/balances':
             self._send_guarded_json(_bithumb_balances_payload)

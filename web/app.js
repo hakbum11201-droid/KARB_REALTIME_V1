@@ -776,6 +776,7 @@ function renderLongRunTelemetry(t={}) {
   renderWebSocketHealth(t);
   renderMemoryTelemetry(t);
   renderBithumbCacheStatus(t);
+  renderRestFallbackCacheStatus(t);
 }
 
 function renderMemoryTelemetry(t={}) {
@@ -827,6 +828,24 @@ function renderBithumbCacheStatus(t={}) {
   if (cacheEl) {
     const lastSuccess=cache.last_success_age_ms==null ? '--' : `${fmt(cache.last_success_age_ms)} ms`;
     cacheEl.textContent=`Bithumb Cache: ${cache.enabled?'ON':'OFF'} | Running ${cache.running?'YES':'NO'} | Stale / Quote ${fmt(cache.stale_count)} / ${fmt(cache.quote_count)} | TS Fallback ${fmt(cache.quote_ts_fallback_count)} | TS Normalized ${fmt(cache.quote_ts_normalized_count)} | Last Success Age ${lastSuccess} | Fail Count ${fmt(cache.fail_count)} | Skipped Bithumb Symbols ${fmt(t.skipped_bithumb_symbol_count)} | Quote History Keys ${fmt(t.quote_history_key_count)}`;
+  }
+}
+
+function renderRestFallbackCacheStatus(t={}) {
+  const cache=t.rest_fallback_cache_status||{};
+  let cacheEl=document.getElementById('rest-fallback-cache-status');
+  if (!cacheEl) {
+    const anchor=document.getElementById('scanner-active-symbols');
+    if (anchor?.parentElement) {
+      cacheEl=document.createElement('div');
+      cacheEl.id='rest-fallback-cache-status';
+      cacheEl.className='active-symbol-list';
+      anchor.parentElement.append(cacheEl);
+    }
+  }
+  if (cacheEl) {
+    const fxAge=t.fx_cache_age_sec==null ? '--' : `${fmt(t.fx_cache_age_sec,1)} sec`;
+    cacheEl.textContent=`REST Fallback Cache: ${cache.enabled?'ON':'OFF'} | Running ${cache.running?'YES':'NO'} | Quote Count ${fmt(cache.quote_count)} | Stale Count ${fmt(cache.stale_count)} | Hit Count ${fmt(t.rest_fallback_cache_hit_count)} | Miss Count ${fmt(t.rest_fallback_cache_miss_count)} | Direct REST Calls ${fmt(t.rest_direct_call_count)} | Older-than-WS Drops ${fmt(t.rest_fallback_older_than_ws_drop_count)} | FX Cache Age ${fxAge} | FX Status ${t.fx_status||'--'} | FX Last Error ${t.fx_last_error||'none'}`;
   }
 }
 
