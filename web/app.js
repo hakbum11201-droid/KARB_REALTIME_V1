@@ -812,7 +812,9 @@ function renderStaleRecheckTelemetry(t={}) {
   }
   if (!el) return;
   const passRatio=Number(t.stale_recheck_pass_ratio||0)*100;
-  el.textContent=`Stale Recheck | Enabled ${String(Boolean(t.stale_recheck_enabled??true))} | Paper Only ${String(Boolean(t.stale_recheck_paper_only??true))} | Requests ${fmt(t.stale_recheck_request_count)} | Execute ${fmt(t.stale_recheck_execute_count)} | Pass / Fail / Timeout ${fmt(t.stale_recheck_pass_count)} / ${fmt(t.stale_recheck_fail_count)} / ${fmt(t.stale_recheck_timeout_count)} | Pass Ratio ${fmt(passRatio,1)}% | Queue ${fmt(t.stale_recheck_queue_size)} | Last ${t.stale_recheck_last_symbol||'--'} ${t.stale_recheck_last_status||'NONE'} | Avg Elapsed ${fmt(t.stale_recheck_avg_elapsed_ms,1)} ms`;
+  const fastRatio=Number(t.stale_recheck_fast_pass_ratio||0)*100;
+  const lateRatio=Number(t.stale_recheck_late_pass_ratio||0)*100;
+  el.textContent=`Stale Recheck | Enabled ${String(Boolean(t.stale_recheck_enabled??true))} | Paper Only ${String(Boolean(t.stale_recheck_paper_only??true))} | Requests ${fmt(t.stale_recheck_request_count)} | Execute ${fmt(t.stale_recheck_execute_count)} | Pass / Fail / Timeout ${fmt(t.stale_recheck_pass_count)} / ${fmt(t.stale_recheck_fail_count)} / ${fmt(t.stale_recheck_timeout_count)} | FAST PASS ${fmt(t.stale_recheck_fast_pass_count)} | LATE PASS ${fmt(t.stale_recheck_late_pass_count)} | FAST PASS RATIO ${fmt(fastRatio,1)}% | LATE PASS RATIO ${fmt(lateRatio,1)}% | Pass Ratio ${fmt(passRatio,1)}% | Queue ${fmt(t.stale_recheck_queue_size)} | Last ${t.stale_recheck_last_symbol||'--'} ${t.stale_recheck_last_status||'NONE'} | AVG TOTAL ${fmt(t.stale_recheck_avg_total_elapsed_ms??t.stale_recheck_avg_elapsed_ms,1)} ms | AVG QUEUE ${fmt(t.stale_recheck_avg_queue_wait_ms,1)} ms | AVG FETCH ${fmt(t.stale_recheck_avg_fetch_ms,1)} ms | AVG DECISION WAIT ${fmt(t.stale_recheck_avg_decision_wait_ms,1)} ms`;
 }
 
 function renderMemoryTelemetry(t={}) {

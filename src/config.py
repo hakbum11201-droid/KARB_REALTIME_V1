@@ -98,6 +98,10 @@ class Config:
     @property
     def stale_recheck_cooldown_sec(self): return self.get('stale_recheck_cooldown_sec', 5)
     @property
+    def stale_recheck_fast_pass_ms(self): return self.get('stale_recheck_fast_pass_ms', 1000)
+    @property
+    def stale_recheck_late_pass_ms(self): return self.get('stale_recheck_late_pass_ms', 3000)
+    @property
     def stale_recheck_max_per_minute(self): return self.get('stale_recheck_max_per_minute', 20)
     @property
     def stale_recheck_max_queue_size(self): return self.get('stale_recheck_max_queue_size', 50)

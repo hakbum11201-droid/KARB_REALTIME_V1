@@ -346,5 +346,10 @@ For long paper smoke tests, the recommended checks are:
   a paper observation result, not permission to place live or tiny-live orders.
 - `RECHECK_FAIL` means the edge disappeared or no longer met the trigger
   threshold. `RECHECK_TIMEOUT` means no fresh quote arrived within the TTL.
+- Passing rechecks are split into `RECHECK_FAST_PASS` and `RECHECK_LATE_PASS`.
+  Only fast passes are useful for live-candidate analysis. Late passes mean the
+  edge existed, but current refresh speed makes it weak for live use.
+- This stage improves measurement only. Recheck outcomes are not connected to
+  live, tiny-live, or market-order execution.
 - For 24-hour paper runs, review the recheck pass ratio and average surplus to
   separate real stale-hidden opportunities from stale-cache noise.

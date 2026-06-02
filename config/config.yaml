@@ -38,6 +38,8 @@ stale_recheck_min_surplus_bp_extra: 10
 stale_recheck_min_net_profit_krw: 10
 stale_recheck_allowed_liquidity: [GOOD, NORMAL]
 stale_recheck_cooldown_sec: 5
+stale_recheck_fast_pass_ms: 1000
+stale_recheck_late_pass_ms: 3000
 stale_recheck_max_per_minute: 20
 stale_recheck_max_queue_size: 50
 stale_recheck_result_ttl_sec: 10

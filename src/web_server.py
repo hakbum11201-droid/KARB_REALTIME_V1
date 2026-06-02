@@ -207,6 +207,31 @@ def _telemetry_payload():
 
 def _stale_recheck_status_payload():
     telemetry = _read_json(os.path.join(RUNTIME_DIR, 'telemetry.json'))
+    def value_or(name, fallback):
+        value = telemetry.get(name)
+        return fallback if value is None else value
+    recent = telemetry.get('stale_recheck_recent', [])[:20]
+    fallback_fast = sum(
+        1 for item in recent
+        if item.get('status') == 'RECHECK_PASS'
+        and float(item.get('elapsed_total_ms', item.get('elapsed_ms', 0)) or 0) <= cfg.stale_recheck_fast_pass_ms
+    )
+    fallback_late = sum(
+        1 for item in recent
+        if item.get('status') == 'RECHECK_PASS'
+        and float(item.get('elapsed_total_ms', item.get('elapsed_ms', 0)) or 0) > cfg.stale_recheck_fast_pass_ms
+    )
+    fast_pass_count = value_or('stale_recheck_fast_pass_count', fallback_fast)
+    late_pass_count = value_or('stale_recheck_late_pass_count', fallback_late)
+    if not fast_pass_count and not late_pass_count and (fallback_fast or fallback_late):
+        fast_pass_count = fallback_fast
+        late_pass_count = fallback_late
+    avg_total_elapsed_ms = value_or(
+        'stale_recheck_avg_total_elapsed_ms',
+        telemetry.get('stale_recheck_avg_elapsed_ms', 0),
+    )
+    if not avg_total_elapsed_ms:
+        avg_total_elapsed_ms = telemetry.get('stale_recheck_avg_elapsed_ms', 0)
     return {
         'ok': True,
         'error': '',
@@ -216,6 +241,8 @@ def _stale_recheck_status_payload():
         'request_count': telemetry.get('stale_recheck_request_count', 0),
         'execute_count': telemetry.get('stale_recheck_execute_count', 0),
         'pass_count': telemetry.get('stale_recheck_pass_count', 0),
+        'fast_pass_count': fast_pass_count,
+        'late_pass_count': late_pass_count,
         'fail_count': telemetry.get('stale_recheck_fail_count', 0),
         'timeout_count': telemetry.get('stale_recheck_timeout_count', 0),
         'skip_cooldown_count': telemetry.get('stale_recheck_skip_cooldown_count', 0),
@@ -224,8 +251,20 @@ def _stale_recheck_status_payload():
         'last_symbol': telemetry.get('stale_recheck_last_symbol', ''),
         'last_status': telemetry.get('stale_recheck_last_status', 'NONE'),
         'avg_elapsed_ms': telemetry.get('stale_recheck_avg_elapsed_ms', 0),
+        'avg_total_elapsed_ms': avg_total_elapsed_ms,
+        'avg_queue_wait_ms': value_or('stale_recheck_avg_queue_wait_ms', 0),
+        'avg_fetch_ms': value_or('stale_recheck_avg_fetch_ms', 0),
+        'avg_decision_wait_ms': value_or('stale_recheck_avg_decision_wait_ms', 0),
         'pass_ratio': telemetry.get('stale_recheck_pass_ratio', 0),
-        'recent': telemetry.get('stale_recheck_recent', [])[:20],
+        'fast_pass_ratio': value_or(
+            'stale_recheck_fast_pass_ratio',
+            round(fast_pass_count / max(1, telemetry.get('stale_recheck_pass_count', 0)), 4),
+        ),
+        'late_pass_ratio': value_or(
+            'stale_recheck_late_pass_ratio',
+            round(late_pass_count / max(1, telemetry.get('stale_recheck_pass_count', 0)), 4),
+        ),
+        'recent': recent,
     }
 
 
