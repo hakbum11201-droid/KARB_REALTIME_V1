@@ -320,3 +320,18 @@ For long paper smoke tests, the recommended checks are:
   increasing `Bithumb Skipped Last Loop` is not.
 - Start observing `P95QuoteAge` above 3000 ms. It remains an optimization target
   before live use.
+
+## Staged live quote freshness
+
+- `P95QuoteAge` is an observation metric across paper quotes. Live and tiny-live
+  readiness use the stricter per-opportunity `max_leg_quote_age_ms`.
+- Stale-grace Bithumb quotes remain available for paper observation, but are
+  blocked from live readiness by default.
+- Paper mode keeps the dynamic Top20 scanner. Live readiness uses the separate
+  `live_active_symbols` watchlist unless `live_use_dynamic_symbols` is enabled.
+- On the current local PC baseline, tiny-live starts with a 1500 ms
+  cross-border threshold in observe-only mode. Live starts with a 1000 ms gate.
+- Tighten the live threshold toward 500 ms only after server placement or
+  network improvements show that the lower age is sustainable.
+- Only sufficiently liquid watchlist symbols are live candidates. Dynamic paper
+  symbols outside that watchlist remain visible for observation.

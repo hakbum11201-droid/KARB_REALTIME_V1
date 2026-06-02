@@ -21,6 +21,9 @@ LIVE_BLOCKER_CODES = (
     'BITHUMB_LIVE_DISABLED', 'UPBIT_BITHUMB_LIVE_DISABLED',
     'ICEBERG_REQUIRED', 'BLOCK_LARGE_ORDER_WITHOUT_ICEBERG',
     'ICEBERG_EXECUTION_DISABLED',
+    'LIVE_QUOTE_TOO_OLD', 'TINY_LIVE_QUOTE_TOO_OLD', 'LIVE_STALE_QUOTE',
+    'LIVE_STALE_GRACE_BLOCKED', 'LIVE_MISSING_QUOTE_TS',
+    'SYMBOL_NOT_IN_LIVE_WATCHLIST',
 )
 
 
@@ -57,6 +60,81 @@ class RiskGuard:
         return {
             'upbit_krw': float(calc_result.get('required_upbit_balance_krw', 0) or 0),
             'binance_usdt': float(calc_result.get('required_binance_balance_usdt', 0) or 0),
+        }
+
+    @staticmethod
+    def quote_freshness_status(opportunity: dict, now: float | None = None) -> dict:
+        """Evaluate staged live freshness without changing paper trade decisions."""
+        now = time.time() if now is None else float(now)
+        pair_id = opportunity.get('pair_id', 'UPBIT_BINANCE')
+        symbol = opportunity.get('symbol', '')
+        upbit_ts = opportunity.get('upbit_ts')
+        binance_ts = opportunity.get('binance_ts')
+        bithumb_ts = opportunity.get('bithumb_ts')
+
+        def age_ms(ts):
+            try:
+                return round(max(0.0, now - float(ts)) * 1000, 2) if ts else None
+            except (TypeError, ValueError):
+                return None
+
+        ages = {
+            'upbit_quote_age_ms': age_ms(upbit_ts),
+            'binance_quote_age_ms': age_ms(binance_ts),
+            'bithumb_quote_age_ms': age_ms(bithumb_ts),
+        }
+        leg_names = ('upbit_quote_age_ms', 'bithumb_quote_age_ms') if pair_id == 'UPBIT_BITHUMB' else (
+            'upbit_quote_age_ms', 'binance_quote_age_ms'
+        )
+        leg_ages = [ages[name] for name in leg_names]
+        max_age = max((value for value in leg_ages if value is not None), default=None)
+        direction = opportunity.get('best_direction', '')
+        if pair_id == 'UPBIT_BITHUMB':
+            sell_age = ages['upbit_quote_age_ms'] if direction == 'UPBIT_BITHUMB_A' else ages['bithumb_quote_age_ms']
+            buy_age = ages['bithumb_quote_age_ms'] if direction == 'UPBIT_BITHUMB_A' else ages['upbit_quote_age_ms']
+            live_limit = cfg.live_domestic_quote_max_age_ms
+            tiny_limit = cfg.tiny_live_domestic_quote_max_age_ms
+        else:
+            sell_age = ages['upbit_quote_age_ms'] if direction == 'A' else ages['binance_quote_age_ms']
+            buy_age = ages['binance_quote_age_ms'] if direction == 'A' else ages['upbit_quote_age_ms']
+            live_limit = cfg.live_cross_border_quote_max_age_ms
+            tiny_limit = cfg.tiny_live_cross_border_quote_max_age_ms
+        uses_grace = bool(opportunity.get('stale_grace') or opportunity.get('uses_stale_grace_quote'))
+        has_stale = bool(opportunity.get('stale') or opportunity.get('has_stale_quote'))
+        watchlist_ok = bool(cfg.live_use_dynamic_symbols or symbol in cfg.live_active_symbols)
+
+        def blockers(limit, allow_grace, too_old_code):
+            out = []
+            if not watchlist_ok:
+                out.append('SYMBOL_NOT_IN_LIVE_WATCHLIST')
+            if any(value is None for value in leg_ages):
+                out.append('LIVE_MISSING_QUOTE_TS')
+            if has_stale:
+                out.append('LIVE_STALE_QUOTE')
+            if uses_grace and not allow_grace:
+                out.append('LIVE_STALE_GRACE_BLOCKED')
+            if max_age is not None and max_age > limit:
+                out.append(too_old_code)
+            return list(dict.fromkeys(out))
+
+        live_blockers = blockers(live_limit, cfg.live_allow_stale_grace_quotes, 'LIVE_QUOTE_TOO_OLD')
+        tiny_blockers = blockers(tiny_limit, cfg.tiny_live_allow_stale_grace_quotes, 'TINY_LIVE_QUOTE_TOO_OLD')
+        return {
+            **ages,
+            'buy_leg_quote_age_ms': buy_age,
+            'sell_leg_quote_age_ms': sell_age,
+            'max_leg_quote_age_ms': max_age,
+            'uses_stale_grace_quote': uses_grace,
+            'has_stale_quote': has_stale,
+            'live_freshness_ok': not live_blockers,
+            'tiny_live_freshness_ok': not tiny_blockers,
+            'live_freshness_blockers': live_blockers,
+            'tiny_live_freshness_blockers': tiny_blockers,
+            'live_watchlist_ok': watchlist_ok,
+            'live_freshness_observe_only': cfg.live_freshness_observe_only,
+            'tiny_live_freshness_observe_only': cfg.tiny_live_freshness_observe_only,
+            'live_quote_max_age_ms': live_limit,
+            'tiny_live_quote_max_age_ms': tiny_limit,
         }
 
     @staticmethod

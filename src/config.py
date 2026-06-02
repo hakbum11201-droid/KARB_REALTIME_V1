@@ -56,6 +56,34 @@ class Config:
     @property
     def tiny_live_require_inventory_ok(self): return self.get('tiny_live_require_inventory_ok', True)
     @property
+    def live_quote_max_age_ms(self): return self.get('live_quote_max_age_ms', 1000)
+    @property
+    def tiny_live_quote_max_age_ms(self): return self.get('tiny_live_quote_max_age_ms', 1500)
+    @property
+    def live_domestic_quote_max_age_ms(self): return self.get('live_domestic_quote_max_age_ms', 1200)
+    @property
+    def tiny_live_domestic_quote_max_age_ms(self): return self.get('tiny_live_domestic_quote_max_age_ms', 1800)
+    @property
+    def live_cross_border_quote_max_age_ms(self): return self.get('live_cross_border_quote_max_age_ms', 1000)
+    @property
+    def tiny_live_cross_border_quote_max_age_ms(self): return self.get('tiny_live_cross_border_quote_max_age_ms', 1500)
+    @property
+    def live_allow_stale_grace_quotes(self): return self.get('live_allow_stale_grace_quotes', False)
+    @property
+    def tiny_live_allow_stale_grace_quotes(self): return self.get('tiny_live_allow_stale_grace_quotes', False)
+    @property
+    def live_require_both_legs_fresh(self): return self.get('live_require_both_legs_fresh', True)
+    @property
+    def live_freshness_observe_only(self): return self.get('live_freshness_observe_only', False)
+    @property
+    def tiny_live_freshness_observe_only(self): return self.get('tiny_live_freshness_observe_only', True)
+    @property
+    def paper_active_symbol_count(self): return self.get('paper_active_symbol_count', 20)
+    @property
+    def live_active_symbols(self): return self.get('live_active_symbols', [])
+    @property
+    def live_use_dynamic_symbols(self): return self.get('live_use_dynamic_symbols', False)
+    @property
     def use_websocket_market_data(self): return self.get('use_websocket_market_data', True)
     @property
     def rest_fallback_enabled(self): return self.get('rest_fallback_enabled', True)

@@ -773,10 +773,26 @@ function renderLongRunTelemetry(t={}) {
   setText('stale-status', `STALE ${fmt(stale)}`);
   setClass('stale-status', `source-badge ${stale?'stale':'ok'}`);
   setText('no-go-top3', `NO-GO top 3: ${noGo.map(([reason,count])=>`${reason} ${count}`).join(' / ')||'--'}`);
+  renderLiveFreshnessTelemetry(t);
   renderWebSocketHealth(t);
   renderMemoryTelemetry(t);
   renderBithumbCacheStatus(t);
   renderRestFallbackCacheStatus(t);
+}
+
+function renderLiveFreshnessTelemetry(t={}) {
+  let el=document.getElementById('live-freshness-telemetry');
+  if (!el) {
+    const anchor=document.getElementById('no-go-top3');
+    if (anchor?.parentElement) {
+      el=document.createElement('div');
+      el.id='live-freshness-telemetry';
+      el.className='active-symbol-list';
+      anchor.parentElement.append(el);
+    }
+  }
+  if (!el) return;
+  el.textContent=`Live Freshness | Quote Age All ${fmt(t.p95_quote_age_all_ms,1)} ms | Tradable ${fmt(t.p95_quote_age_tradable_ms,1)} ms | Domestic ${fmt(t.p95_quote_age_domestic_ms,1)} ms | Cross-border ${fmt(t.p95_quote_age_cross_border_ms,1)} ms | Best ${fmt(t.best_opportunity_quote_age_ms,1)} ms | Live Fresh ${fmt(t.live_fresh_candidate_count)} | Tiny Live Fresh ${fmt(t.tiny_live_fresh_candidate_count)} | Quote-age blocked live/tiny ${fmt(t.live_blocked_quote_age_count)}/${fmt(t.tiny_live_blocked_quote_age_count)} | Stale Grace blocked live/tiny ${fmt(t.live_blocked_stale_grace_count)}/${fmt(t.tiny_live_blocked_stale_grace_count)} | Watchlist blocked ${fmt(t.symbol_not_in_live_watchlist_count)}`;
 }
 
 function renderMemoryTelemetry(t={}) {
@@ -1018,6 +1034,14 @@ function renderLiveGuard(guard, readiness) {
     ['Keys', keysOk?'SET':'MISSING', keysOk],
     ['Inventory', guard.inventory_status||'BLOCKED', guard.inventory_status==='OK'],
     ['Quote freshness', `${guard.quote_freshness||'STALE'}${guard.quote_age_ms==null?'':` ${fmt(guard.quote_age_ms,0)}ms`}`, guard.quote_freshness==='OK'],
+    ['Live Freshness', guard.live_freshness_ok, guard.live_freshness_ok],
+    ['Max Leg Quote Age', guard.max_leg_quote_age_ms==null?'--':`${fmt(guard.max_leg_quote_age_ms,0)} ms`, guard.live_freshness_ok],
+    ['Tiny Live Max Age', `${fmt(guard.tiny_live_quote_max_age_ms,0)} ms`, true],
+    ['Live Max Age', `${fmt(guard.live_quote_max_age_ms,0)} ms`, true],
+    ['Uses Stale Grace', guard.uses_stale_grace_quote, !guard.uses_stale_grace_quote],
+    ['Freshness Observe Only', guard.tiny_live_freshness_observe_only, guard.tiny_live_freshness_observe_only],
+    ['Freshness Blockers', (guard.live_freshness_blockers||[]).join(' / ')||'none', guard.live_freshness_ok],
+    ['Live Watchlist', guard.live_watchlist_ok, guard.live_watchlist_ok],
     ['Min order', guard.min_order_status||'BLOCKED', guard.min_order_status==='OK'],
   ];
   const grid = $('live-guard-grid');
@@ -1055,7 +1079,11 @@ function renderExecutionPlan(plan={}) {
     ['Order USDT', `${fmt(plan.order_usdt,4)} USDT`], ['Qty', fmt(plan.qty,8)],
     ['Normalized Qty', fmt(plan.normalized_qty,8)], [`${leftVenue} Expected`, fmt(leftExpected,2)],
     [`${rightVenue} Expected`, fmt(rightExpected,8)], ['Quote Source', plan.quote_source||'--'],
-    ['Quote Age', `${fmt(plan.quote_age_ms,0)} ms`], ['Net Surplus', `${fmt(plan.best_net_surplus_bp,1)} bp`],
+    ['Quote Age', `${fmt(plan.quote_age_ms,0)} ms`], ['Max Leg Quote Age', `${fmt(plan.max_leg_quote_age_ms,0)} ms`],
+    ['Upbit Quote Age', `${fmt(plan.upbit_quote_age_ms,0)} ms`], ['Binance Quote Age', `${fmt(plan.binance_quote_age_ms,0)} ms`],
+    ['Bithumb Quote Age', `${fmt(plan.bithumb_quote_age_ms,0)} ms`], ['Uses Stale Grace', String(Boolean(plan.uses_stale_grace_quote))],
+    ['Live Freshness OK', String(Boolean(plan.live_freshness_ok))], ['Tiny Live Freshness OK', String(Boolean(plan.tiny_live_freshness_ok))],
+    ['Live Watchlist', String(Boolean(plan.live_watchlist_ok))], ['Net Surplus', `${fmt(plan.best_net_surplus_bp,1)} bp`],
     ['Expected Profit', `${fmt(plan.expected_net_profit_krw)} KRW`], ['Preflight', plan.preflight_status],
     ['Executable', String(Boolean(plan.executable))], ['Iceberg Required', String(Boolean(plan.iceberg_required))],
     ['Iceberg Enabled', String(Boolean(plan.iceberg_enabled))], ['Iceberg Execution', String(Boolean(plan.iceberg_execution_enabled))],

@@ -313,6 +313,9 @@ def main():
     loop_lat_list:   deque[float]   = deque(maxlen=1000)
     quote_lat_list:  deque[float]   = deque(maxlen=1000)
     quote_age_list:  deque[float]   = deque(maxlen=1000)
+    quote_age_tradable_list: deque[float] = deque(maxlen=1000)
+    quote_age_cross_border_list: deque[float] = deque(maxlen=1000)
+    quote_age_domestic_list: deque[float] = deque(maxlen=1000)
     latest_reason    = ''
     last_quote_at    = 0.0
     latest_decision_at = 0.0
@@ -330,6 +333,17 @@ def main():
     cached_p95_loop_latency_ms = 0.0
     cached_p95_quote_latency_ms = 0.0
     cached_p95_quote_age_ms = 0.0
+    cached_p95_quote_age_tradable_ms = 0.0
+    cached_p95_quote_age_cross_border_ms = 0.0
+    cached_p95_quote_age_domestic_ms = 0.0
+    live_fresh_candidate_count = 0
+    tiny_live_fresh_candidate_count = 0
+    live_blocked_quote_age_count = 0
+    tiny_live_blocked_quote_age_count = 0
+    live_blocked_stale_grace_count = 0
+    tiny_live_blocked_stale_grace_count = 0
+    symbol_not_in_live_watchlist_count = 0
+    stale_grace_opportunity_count = 0
     skipped_bithumb_symbol_count = 0
     skipped_bithumb_quote_reasons: dict[str, int] = {}
     skipped_bithumb_timestamps: deque[float] = deque()
@@ -486,6 +500,16 @@ def main():
             calc_res['fx_status']   = fx_status
             calc_res['upbit_ts']    = upbit_q.get('ts')
             calc_res['binance_ts']  = binance_q.get('ts')
+            freshness = RiskGuard.quote_freshness_status(calc_res)
+            calc_res.update(freshness)
+            if freshness['max_leg_quote_age_ms'] is not None:
+                quote_age_cross_border_list.append(freshness['max_leg_quote_age_ms'])
+                quote_age_tradable_list.append(freshness['max_leg_quote_age_ms'])
+            live_fresh_candidate_count += int(freshness['live_freshness_ok'])
+            tiny_live_fresh_candidate_count += int(freshness['tiny_live_freshness_ok'])
+            live_blocked_quote_age_count += int('LIVE_QUOTE_TOO_OLD' in freshness['live_freshness_blockers'])
+            tiny_live_blocked_quote_age_count += int('TINY_LIVE_QUOTE_TOO_OLD' in freshness['tiny_live_freshness_blockers'])
+            symbol_not_in_live_watchlist_count += int(not freshness['live_watchlist_ok'])
             history = quote_history.setdefault(sym, deque(maxlen=cfg.quote_history_maxlen))
             history.append(_history_row(upbit=upbit_q, binance=binance_q))
             if cfg.paper_latency_sim_enabled:
@@ -582,6 +606,23 @@ def main():
                     'bithumb': bithumb_q,
                 }
                 domestic = arb_calc.calculate_domestic_krw(sym, q.get('upbit', {}), bithumb_q)
+                domestic['upbit_ts'] = q.get('upbit', {}).get('ts')
+                domestic['bithumb_ts'] = bithumb_q.get('ts')
+                domestic['stale_grace'] = bool(bithumb_q.get('stale_grace'))
+                domestic['stale'] = bool(bithumb_q.get('stale'))
+                domestic_freshness = RiskGuard.quote_freshness_status(domestic)
+                domestic.update(domestic_freshness)
+                if domestic_freshness['max_leg_quote_age_ms'] is not None:
+                    quote_age_domestic_list.append(domestic_freshness['max_leg_quote_age_ms'])
+                    quote_age_tradable_list.append(domestic_freshness['max_leg_quote_age_ms'])
+                live_fresh_candidate_count += int(domestic_freshness['live_freshness_ok'])
+                tiny_live_fresh_candidate_count += int(domestic_freshness['tiny_live_freshness_ok'])
+                live_blocked_quote_age_count += int('LIVE_QUOTE_TOO_OLD' in domestic_freshness['live_freshness_blockers'])
+                tiny_live_blocked_quote_age_count += int('TINY_LIVE_QUOTE_TOO_OLD' in domestic_freshness['tiny_live_freshness_blockers'])
+                live_blocked_stale_grace_count += int('LIVE_STALE_GRACE_BLOCKED' in domestic_freshness['live_freshness_blockers'])
+                tiny_live_blocked_stale_grace_count += int('LIVE_STALE_GRACE_BLOCKED' in domestic_freshness['tiny_live_freshness_blockers'])
+                symbol_not_in_live_watchlist_count += int(not domestic_freshness['live_watchlist_ok'])
+                stale_grace_opportunity_count += int(domestic_freshness['uses_stale_grace_quote'])
                 if bithumb_q.get('stale_grace'):
                     domestic['warnings'] = [
                         *domestic.get('warnings', []),
@@ -678,6 +719,9 @@ def main():
             cached_p95_loop_latency_ms = _percentile(loop_lat_list, 95)
             cached_p95_quote_latency_ms = _percentile(quote_lat_list, 95)
             cached_p95_quote_age_ms = _percentile(quote_age_list, 95)
+            cached_p95_quote_age_tradable_ms = _percentile(quote_age_tradable_list, 95)
+            cached_p95_quote_age_cross_border_ms = _percentile(quote_age_cross_border_list, 95)
+            cached_p95_quote_age_domestic_ms = _percentile(quote_age_domestic_list, 95)
             last_percentile_calc = now
         ws_metrics = ws_market_data.metrics() if ws_market_data else {
             'ws_connected': False,
@@ -724,6 +768,27 @@ def main():
             'p95_quote_latency_ms': cached_p95_quote_latency_ms,
             'p95_quote_fetch_latency_ms': cached_p95_quote_latency_ms,
             'p95_quote_age_ms':     cached_p95_quote_age_ms,
+            'p95_quote_age_all_ms': cached_p95_quote_age_ms,
+            'p95_quote_age_tradable_ms': cached_p95_quote_age_tradable_ms,
+            'p95_quote_age_cross_border_ms': cached_p95_quote_age_cross_border_ms,
+            'p95_quote_age_domestic_ms': cached_p95_quote_age_domestic_ms,
+            'best_opportunity_quote_age_ms': next((
+                item.get('max_leg_quote_age_ms') for item in loop_opportunities
+                if f"{item.get('pair_id', 'UPBIT_BINANCE')}:{item.get('symbol', '')}" == best_sym_this_loop
+                or item.get('symbol', '') == best_sym_this_loop
+            ), None),
+            'best_opportunity_pair_id': (
+                'UPBIT_BITHUMB' if best_sym_this_loop.startswith('UPBIT_BITHUMB:') else 'UPBIT_BINANCE'
+            ),
+            'best_opportunity_symbol': best_sym_this_loop.split(':')[-1],
+            'stale_grace_opportunity_count': stale_grace_opportunity_count,
+            'live_fresh_candidate_count': live_fresh_candidate_count,
+            'tiny_live_fresh_candidate_count': tiny_live_fresh_candidate_count,
+            'live_blocked_quote_age_count': live_blocked_quote_age_count,
+            'tiny_live_blocked_quote_age_count': tiny_live_blocked_quote_age_count,
+            'live_blocked_stale_grace_count': live_blocked_stale_grace_count,
+            'tiny_live_blocked_stale_grace_count': tiny_live_blocked_stale_grace_count,
+            'symbol_not_in_live_watchlist_count': symbol_not_in_live_watchlist_count,
             'last_quote_age_sec':   round(max(0.0, now - last_quote_at), 2) if last_quote_at else None,
             'updated_at':           now,
             'last_update_at':       now,

@@ -35,6 +35,7 @@ from venue_pair import venue_pair_payload
 from bithumb_private import BithumbPrivateClient
 from iceberg_planner import IcebergPlanner
 from rate_limiter import rate_limiter
+from risk_guard import RiskGuard
 
 tiny_live_executor = TinyLiveExecutor()
 
@@ -73,6 +74,24 @@ def _live_readiness_payload(pair_id='UPBIT_BINANCE'):
     quote_age_ms = max(0, (time.time() - newest_quote) * 1000) if newest_quote else None
     inventory = readiness.get('inventory') or {}
     blockers = readiness.get('blockers', [])
+    opportunities = _read_json(os.path.join(RUNTIME_DIR, 'latest_opportunities.json'))
+    freshness_rows = [
+        row for row in opportunities.get('all_opportunities', [])
+        if row.get('pair_id', 'UPBIT_BINANCE') == pair_id
+    ]
+    freshness = RiskGuard.quote_freshness_status(
+        max(freshness_rows, key=lambda row: row.get('best_net_surplus_bp', -9999))
+        if freshness_rows else {'pair_id': pair_id}
+    )
+    if cfg.mode == 'live' and not cfg.live_freshness_observe_only:
+        readiness['blockers'] = list(dict.fromkeys([
+            *readiness.get('blockers', []), *freshness['live_freshness_blockers'],
+        ]))
+    elif cfg.mode == 'tiny_live' and cfg.tiny_live_freshness_observe_only:
+        readiness['warnings'] = list(dict.fromkeys([
+            *readiness.get('warnings', []), *freshness['tiny_live_freshness_blockers'],
+        ]))
+    readiness['ready'] = not readiness.get('blockers')
     readiness['live_guard'] = {
         'mode': cfg.mode,
         'enable_live_trading': cfg.enable_live_trading,
@@ -87,6 +106,7 @@ def _live_readiness_payload(pair_id='UPBIT_BINANCE'):
         'inventory_status': 'OK' if inventory and not inventory.get('blockers') else 'BLOCKED',
         'quote_freshness': 'OK' if quote_age_ms is not None and quote_age_ms <= cfg.stale_quote_ms else 'STALE',
         'quote_age_ms': quote_age_ms,
+        **freshness,
         'min_order_status': 'OK' if (
             cfg.upbit_bithumb_order_krw >= cfg.bithumb_min_order_krw
             if pair_id == 'UPBIT_BITHUMB' else cfg.tiny_live_order_krw >= 5000
@@ -121,6 +141,25 @@ def _with_plan_quote_source(payload):
     ):
         if key in calc:
             plan[key] = calc[key]
+    freshness = RiskGuard.quote_freshness_status({**calc, **plan})
+    plan.update(freshness)
+    freshness_blockers = (
+        freshness['live_freshness_blockers']
+        if cfg.mode == 'live' and not cfg.live_freshness_observe_only
+        else []
+    )
+    freshness_warnings = (
+        freshness['tiny_live_freshness_blockers']
+        if cfg.mode == 'tiny_live' and cfg.tiny_live_freshness_observe_only
+        else []
+    )
+    plan['blockers'] = list(dict.fromkeys([*plan.get('blockers', []), *freshness_blockers]))
+    plan['warnings'] = list(dict.fromkeys([*plan.get('warnings', []), *freshness_warnings]))
+    if freshness_blockers:
+        plan['preflight_status'] = 'BLOCKED'
+        plan['executable'] = False
+        payload['ready'] = False
+        payload['blockers'] = list(dict.fromkeys([*payload.get('blockers', []), *freshness_blockers]))
     iceberg = IcebergPlanner().build_placeholder_plan(plan, cfg)
     plan.update({
         'iceberg_required': iceberg['iceberg_required'],

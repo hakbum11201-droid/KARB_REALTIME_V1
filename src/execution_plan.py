@@ -42,6 +42,19 @@ class ExecutionPlan:
     binance_usdt: float = 0
     quote_timestamp: float = 0
     quote_age_ms: float = 0
+    upbit_quote_age_ms: float | None = None
+    binance_quote_age_ms: float | None = None
+    bithumb_quote_age_ms: float | None = None
+    buy_leg_quote_age_ms: float | None = None
+    sell_leg_quote_age_ms: float | None = None
+    max_leg_quote_age_ms: float | None = None
+    uses_stale_grace_quote: bool = False
+    has_stale_quote: bool = False
+    live_freshness_ok: bool = False
+    tiny_live_freshness_ok: bool = False
+    live_freshness_blockers: list[str] = field(default_factory=list)
+    tiny_live_freshness_blockers: list[str] = field(default_factory=list)
+    live_watchlist_ok: bool = False
     upbit_bid: float = 0
     upbit_ask: float = 0
     binance_bid: float = 0
