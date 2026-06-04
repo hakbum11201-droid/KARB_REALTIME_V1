@@ -367,3 +367,8 @@ For long paper smoke tests, the recommended checks are:
   `avg_elapsed_ms`, `timeout_ratio`, `avg_new_surplus_bp`, and whether the same
   symbols repeat in the top actionable list. The next decision should be based
   on that evidence, not a direct jump from a single fast pass to tiny-live.
+- Completed priority fetches are handed off from the background quote caches to
+  the matching pending stale recheck in the main loop. This records actual
+  `refresh_started_at`, `refreshed_at`, and `fetch_ms` so fetch latency and
+  decision-wait latency can be separated. The handoff is measurement-only and
+  remains disconnected from live, tiny-live, or market-order execution.

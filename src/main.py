@@ -467,6 +467,8 @@ def _resolve_stale_recheck(item, pending, counters, recent):
         'stale_recheck_elapsed_decision_wait_ms': breakdown['elapsed_decision_wait_ms'],
         'stale_recheck_reason': status,
         'stale_recheck_actionable_fast_pass': status == 'RECHECK_ACTIONABLE_FAST_PASS',
+        'stale_recheck_cache_completed_at': request.get('cache_completed_at'),
+        'stale_recheck_fetch_ms': request.get('fetch_ms'),
     }
     _record_stale_recheck_event(recent, {
         'pair_id': key[0], 'symbol': key[1], 'status': status,
@@ -478,6 +480,9 @@ def _resolve_stale_recheck(item, pending, counters, recent):
         'liquidity_class': item.get('liquidity_class', ''),
         'quote_source': item.get('quote_source', item.get('source', '')),
         'actionable_fast_pass': status == 'RECHECK_ACTIONABLE_FAST_PASS',
+        'completed_handoff': bool(request.get('cache_completed_at')),
+        'cache_completed_at': request.get('cache_completed_at'),
+        'fetch_ms': request.get('fetch_ms'),
     })
     return result
 
@@ -500,6 +505,34 @@ def _expire_stale_rechecks(pending, counters, recent):
             'original_surplus_bp': item['original_surplus_bp'],
             'new_surplus_bp': None,
         })
+
+
+def _consume_completed_recheck_handoffs(pending, rest_cache, bithumb_cache, counters):
+    completed = []
+    for cache in (rest_cache, bithumb_cache):
+        if cache and hasattr(cache, 'pop_completed_rechecks'):
+            completed.extend(cache.pop_completed_rechecks())
+    for result in completed:
+        counters['count'] += 1
+        key = (result.get('pair_id', 'UPBIT_BINANCE'), result.get('symbol', ''))
+        target = pending.get(key)
+        if not target:
+            counters['unmatched'] += 1
+            continue
+        counters['pending_match'] += 1
+        refresh_started_at = result.get('refresh_started_at')
+        refreshed_at = result.get('refreshed_at')
+        fetch_ms = result.get('fetch_ms')
+        if refresh_started_at:
+            target['refresh_started_at'] = refresh_started_at
+        if refreshed_at:
+            target['refreshed_at'] = refreshed_at
+            target['cache_completed_at'] = refreshed_at
+        if fetch_ms is not None:
+            target['fetch_ms'] = fetch_ms
+            counters['fetch_ms_total'] += float(fetch_ms or 0)
+            counters['fetch_ms_count'] += 1
+        target['cache_completed_result'] = result
 
 
 def main():
@@ -699,6 +732,10 @@ def main():
         'request': 0, 'fast_pass': 0, 'late_pass': 0, 'fail': 0, 'timeout': 0,
         'actionable_fast_pass': 0, 'skip_cooldown': 0, 'skip_rate_limit': 0,
     }
+    stale_recheck_handoff_counters = {
+        'count': 0, 'pending_match': 0, 'unmatched': 0,
+        'fetch_ms_total': 0.0, 'fetch_ms_count': 0,
+    }
     skipped_bithumb_symbol_count = 0
     skipped_bithumb_quote_reasons: dict[str, int] = {}
     skipped_bithumb_timestamps: deque[float] = deque()
@@ -763,6 +800,13 @@ def main():
         if args.until_stop and control.is_stop_requested():
             print("[KARB] Stop requested detected. Finalizing...")
             break
+
+        _consume_completed_recheck_handoffs(
+            stale_recheck_pending,
+            rest_fallback_cache,
+            bithumb_quote_cache,
+            stale_recheck_handoff_counters,
+        )
 
         # ── FX 환율 ──────────────────────────────────────────────────────
         try:
@@ -1189,6 +1233,11 @@ def main():
             float(item.get('elapsed_decision_wait_ms', 0) or 0)
             for item in stale_recheck_recent if item.get('elapsed_decision_wait_ms') is not None
         ]
+        stale_recheck_handoff_decision_wait = [
+            float(item.get('elapsed_decision_wait_ms', 0) or 0)
+            for item in stale_recheck_recent
+            if item.get('completed_handoff') and item.get('elapsed_decision_wait_ms') is not None
+        ]
         stale_recheck_pass_count = (
             stale_recheck_counters['fast_pass'] + stale_recheck_counters['late_pass']
         )
@@ -1283,6 +1332,16 @@ def main():
             'stale_recheck_inflight_count': recheck_inflight_count,
             'stale_recheck_deduped_count': recheck_deduped_count,
             'stale_recheck_inflight_symbols': recheck_inflight_symbols,
+            'stale_recheck_completed_handoff_count': stale_recheck_handoff_counters['count'],
+            'stale_recheck_completed_handoff_pending_match_count': stale_recheck_handoff_counters['pending_match'],
+            'stale_recheck_completed_handoff_unmatched_count': stale_recheck_handoff_counters['unmatched'],
+            'stale_recheck_avg_handoff_fetch_ms': round(
+                stale_recheck_handoff_counters['fetch_ms_total'] / stale_recheck_handoff_counters['fetch_ms_count'],
+                2,
+            ) if stale_recheck_handoff_counters['fetch_ms_count'] else 0.0,
+            'stale_recheck_avg_handoff_decision_wait_ms': round(
+                sum(stale_recheck_handoff_decision_wait) / len(stale_recheck_handoff_decision_wait), 2
+            ) if stale_recheck_handoff_decision_wait else 0.0,
             'stale_recheck_last_symbol': stale_recheck_last.get('symbol', ''),
             'stale_recheck_last_status': stale_recheck_last.get('status', 'NONE'),
             'stale_recheck_avg_elapsed_ms': round(

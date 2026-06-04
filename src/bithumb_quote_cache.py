@@ -12,7 +12,7 @@ class BithumbQuoteCache:
         recheck_cooldown_sec=5, recheck_max_queue_size=50,
         priority_worker_enabled=True, symbol_only_refresh=True,
         inflight_dedupe=True, priority_fetch_timeout_ms=700,
-        priority_max_workers=1,
+        priority_max_workers=1, completed_recheck_ttl_sec=30,
     ):
         self.client = client
         self.enabled = bool(enabled)
@@ -28,6 +28,7 @@ class BithumbQuoteCache:
         self.inflight_dedupe = bool(inflight_dedupe)
         self.priority_fetch_timeout_ms = max(1, int(priority_fetch_timeout_ms))
         self.priority_max_workers = max(1, int(priority_max_workers))
+        self.completed_recheck_ttl_sec = max(1.0, float(completed_recheck_ttl_sec))
         self._lock = threading.RLock()
         self._stop_event = threading.Event()
         self._priority_event = threading.Event()
@@ -63,6 +64,8 @@ class BithumbQuoteCache:
         self._priority_fetch_last_ms = 0.0
         self._priority_fetch_last_symbol = ''
         self._priority_fetch_last_error = ''
+        self._completed_rechecks = deque(maxlen=100)
+        self._completed_recheck_count = 0
 
     def start(self, symbols):
         self.update_symbols(symbols)
@@ -213,7 +216,56 @@ class BithumbQuoteCache:
                 'priority_fetch_last_ms': round(self._priority_fetch_last_ms, 2),
                 'priority_fetch_last_symbol': self._priority_fetch_last_symbol,
                 'priority_fetch_last_error': self._priority_fetch_last_error,
+                'completed_recheck_count': self._completed_recheck_count,
+                'completed_recheck_queue_size': len(self._completed_rechecks),
             }
+
+    def get_completed_rechecks(self):
+        now = time.time()
+        with self._lock:
+            return [
+                copy.deepcopy(item) for item in self._completed_rechecks
+                if now - float(item.get('received_at', 0) or 0) <= self.completed_recheck_ttl_sec
+            ]
+
+    def pop_completed_rechecks(self, since_ts=None):
+        now = time.time()
+        results = []
+        keep = deque(maxlen=100)
+        with self._lock:
+            while self._completed_rechecks:
+                item = self._completed_rechecks.popleft()
+                received_at = float(item.get('received_at', 0) or 0)
+                if now - received_at > self.completed_recheck_ttl_sec:
+                    continue
+                if since_ts is not None and received_at <= float(since_ts or 0):
+                    keep.append(item)
+                    continue
+                results.append(copy.deepcopy(item))
+            self._completed_rechecks = keep
+        return results
+
+    def _append_completed_recheck(self, request, refresh_started_at, refreshed_at, fetch_ms, source, ok, error='', quote_ts=None):
+        completed = {
+            'id': (
+                f"{request.get('pair_id', '')}:{request.get('symbol', '')}:"
+                f"{float(request.get('requested_at', 0) or 0):.6f}:{float(refreshed_at or 0):.6f}"
+            ),
+            'pair_id': request.get('pair_id', 'UPBIT_BITHUMB'),
+            'symbol': request.get('symbol', ''),
+            'requested_at': request.get('requested_at'),
+            'refresh_started_at': refresh_started_at,
+            'refreshed_at': refreshed_at,
+            'fetch_ms': round(float(fetch_ms or 0), 2),
+            'source': source,
+            'ok': bool(ok),
+            'error': error or '',
+            'quote_ts': quote_ts,
+            'received_at': time.time(),
+        }
+        with self._lock:
+            self._completed_rechecks.append(completed)
+            self._completed_recheck_count += 1
 
     def refresh_once(self):
         self._process_priority_queue()
@@ -266,6 +318,10 @@ class BithumbQuoteCache:
             now = time.time()
             started = time.time()
             key = (request['pair_id'], request['symbol'])
+            source = 'bithumb_symbol_only'
+            ok = False
+            error = ''
+            quote_ts = None
             try:
                 if self.symbol_only_refresh and hasattr(self.client, 'fetch_order_book'):
                     quote = self.client.fetch_order_book(request['symbol'])
@@ -276,7 +332,9 @@ class BithumbQuoteCache:
                         symbols = list(self._symbols) or [request['symbol']]
                     fetched = self.client.fetch_all_order_books(symbols)
                     symbol_fetch = False
+                    source = 'bithumb_full_refresh_fallback'
                 quote = (fetched or {}).get(request['symbol'], {})
+                refreshed_at = time.time()
                 elapsed_ms = (time.time() - started) * 1000
                 with self._lock:
                     self._recheck_execute_count += 1
@@ -292,15 +350,20 @@ class BithumbQuoteCache:
                     else:
                         self._priority_full_refresh_fallback_count += 1
                     if isinstance(quote, dict) and quote.get('ok'):
-                        self._quotes[request['symbol']] = self._normalize_quote_ts(quote, now)
+                        normalized_quote = self._normalize_quote_ts(quote, now)
+                        self._quotes[request['symbol']] = normalized_quote
                         self._last_success_at = time.time()
                         self._last_error = ''
                         self._priority_fetch_last_error = ''
+                        ok = True
+                        quote_ts = normalized_quote.get('ts')
                     else:
                         self._recheck_fail_count += 1
                         self._recheck_last_error = self._failure_reason(fetched)
                         self._priority_fetch_last_error = self._recheck_last_error
+                        error = self._recheck_last_error
             except Exception as exc:
+                refreshed_at = time.time()
                 elapsed_ms = (time.time() - started) * 1000
                 with self._lock:
                     self._recheck_execute_count += 1
@@ -314,7 +377,11 @@ class BithumbQuoteCache:
                     self._priority_fetch_total_ms += elapsed_ms
                     self._priority_fetch_samples += 1
                     self._priority_fetch_last_error = self._recheck_last_error
+                    error = self._recheck_last_error
             finally:
+                self._append_completed_recheck(
+                    request, started, refreshed_at, elapsed_ms, source, ok, error, quote_ts
+                )
                 with self._lock:
                     self._recheck_inflight.discard(key)
                     self._recheck_meta.pop(key, None)
