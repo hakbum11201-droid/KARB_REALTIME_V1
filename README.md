@@ -372,3 +372,7 @@ For long paper smoke tests, the recommended checks are:
   `refresh_started_at`, `refreshed_at`, and `fetch_ms` so fetch latency and
   decision-wait latency can be separated. The handoff is measurement-only and
   remains disconnected from live, tiny-live, or market-order execution.
+- `RECHECK_ACTIONABLE_FAST_PASS` is connected to `PaperEngine` entries in
+  `paper` mode only, with `entry_reason=RECHECK_ACTIONABLE`. This is still
+  disconnected from live and tiny-live orders; the purpose is to produce real
+  paper open/closed trades so win rate and PnL can be measured.

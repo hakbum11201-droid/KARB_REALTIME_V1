@@ -535,6 +535,37 @@ def _consume_completed_recheck_handoffs(pending, rest_cache, bithumb_cache, coun
         target['cache_completed_result'] = result
 
 
+def _try_recheck_paper_entry(opportunity, paper_eng):
+    if cfg.mode != 'paper':
+        return None
+    if opportunity.get('pair_id') != 'UPBIT_BITHUMB':
+        return None
+    if opportunity.get('stale_recheck_status') != 'RECHECK_ACTIONABLE_FAST_PASS':
+        return None
+    if opportunity.get('liquidity_class', 'NORMAL') not in ('GOOD', 'NORMAL'):
+        return None
+    if any(bool(opportunity.get(name)) for name in ('stale', 'stale_grace', 'has_stale_quote')):
+        return None
+    if float(opportunity.get('selected_notional_krw', 0) or 0) <= 0:
+        return None
+    net = float(
+        opportunity.get(
+            'stale_recheck_new_net_krw',
+            opportunity.get('net_expected_profit_krw', 0),
+        ) or 0
+    )
+    if net <= 0:
+        return None
+    paper_opportunity = {
+        **opportunity,
+        'reason_no_trade': 'OK',
+        'entry_reason': 'RECHECK_ACTIONABLE',
+        'recheck_status': opportunity.get('stale_recheck_status'),
+        'net_expected_profit_krw': net,
+    }
+    return paper_eng.try_entry(paper_opportunity)
+
+
 def main():
     parser = argparse.ArgumentParser(description="KARB_REALTIME_V1 Engine")
     parser.add_argument('--once', action='store_true', help='Run once and exit')
@@ -687,6 +718,9 @@ def main():
     quote_count      = 0
     candidate_count  = 0
     paper_entry_count = 0
+    paper_recheck_entry_count = 0
+    paper_recheck_entry_last_symbol = ''
+    paper_recheck_entry_last_reason = ''
     paper_exit_count  = 0
     error_count      = 0
     reason_counts:   dict[str, int] = {}
@@ -1099,6 +1133,18 @@ def main():
                     'go_no_go': 'GO' if domestic_safe else 'NO-GO',
                     'quote_source': 'rest',
                 })
+                recheck_trade = _try_recheck_paper_entry(domestic, paper_eng)
+                if recheck_trade:
+                    paper_entry_count += 1
+                    paper_recheck_entry_count += 1
+                    paper_recheck_entry_last_symbol = recheck_trade.get('symbol', '')
+                    paper_recheck_entry_last_reason = recheck_trade.get('entry_reason', '')
+                    if not args.once:
+                        print(
+                            f"  [UPBIT_BITHUMB:{sym}] PAPER RECHECK ENTRY | "
+                            f"Dir: {recheck_trade['best_direction']} | "
+                            f"Net: {recheck_trade['net_expected_profit_krw']:,.0f} KRW"
+                        )
                 if domestic_safe and cfg.mode == 'paper':
                     trade = paper_eng.try_entry(domestic)
                     if trade:
@@ -1301,6 +1347,9 @@ def main():
             ),
             'best_opportunity_symbol': best_sym_this_loop.split(':')[-1],
             'stale_grace_opportunity_count': stale_grace_opportunity_count,
+            'paper_recheck_entry_count': paper_recheck_entry_count,
+            'paper_recheck_entry_last_symbol': paper_recheck_entry_last_symbol,
+            'paper_recheck_entry_last_reason': paper_recheck_entry_last_reason,
             'live_fresh_candidate_count': live_fresh_candidate_count,
             'tiny_live_fresh_candidate_count': tiny_live_fresh_candidate_count,
             'live_blocked_quote_age_count': live_blocked_quote_age_count,

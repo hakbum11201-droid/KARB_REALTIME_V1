@@ -60,6 +60,8 @@ class PaperEngine:
         )
         selected_notional_krw = float(calc_result.get('selected_notional_krw', 0) or 0)
         entry_fee_krw = selected_notional_krw * fees_bp / 10000
+        entry_reason = calc_result.get('entry_reason') or 'NORMAL_GO'
+        entered_at = time.time()
 
         # 조건 3: InventoryManager 검사 (주입된 경우)
         if self._inv is not None:
@@ -96,7 +98,8 @@ class PaperEngine:
             'trade_id':              trade_id,
             'event':                 'ENTRY',
             'status':                'OPEN',
-            'entry_time':            time.time(),
+            'entry_time':            entered_at,
+            'entered_at':            entered_at,
             'pair_id':               pair_id,
             'strategy_type':         calc_result.get('strategy_type', 'CROSS_BORDER_SPOT'),
             'symbol':                sym,
@@ -111,7 +114,11 @@ class PaperEngine:
             'venues':                ['UPBIT', 'BITHUMB'] if pair_id == 'UPBIT_BITHUMB' else ['UPBIT', 'BINANCE'],
             'inventory_delta':       inventory_delta,
             'expected_net_profit_krw': calc_result['net_expected_profit_krw'],
-            'entry_reason':          calc_result.get('reason_no_trade', ''),
+            'entry_reason':          entry_reason,
+            'recheck_status':        calc_result.get('stale_recheck_status', ''),
+            'entry_surplus_bp':      calc_result.get('best_net_surplus_bp', 0),
+            'entry_net_expected_profit_krw': calc_result.get('net_expected_profit_krw', 0),
+            'max_leg_quote_age_ms':  calc_result.get('max_leg_quote_age_ms'),
             # 진입 호가 스냅샷
             'entry_upbit_bid':       calc_result['upbit_bid'],
             'entry_upbit_ask':       calc_result['upbit_ask'],
