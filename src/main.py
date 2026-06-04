@@ -527,6 +527,17 @@ def _resolve_stale_recheck(item, pending, counters, recent):
             else:
                 counters['fail'] += 1
     pending.pop(key, None)
+    cache_result = request.get('cache_completed_result') or {}
+    refresh_started_at = (
+        request.get('refresh_started_at')
+        or cache_result.get('refresh_started_at')
+    )
+    refreshed_at = (
+        request.get('refreshed_at')
+        or request.get('cache_completed_at')
+        or cache_result.get('refreshed_at')
+    )
+    fetch_ms = request.get('fetch_ms', cache_result.get('fetch_ms'))
     result = {
         'stale_recheck_status': status,
         'stale_recheck_original_surplus_bp': request['original_surplus_bp'],
@@ -543,8 +554,10 @@ def _resolve_stale_recheck(item, pending, counters, recent):
             'RECHECK_ACTIONABLE_FAST_PASS',
             'WIDE_SPREAD_RECHECK_ACTIONABLE',
         ),
-        'stale_recheck_cache_completed_at': request.get('cache_completed_at'),
-        'stale_recheck_fetch_ms': request.get('fetch_ms'),
+        'stale_recheck_refresh_started_at': refresh_started_at,
+        'stale_recheck_refreshed_at': refreshed_at,
+        'stale_recheck_cache_completed_at': refreshed_at,
+        'stale_recheck_fetch_ms': fetch_ms,
     }
     _record_stale_recheck_event(recent, {
         'pair_id': key[0], 'symbol': key[1], 'status': status,
@@ -559,9 +572,11 @@ def _resolve_stale_recheck(item, pending, counters, recent):
             'RECHECK_ACTIONABLE_FAST_PASS',
             'WIDE_SPREAD_RECHECK_ACTIONABLE',
         ),
-        'completed_handoff': bool(request.get('cache_completed_at')),
-        'cache_completed_at': request.get('cache_completed_at'),
-        'fetch_ms': request.get('fetch_ms'),
+        'completed_handoff': bool(refreshed_at),
+        'refresh_started_at': refresh_started_at,
+        'refreshed_at': refreshed_at,
+        'cache_completed_at': refreshed_at,
+        'fetch_ms': fetch_ms,
     })
     return result
 
@@ -626,16 +641,50 @@ def _entry_reason_from_recheck_status(status):
     return entry_reason_by_status.get(status)
 
 
-def _entry_quote_age_ms(signal, now=None):
+def _entry_quote_age_details(signal, now=None):
     now = time.time() if now is None else float(now)
-    refreshed_at = signal.get('stale_recheck_cache_completed_at') or signal.get('refreshed_at')
+    completed_at = (
+        signal.get('stale_recheck_cache_completed_at')
+        or signal.get('cache_completed_at')
+        or signal.get('stale_recheck_refreshed_at')
+    )
+    if completed_at:
+        try:
+            return {
+                'age_ms': round(max(0.0, now - float(completed_at)) * 1000, 2),
+                'source': 'COMPLETED_HANDOFF',
+                'refreshed_at': float(completed_at),
+            }
+        except (TypeError, ValueError):
+            pass
+    refreshed_at = signal.get('entry_refreshed_at') or signal.get('refreshed_at')
     if refreshed_at:
         try:
-            return round(max(0.0, now - float(refreshed_at)) * 1000, 2)
+            return {
+                'age_ms': round(max(0.0, now - float(refreshed_at)) * 1000, 2),
+                'source': 'ENTRY_REFRESHED_AT',
+                'refreshed_at': float(refreshed_at),
+            }
         except (TypeError, ValueError):
             pass
     age = signal.get('max_leg_quote_age_ms')
-    return round(float(age), 2) if age is not None else None
+    if age is not None:
+        return {'age_ms': round(float(age), 2), 'source': 'MAX_LEG_QUOTE_AGE', 'refreshed_at': None}
+    age = signal.get('quote_age_ms')
+    if age is not None:
+        return {'age_ms': round(float(age), 2), 'source': 'ORIGINAL_QUOTE_AGE', 'refreshed_at': None}
+    age_sec = signal.get('quote_age_sec')
+    if age_sec is not None:
+        return {
+            'age_ms': round(float(age_sec) * 1000, 2),
+            'source': 'ORIGINAL_QUOTE_AGE',
+            'refreshed_at': None,
+        }
+    return {'age_ms': None, 'source': 'UNKNOWN', 'refreshed_at': None}
+
+
+def _entry_quote_age_ms(signal, now=None):
+    return _entry_quote_age_details(signal, now)['age_ms']
 
 
 def _entry_quote_age_limit(signal, mode):
@@ -675,7 +724,13 @@ def _execution_fields(signal, entry_reason):
     entry_fee = float(signal.get('selected_notional_krw', 0) or 0) * (
         cfg.upbit_fee_bp + (cfg.bithumb_fee_bp if pair_id == 'UPBIT_BITHUMB' else cfg.binance_fee_bp)
     ) / 10000
-    entry_quote_age = _entry_quote_age_ms(signal)
+    entry_quote_age = _entry_quote_age_details(signal)
+    entry_refreshed_at = entry_quote_age.get('refreshed_at')
+    entry_refresh_started_at = (
+        signal.get('stale_recheck_refresh_started_at')
+        or signal.get('entry_refresh_started_at')
+        or signal.get('refresh_started_at')
+    )
     return {
         **signal,
         'direction': direction,
@@ -688,8 +743,10 @@ def _execution_fields(signal, entry_reason):
         'sell_price': sell_price,
         'buy_leg_quote_age_ms': signal.get('buy_leg_quote_age_ms'),
         'sell_leg_quote_age_ms': signal.get('sell_leg_quote_age_ms'),
-        'entry_quote_age_ms': entry_quote_age,
-        'entry_refreshed_at': signal.get('stale_recheck_cache_completed_at') or signal.get('refreshed_at'),
+        'entry_quote_age_ms': entry_quote_age['age_ms'],
+        'entry_quote_age_source': entry_quote_age['source'],
+        'entry_refreshed_at': entry_refreshed_at,
+        'entry_refresh_started_at': entry_refresh_started_at,
         'entry_fetch_ms': signal.get('stale_recheck_fetch_ms') or signal.get('fetch_ms'),
         'entry_decision_wait_ms': signal.get('stale_recheck_elapsed_decision_wait_ms'),
         'quote_source': signal.get('quote_source', signal.get('source', '')),
@@ -772,6 +829,9 @@ def route_signal_to_execution(signal, entry_reason, paper_eng=None):
         'symbol': prepared.get('symbol', ''),
         'pair_id': prepared.get('pair_id', 'UPBIT_BINANCE'),
         'entry_quote_age_ms': prepared.get('entry_quote_age_ms'),
+        'entry_quote_age_source': prepared.get('entry_quote_age_source', 'UNKNOWN'),
+        'entry_refreshed_at': prepared.get('entry_refreshed_at'),
+        'entry_fetch_ms': prepared.get('entry_fetch_ms'),
         'blockers': blockers,
         'signal': prepared,
     }
@@ -979,6 +1039,9 @@ def main():
     paper_entry_last_reason = ''
     paper_entry_last_blocker = ''
     paper_entry_last_quote_age_ms = None
+    paper_entry_last_quote_age_source = ''
+    paper_entry_last_refreshed_at = None
+    paper_entry_last_fetch_ms = None
     paper_entry_quote_age_list: deque[float] = deque(maxlen=500)
     live_entry_candidate_count = 0
     live_entry_blocked_count = 0
@@ -1290,6 +1353,9 @@ def main():
                     paper_entry_last_symbol = route.get('symbol', '')
                     paper_entry_last_reason = route.get('entry_reason', '')
                     paper_entry_last_quote_age_ms = route.get('entry_quote_age_ms')
+                    paper_entry_last_quote_age_source = route.get('entry_quote_age_source', '')
+                    paper_entry_last_refreshed_at = route.get('entry_refreshed_at')
+                    paper_entry_last_fetch_ms = route.get('entry_fetch_ms')
                     if paper_entry_last_quote_age_ms is not None:
                         paper_entry_quote_age_list.append(float(paper_entry_last_quote_age_ms))
                     if route.get('ok'):
@@ -1437,6 +1503,9 @@ def main():
                         paper_entry_last_symbol = recheck_route.get('symbol', '')
                         paper_entry_last_reason = recheck_route.get('entry_reason', '')
                         paper_entry_last_quote_age_ms = recheck_route.get('entry_quote_age_ms')
+                        paper_entry_last_quote_age_source = recheck_route.get('entry_quote_age_source', '')
+                        paper_entry_last_refreshed_at = recheck_route.get('entry_refreshed_at')
+                        paper_entry_last_fetch_ms = recheck_route.get('entry_fetch_ms')
                         if paper_entry_last_quote_age_ms is not None:
                             paper_entry_quote_age_list.append(float(paper_entry_last_quote_age_ms))
                     if cfg.mode == 'paper' and recheck_route.get('ok'):
@@ -1481,6 +1550,9 @@ def main():
                         paper_entry_last_symbol = route.get('symbol', '')
                         paper_entry_last_reason = route.get('entry_reason', '')
                         paper_entry_last_quote_age_ms = route.get('entry_quote_age_ms')
+                        paper_entry_last_quote_age_source = route.get('entry_quote_age_source', '')
+                        paper_entry_last_refreshed_at = route.get('entry_refreshed_at')
+                        paper_entry_last_fetch_ms = route.get('entry_fetch_ms')
                         if paper_entry_last_quote_age_ms is not None:
                             paper_entry_quote_age_list.append(float(paper_entry_last_quote_age_ms))
                         if route.get('ok'):
@@ -1720,6 +1792,9 @@ def main():
             'paper_entry_last_reason': paper_entry_last_reason,
             'paper_entry_last_blocker': paper_entry_last_blocker,
             'paper_entry_last_quote_age_ms': paper_entry_last_quote_age_ms,
+            'paper_entry_last_quote_age_source': paper_entry_last_quote_age_source,
+            'paper_entry_last_refreshed_at': paper_entry_last_refreshed_at,
+            'paper_entry_last_fetch_ms': paper_entry_last_fetch_ms,
             'paper_entry_p95_quote_age_ms': _percentile(list(paper_entry_quote_age_list), 95),
             'live_entry_candidate_count': live_entry_candidate_count,
             'live_entry_blocked_count': live_entry_blocked_count,

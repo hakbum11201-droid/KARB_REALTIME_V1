@@ -394,3 +394,8 @@ For long paper smoke tests, the recommended checks are:
   checks. In `tiny_live` or `live`, the same gate can only produce a guarded
   execution-plan candidate; it does not call exchange order functions or bypass
   the existing disabled-by-default live safety settings.
+- For recheck-based paper entries, entry freshness is measured from the
+  completed handoff `refreshed_at` timestamp first. The original stale quote age
+  is used only as a fallback, and the telemetry records
+  `entry_quote_age_source` so `ENTRY_QUOTE_TOO_OLD` blocks can be diagnosed
+  without weakening the quote-age guard.

@@ -505,7 +505,7 @@ function renderTradeTable(trades) {
     const et=t.entry_time?new Date(t.entry_time*1000).toLocaleTimeString('ko-KR'):'--';
     const xt=t.exit_time?new Date(t.exit_time*1000).toLocaleTimeString('ko-KR'):'--';
     const entryReason=t.entry_reason?`<div class="muted-mini">${esc(t.entry_reason)}</div>`:'';
-    const entryMeta=`<div class="muted-mini">notional ${fmt(t.selected_notional_krw)} KRW / quote ${fmt(t.entry_quote_age_ms,1)} ms</div>`;
+    const entryMeta=`<div class="muted-mini">notional ${fmt(t.selected_notional_krw)} KRW / quote ${fmt(t.entry_quote_age_ms,1)} ms ${t.entry_quote_age_source?`/ ${esc(t.entry_quote_age_source)}`:''}</div>`;
     return `<tr>
       <td>${(t.trade_id||'').slice(0,8)}</td><td><span class="pair-badge ${pairMeta(t.pair_id||'UPBIT_BINANCE').badge}">${esc(t.pair_id||'UPBIT_BINANCE')}</span> ${t.symbol||'--'}</td>
       <td class="${dc}">${t.best_direction||'--'}</td><td>${et}</td><td>${xt}</td>
@@ -854,7 +854,7 @@ function renderEntryRouteTelemetry(t={}) {
     }
   }
   if (!el) return;
-  el.textContent=`Entry Route | Paper attempts/success/blocked ${fmt(t.paper_entry_attempt_count)} / ${fmt(t.paper_entry_success_count)} / ${fmt(t.paper_entry_blocked_count)} | Paper last ${t.paper_entry_last_symbol||'--'} ${t.paper_entry_last_reason||'--'} blocker ${t.paper_entry_last_blocker||'--'} quote ${fmt(t.paper_entry_last_quote_age_ms,1)} ms | Paper p95 entry quote ${fmt(t.paper_entry_p95_quote_age_ms,1)} ms | Live candidates/blocked ${fmt(t.live_entry_candidate_count)} / ${fmt(t.live_entry_blocked_count)} | Live last ${t.live_entry_last_symbol||'--'} ${t.live_entry_last_reason||'--'} blocker ${t.live_entry_last_blocker||'--'} quote ${fmt(t.live_entry_last_quote_age_ms,1)} ms`;
+  el.textContent=`Entry Route | Paper attempts/success/blocked ${fmt(t.paper_entry_attempt_count)} / ${fmt(t.paper_entry_success_count)} / ${fmt(t.paper_entry_blocked_count)} | Paper last ${t.paper_entry_last_symbol||'--'} ${t.paper_entry_last_reason||'--'} blocker ${t.paper_entry_last_blocker||'--'} quote ${fmt(t.paper_entry_last_quote_age_ms,1)} ms ${t.paper_entry_last_quote_age_source||'UNKNOWN'} refreshed ${t.paper_entry_last_refreshed_at?ageText(Date.now()/1000-t.paper_entry_last_refreshed_at):'--'} fetch ${fmt(t.paper_entry_last_fetch_ms,1)} ms | Paper p95 entry quote ${fmt(t.paper_entry_p95_quote_age_ms,1)} ms | Live candidates/blocked ${fmt(t.live_entry_candidate_count)} / ${fmt(t.live_entry_blocked_count)} | Live last ${t.live_entry_last_symbol||'--'} ${t.live_entry_last_reason||'--'} blocker ${t.live_entry_last_blocker||'--'} quote ${fmt(t.live_entry_last_quote_age_ms,1)} ms`;
 }
 
 function renderStaleRecheckTelemetry(t={}) {

@@ -67,6 +67,20 @@ def _read_jsonl_tail(path, n=50):
         return []
 
 
+def _is_mock_trade(trade: dict) -> bool:
+    symbol = str(trade.get('symbol', '')).upper()
+    return bool(trade.get('is_mock') or trade.get('test_only') or symbol in {'MOCK', 'MOCK2', 'NORMAL'})
+
+
+def _recent_real_exit_trades(limit=20):
+    recent = _read_jsonl_tail(os.path.join(LOGS_DIR, 'paper_trades.jsonl'), 200)
+    exits = [r for r in recent if r.get('event') == 'EXIT' and not _is_mock_trade(r)][-limit:]
+    for trade in exits:
+        trade.setdefault('pair_id', 'UPBIT_BINANCE')
+        trade.setdefault('entry_reason', 'UNKNOWN')
+    return exits
+
+
 def _live_readiness_payload(pair_id='UPBIT_BINANCE'):
     readiness = get_tiny_live_readiness(pair_id)
     quotes = _read_json(os.path.join(RUNTIME_DIR, 'latest_quotes.json'))
@@ -635,11 +649,7 @@ class KarbHandler(SimpleHTTPRequestHandler):
 
         elif self.path == '/api/perf':
             perf = _read_json(os.path.join(RUNTIME_DIR, 'performance_summary.json'))
-            recent = _read_jsonl_tail(os.path.join(LOGS_DIR, 'paper_trades.jsonl'), 100)
-            exits = [r for r in recent if r.get('event') == 'EXIT'][-20:]
-            for trade in exits:
-                trade.setdefault('pair_id', 'UPBIT_BINANCE')
-                trade.setdefault('entry_reason', 'UNKNOWN')
+            exits = _recent_real_exit_trades(20)
             self._send_json({'performance': perf, 'recent_trades': exits})
 
         elif self.path == '/api/performance':
@@ -717,12 +727,7 @@ class KarbHandler(SimpleHTTPRequestHandler):
             self._send_guarded_json(_iceberg_status_payload)
 
         elif self.path == '/api/trades/recent':
-            recent = _read_jsonl_tail(os.path.join(LOGS_DIR, 'paper_trades.jsonl'), 100)
-            exits = [r for r in recent if r.get('event') == 'EXIT'][-20:]
-            for trade in exits:
-                trade.setdefault('pair_id', 'UPBIT_BINANCE')
-                trade.setdefault('entry_reason', 'UNKNOWN')
-            self._send_json({'trades': exits})
+            self._send_json({'trades': _recent_real_exit_trades(20)})
 
         elif self.path == '/api/session/last':
             self._send_guarded_json(_last_session_payload)
