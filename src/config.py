@@ -94,6 +94,10 @@ class Config:
     @property
     def paper_entry_max_quote_age_ms(self): return self.get('paper_entry_max_quote_age_ms', 2500)
     @property
+    def paper_entry_max_quote_age_by_reason(self): return self.get('paper_entry_max_quote_age_by_reason', {})
+    @property
+    def live_entry_max_quote_age_by_reason(self): return self.get('live_entry_max_quote_age_by_reason', {})
+    @property
     def paper_entry_domestic_max_quote_age_ms(self): return self.get('paper_entry_domestic_max_quote_age_ms', 3000)
     @property
     def paper_entry_cross_border_max_quote_age_ms(self): return self.get('paper_entry_cross_border_max_quote_age_ms', 2000)
@@ -151,6 +155,12 @@ class Config:
     def wide_spread_recheck_min_net_profit_krw(self): return self.get('wide_spread_recheck_min_net_profit_krw', 10)
     @property
     def wide_spread_recheck_allowed_liquidity(self): return self.get('wide_spread_recheck_allowed_liquidity', ['GOOD', 'NORMAL'])
+    @property
+    def wide_spread_entry_min_net_profit_krw(self): return self.get('wide_spread_entry_min_net_profit_krw', 30)
+    @property
+    def wide_spread_entry_min_surplus_bp(self): return self.get('wide_spread_entry_min_surplus_bp', 40)
+    @property
+    def wide_spread_entry_max_dynamic_slippage_bp(self): return self.get('wide_spread_entry_max_dynamic_slippage_bp', 20)
     @property
     def use_websocket_market_data(self): return self.get('use_websocket_market_data', True)
     @property

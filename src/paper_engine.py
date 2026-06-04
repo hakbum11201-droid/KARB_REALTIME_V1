@@ -255,6 +255,7 @@ class PaperEngine:
             'entry_net_expected_profit_krw': calc_result.get('net_expected_profit_krw', 0),
             'max_leg_quote_age_ms':  calc_result.get('max_leg_quote_age_ms'),
             'entry_quote_age_ms':    calc_result.get('entry_quote_age_ms'),
+            'entry_quote_age_cap_ms': calc_result.get('entry_quote_age_cap_ms'),
             'entry_quote_age_source': calc_result.get('entry_quote_age_source', ''),
             'entry_refreshed_at':    calc_result.get('entry_refreshed_at'),
             'entry_refresh_started_at': calc_result.get('entry_refresh_started_at'),
@@ -262,6 +263,7 @@ class PaperEngine:
             'entry_decision_wait_ms': calc_result.get('entry_decision_wait_ms'),
             'quote_source':          calc_result.get('quote_source', ''),
             'expected_slippage_bp':  calc_result.get('expected_slippage_bp', calc_result.get('dynamic_slippage_bp', cfg.slippage_bp)),
+            'dynamic_slippage_bp':   calc_result.get('dynamic_slippage_bp', calc_result.get('expected_slippage_bp', cfg.slippage_bp)),
             'expected_fee_krw':      calc_result.get('expected_fee_krw', entry_fee_krw),
             'wide_spread_recheck_status': calc_result.get('wide_spread_recheck_status', ''),
             # 진입 호가 스냅샷

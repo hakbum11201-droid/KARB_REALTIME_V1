@@ -425,3 +425,7 @@ For long paper smoke tests, the recommended checks are:
   trade is not opened and stopped out on the same quote tick. This does not
   remove SL or improve PnL artificially; it keeps paper evaluation closer to a
   real unwind flow and reports deferred SL/min-hold counters in telemetry.
+- Paper entry freshness is capped by `entry_reason`, not by aggregate quote-age
+  percentiles. `WIDE_SPREAD_RECHECK_ACTIONABLE` uses the strictest paper cap and
+  must also pass post-recheck edge, net-profit, liquidity, notional, and dynamic
+  slippage gates before a paper entry is allowed.

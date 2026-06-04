@@ -188,6 +188,17 @@ paper_take_profit_bp: 20
 paper_stop_loss_bp: 20
 paper_min_hold_before_sl_sec: 3
 paper_min_hold_before_timeout_sec: 1
+paper_entry_max_quote_age_by_reason:
+  NORMAL_GO: 1500
+  RECHECK_ACTIONABLE: 1200
+  WIDE_SPREAD_RECHECK_ACTIONABLE: 900
+live_entry_max_quote_age_by_reason:
+  NORMAL_GO: 1000
+  RECHECK_ACTIONABLE: 800
+  WIDE_SPREAD_RECHECK_ACTIONABLE: 600
+wide_spread_entry_min_net_profit_krw: 30
+wide_spread_entry_min_surplus_bp: 40
+wide_spread_entry_max_dynamic_slippage_bp: 20
 
 raw_save_enabled: false
 bounded_collector_enabled: false

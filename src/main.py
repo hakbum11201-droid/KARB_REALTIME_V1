@@ -705,6 +705,13 @@ def _entry_quote_age_details(signal, now=None):
             }
         except (TypeError, ValueError):
             pass
+    explicit_entry_age = signal.get('entry_quote_age_ms')
+    if explicit_entry_age is not None:
+        return {
+            'age_ms': round(float(explicit_entry_age), 2),
+            'source': signal.get('entry_quote_age_source', 'ENTRY_QUOTE_AGE'),
+            'refreshed_at': signal.get('entry_refreshed_at'),
+        }
     refreshed_at = signal.get('entry_refreshed_at') or signal.get('refreshed_at')
     if refreshed_at:
         try:
@@ -736,6 +743,15 @@ def _entry_quote_age_ms(signal, now=None):
 
 
 def _entry_quote_age_limit(signal, mode):
+    entry_reason = signal.get('entry_reason', '')
+    if mode == 'paper':
+        by_reason = cfg.paper_entry_max_quote_age_by_reason or {}
+        if entry_reason in by_reason:
+            return float(by_reason[entry_reason])
+    if mode in ('tiny_live', 'live'):
+        by_reason = cfg.live_entry_max_quote_age_by_reason or {}
+        if entry_reason in by_reason:
+            return float(by_reason[entry_reason])
     pair_id = signal.get('pair_id', 'UPBIT_BINANCE')
     if mode == 'paper':
         return (
@@ -773,6 +789,7 @@ def _execution_fields(signal, entry_reason):
         cfg.upbit_fee_bp + (cfg.bithumb_fee_bp if pair_id == 'UPBIT_BITHUMB' else cfg.binance_fee_bp)
     ) / 10000
     entry_quote_age = _entry_quote_age_details(signal)
+    entry_quote_age_cap_ms = _entry_quote_age_limit({**signal, 'entry_reason': entry_reason}, cfg.mode)
     entry_refreshed_at = entry_quote_age.get('refreshed_at')
     entry_refresh_started_at = (
         signal.get('stale_recheck_refresh_started_at')
@@ -792,6 +809,7 @@ def _execution_fields(signal, entry_reason):
         'buy_leg_quote_age_ms': signal.get('buy_leg_quote_age_ms'),
         'sell_leg_quote_age_ms': signal.get('sell_leg_quote_age_ms'),
         'entry_quote_age_ms': entry_quote_age['age_ms'],
+        'entry_quote_age_cap_ms': entry_quote_age_cap_ms,
         'entry_quote_age_source': entry_quote_age['source'],
         'entry_refreshed_at': entry_refreshed_at,
         'entry_refresh_started_at': entry_refresh_started_at,
@@ -841,6 +859,20 @@ def _entry_blockers(signal, mode, entry_reason, paper_eng=None):
         blockers.append('ENTRY_QUOTE_AGE_MISSING')
     elif age > limit:
         blockers.append('ENTRY_QUOTE_TOO_OLD')
+        if entry_reason == 'WIDE_SPREAD_RECHECK_ACTIONABLE':
+            blockers.append('WIDE_SPREAD_QUOTE_TOO_OLD')
+    if entry_reason == 'WIDE_SPREAD_RECHECK_ACTIONABLE':
+        if float(signal.get('net_expected_profit_krw', 0) or 0) < cfg.wide_spread_entry_min_net_profit_krw:
+            blockers.append('WIDE_SPREAD_EDGE_TOO_LOW')
+        if float(signal.get('best_net_surplus_bp', 0) or 0) < cfg.wide_spread_entry_min_surplus_bp:
+            blockers.append('WIDE_SPREAD_EDGE_TOO_LOW')
+        dynamic_slippage = float(
+            signal.get('dynamic_slippage_bp', signal.get('expected_slippage_bp', cfg.slippage_bp)) or 0
+        )
+        if dynamic_slippage > cfg.wide_spread_entry_max_dynamic_slippage_bp:
+            blockers.append('WIDE_SPREAD_SLIPPAGE_TOO_HIGH')
+        if float(signal.get('selected_notional_krw', 0) or 0) < cfg.bithumb_min_order_krw:
+            blockers.append('ENTRY_NOTIONAL_INVALID')
     if paper_eng is not None:
         for trade in getattr(paper_eng, '_open_trades', {}).values():
             if trade.get('symbol') == signal.get('symbol') and trade.get('pair_id', 'UPBIT_BINANCE') == pair_id:
@@ -877,10 +909,20 @@ def route_signal_to_execution(signal, entry_reason, paper_eng=None):
         'symbol': prepared.get('symbol', ''),
         'pair_id': prepared.get('pair_id', 'UPBIT_BINANCE'),
         'entry_quote_age_ms': prepared.get('entry_quote_age_ms'),
+        'entry_quote_age_cap_ms': prepared.get('entry_quote_age_cap_ms'),
         'entry_quote_age_source': prepared.get('entry_quote_age_source', 'UNKNOWN'),
         'entry_refreshed_at': prepared.get('entry_refreshed_at'),
         'entry_fetch_ms': prepared.get('entry_fetch_ms'),
         'blockers': blockers,
+        'blocker_detail': {
+            'entry_reason': entry_reason,
+            'actual_age_ms': prepared.get('entry_quote_age_ms'),
+            'cap_ms': prepared.get('entry_quote_age_cap_ms'),
+            'source': prepared.get('entry_quote_age_source', 'UNKNOWN'),
+            'best_net_surplus_bp': prepared.get('best_net_surplus_bp'),
+            'net_expected_profit_krw': prepared.get('net_expected_profit_krw'),
+            'dynamic_slippage_bp': prepared.get('dynamic_slippage_bp', prepared.get('expected_slippage_bp')),
+        },
         'signal': prepared,
     }
     if blockers:
@@ -1161,9 +1203,20 @@ def main():
     paper_entry_last_reason = ''
     paper_entry_last_blocker = ''
     paper_entry_last_quote_age_ms = None
+    paper_entry_last_quote_age_cap_ms = None
     paper_entry_last_quote_age_source = ''
     paper_entry_last_refreshed_at = None
     paper_entry_last_fetch_ms = None
+    paper_entry_blocked_reason_quote_age_count = 0
+    paper_entry_blocked_wide_spread_quote_age_count = 0
+    wide_spread_entry_blocked_count = 0
+    wide_spread_entry_blocked_quote_age_count = 0
+    wide_spread_entry_blocked_edge_count = 0
+    wide_spread_entry_blocked_slippage_count = 0
+    wide_spread_entry_last_blocker = ''
+    wide_spread_entry_last_age_ms = None
+    wide_spread_entry_last_surplus_bp = None
+    wide_spread_entry_last_net_krw = None
     paper_entry_quote_age_list: deque[float] = deque(maxlen=500)
     paper_engine_reject_last_reason = ''
     paper_engine_reject_last_detail = {}
@@ -1405,6 +1458,7 @@ def main():
                 paper_entry_last_symbol = sym
                 paper_entry_last_blocker = 'COMPLETED_HANDOFF_TOO_OLD'
                 paper_entry_last_quote_age_ms = handoff_age_ms
+                paper_entry_last_quote_age_cap_ms = ttl_ms
                 paper_entry_last_quote_age_source = 'COMPLETED_HANDOFF'
                 paper_entry_last_refreshed_at = handoff.get('refreshed_at')
                 paper_entry_last_fetch_ms = handoff.get('fetch_ms')
@@ -1458,6 +1512,29 @@ def main():
                     completed_handoff_entry_last_reason = signal.get('stale_recheck_status', 'NOT_ACTIONABLE')
                     continue
                 signal = _completed_handoff_entry_fields(signal, handoff, time.time())
+                reason_cap_ms = _entry_quote_age_limit({**signal, 'entry_reason': entry_reason}, cfg.mode)
+                signal['entry_quote_age_cap_ms'] = reason_cap_ms
+                handoff_entry_age_ms = signal.get('entry_quote_age_ms')
+                if handoff_entry_age_ms is None or handoff_entry_age_ms > reason_cap_ms:
+                    completed_handoff_entry_skip_old_count += 1
+                    completed_handoff_entry_last_reason = 'COMPLETED_HANDOFF_TOO_OLD'
+                    paper_entry_last_symbol = sym
+                    paper_entry_last_reason = entry_reason
+                    paper_entry_last_blocker = 'COMPLETED_HANDOFF_TOO_OLD'
+                    paper_entry_last_quote_age_ms = handoff_entry_age_ms
+                    paper_entry_last_quote_age_cap_ms = reason_cap_ms
+                    paper_entry_last_quote_age_source = 'COMPLETED_HANDOFF'
+                    paper_entry_last_refreshed_at = handoff.get('refreshed_at')
+                    paper_entry_last_fetch_ms = handoff.get('fetch_ms')
+                    if entry_reason == 'WIDE_SPREAD_RECHECK_ACTIONABLE':
+                        wide_spread_entry_blocked_count += 1
+                        wide_spread_entry_blocked_quote_age_count += 1
+                        wide_spread_entry_last_blocker = 'COMPLETED_HANDOFF_TOO_OLD'
+                        wide_spread_entry_last_age_ms = handoff_entry_age_ms
+                        wide_spread_entry_last_surplus_bp = signal.get('best_net_surplus_bp')
+                        wide_spread_entry_last_net_krw = signal.get('net_expected_profit_krw')
+                    stale_recheck_pending.pop((pair_id, sym), None)
+                    continue
                 route = route_signal_to_execution(signal, entry_reason, paper_eng)
                 completed_handoff_entry_route_count += 1
                 completed_handoff_entry_last_reason = entry_reason
@@ -1466,6 +1543,7 @@ def main():
                     paper_entry_last_symbol = route.get('symbol', '')
                     paper_entry_last_reason = route.get('entry_reason', '')
                     paper_entry_last_quote_age_ms = route.get('entry_quote_age_ms')
+                    paper_entry_last_quote_age_cap_ms = route.get('entry_quote_age_cap_ms')
                     paper_entry_last_quote_age_source = route.get('entry_quote_age_source', '')
                     paper_entry_last_refreshed_at = route.get('entry_refreshed_at')
                     paper_entry_last_fetch_ms = route.get('entry_fetch_ms')
@@ -1492,6 +1570,17 @@ def main():
                             paper_engine_reject_last_detail = route.get('paper_engine_reject_detail', {})
                             paper_engine_reject_counts[_paper_engine_reject_bucket(paper_engine_reject_last_reason)] += 1
                         paper_entry_blocked_quote_age_count += int('ENTRY_QUOTE_TOO_OLD' in blockers)
+                        paper_entry_blocked_reason_quote_age_count += int('ENTRY_QUOTE_TOO_OLD' in blockers)
+                        paper_entry_blocked_wide_spread_quote_age_count += int('WIDE_SPREAD_QUOTE_TOO_OLD' in blockers)
+                        if entry_reason == 'WIDE_SPREAD_RECHECK_ACTIONABLE':
+                            wide_spread_entry_blocked_count += 1
+                            wide_spread_entry_last_blocker = blockers[0] if blockers else ''
+                            wide_spread_entry_last_age_ms = route.get('entry_quote_age_ms')
+                            wide_spread_entry_last_surplus_bp = route.get('signal', {}).get('best_net_surplus_bp')
+                            wide_spread_entry_last_net_krw = route.get('signal', {}).get('net_expected_profit_krw')
+                            wide_spread_entry_blocked_quote_age_count += int('WIDE_SPREAD_QUOTE_TOO_OLD' in blockers)
+                            wide_spread_entry_blocked_edge_count += int('WIDE_SPREAD_EDGE_TOO_LOW' in blockers)
+                            wide_spread_entry_blocked_slippage_count += int('WIDE_SPREAD_SLIPPAGE_TOO_HIGH' in blockers)
                         paper_entry_blocked_duplicate_count += int('DUPLICATE_OPEN_TRADE' in blockers)
                         paper_entry_blocked_stale_count += int('ENTRY_STALE_QUOTE' in blockers)
                         paper_entry_blocked_liquidity_count += int('ENTRY_LIQUIDITY_BLOCKED' in blockers)
@@ -1641,6 +1730,7 @@ def main():
                     paper_entry_last_symbol = route.get('symbol', '')
                     paper_entry_last_reason = route.get('entry_reason', '')
                     paper_entry_last_quote_age_ms = route.get('entry_quote_age_ms')
+                    paper_entry_last_quote_age_cap_ms = route.get('entry_quote_age_cap_ms')
                     paper_entry_last_quote_age_source = route.get('entry_quote_age_source', '')
                     paper_entry_last_refreshed_at = route.get('entry_refreshed_at')
                     paper_entry_last_fetch_ms = route.get('entry_fetch_ms')
@@ -1665,6 +1755,8 @@ def main():
                             paper_engine_reject_last_detail = route.get('paper_engine_reject_detail', {})
                             paper_engine_reject_counts[_paper_engine_reject_bucket(paper_engine_reject_last_reason)] += 1
                         paper_entry_blocked_quote_age_count += int('ENTRY_QUOTE_TOO_OLD' in blockers)
+                        paper_entry_blocked_reason_quote_age_count += int('ENTRY_QUOTE_TOO_OLD' in blockers)
+                        paper_entry_blocked_wide_spread_quote_age_count += int('WIDE_SPREAD_QUOTE_TOO_OLD' in blockers)
                         paper_entry_blocked_duplicate_count += int('DUPLICATE_OPEN_TRADE' in blockers)
                         paper_entry_blocked_stale_count += int('ENTRY_STALE_QUOTE' in blockers)
                         paper_entry_blocked_liquidity_count += int('ENTRY_LIQUIDITY_BLOCKED' in blockers)
@@ -1797,6 +1889,7 @@ def main():
                         paper_entry_last_symbol = recheck_route.get('symbol', '')
                         paper_entry_last_reason = recheck_route.get('entry_reason', '')
                         paper_entry_last_quote_age_ms = recheck_route.get('entry_quote_age_ms')
+                        paper_entry_last_quote_age_cap_ms = recheck_route.get('entry_quote_age_cap_ms')
                         paper_entry_last_quote_age_source = recheck_route.get('entry_quote_age_source', '')
                         paper_entry_last_refreshed_at = recheck_route.get('entry_refreshed_at')
                         paper_entry_last_fetch_ms = recheck_route.get('entry_fetch_ms')
@@ -1840,6 +1933,17 @@ def main():
                             paper_engine_reject_last_detail = recheck_route.get('paper_engine_reject_detail', {})
                             paper_engine_reject_counts[_paper_engine_reject_bucket(paper_engine_reject_last_reason)] += 1
                         paper_entry_blocked_quote_age_count += int('ENTRY_QUOTE_TOO_OLD' in blockers)
+                        paper_entry_blocked_reason_quote_age_count += int('ENTRY_QUOTE_TOO_OLD' in blockers)
+                        paper_entry_blocked_wide_spread_quote_age_count += int('WIDE_SPREAD_QUOTE_TOO_OLD' in blockers)
+                        if entry_reason == 'WIDE_SPREAD_RECHECK_ACTIONABLE':
+                            wide_spread_entry_blocked_count += 1
+                            wide_spread_entry_last_blocker = blockers[0] if blockers else ''
+                            wide_spread_entry_last_age_ms = recheck_route.get('entry_quote_age_ms')
+                            wide_spread_entry_last_surplus_bp = recheck_route.get('signal', {}).get('best_net_surplus_bp')
+                            wide_spread_entry_last_net_krw = recheck_route.get('signal', {}).get('net_expected_profit_krw')
+                            wide_spread_entry_blocked_quote_age_count += int('WIDE_SPREAD_QUOTE_TOO_OLD' in blockers)
+                            wide_spread_entry_blocked_edge_count += int('WIDE_SPREAD_EDGE_TOO_LOW' in blockers)
+                            wide_spread_entry_blocked_slippage_count += int('WIDE_SPREAD_SLIPPAGE_TOO_HIGH' in blockers)
                         paper_entry_blocked_duplicate_count += int('DUPLICATE_OPEN_TRADE' in blockers)
                         paper_entry_blocked_stale_count += int('ENTRY_STALE_QUOTE' in blockers)
                         paper_entry_blocked_liquidity_count += int('ENTRY_LIQUIDITY_BLOCKED' in blockers)
@@ -1850,6 +1954,7 @@ def main():
                         paper_entry_last_symbol = route.get('symbol', '')
                         paper_entry_last_reason = route.get('entry_reason', '')
                         paper_entry_last_quote_age_ms = route.get('entry_quote_age_ms')
+                        paper_entry_last_quote_age_cap_ms = route.get('entry_quote_age_cap_ms')
                         paper_entry_last_quote_age_source = route.get('entry_quote_age_source', '')
                         paper_entry_last_refreshed_at = route.get('entry_refreshed_at')
                         paper_entry_last_fetch_ms = route.get('entry_fetch_ms')
@@ -1875,6 +1980,8 @@ def main():
                                 paper_engine_reject_last_detail = route.get('paper_engine_reject_detail', {})
                                 paper_engine_reject_counts[_paper_engine_reject_bucket(paper_engine_reject_last_reason)] += 1
                             paper_entry_blocked_quote_age_count += int('ENTRY_QUOTE_TOO_OLD' in blockers)
+                            paper_entry_blocked_reason_quote_age_count += int('ENTRY_QUOTE_TOO_OLD' in blockers)
+                            paper_entry_blocked_wide_spread_quote_age_count += int('WIDE_SPREAD_QUOTE_TOO_OLD' in blockers)
                             paper_entry_blocked_duplicate_count += int('DUPLICATE_OPEN_TRADE' in blockers)
                             paper_entry_blocked_stale_count += int('ENTRY_STALE_QUOTE' in blockers)
                             paper_entry_blocked_liquidity_count += int('ENTRY_LIQUIDITY_BLOCKED' in blockers)
@@ -2105,10 +2212,21 @@ def main():
             'paper_entry_last_reason': paper_entry_last_reason,
             'paper_entry_last_blocker': paper_entry_last_blocker,
             'paper_entry_last_quote_age_ms': paper_entry_last_quote_age_ms,
+            'paper_entry_last_quote_age_cap_ms': paper_entry_last_quote_age_cap_ms,
             'paper_entry_last_quote_age_source': paper_entry_last_quote_age_source,
             'paper_entry_last_refreshed_at': paper_entry_last_refreshed_at,
             'paper_entry_last_fetch_ms': paper_entry_last_fetch_ms,
             'paper_entry_p95_quote_age_ms': _percentile(list(paper_entry_quote_age_list), 95),
+            'paper_entry_blocked_reason_quote_age_count': paper_entry_blocked_reason_quote_age_count,
+            'paper_entry_blocked_wide_spread_quote_age_count': paper_entry_blocked_wide_spread_quote_age_count,
+            'wide_spread_entry_blocked_count': wide_spread_entry_blocked_count,
+            'wide_spread_entry_blocked_quote_age_count': wide_spread_entry_blocked_quote_age_count,
+            'wide_spread_entry_blocked_edge_count': wide_spread_entry_blocked_edge_count,
+            'wide_spread_entry_blocked_slippage_count': wide_spread_entry_blocked_slippage_count,
+            'wide_spread_entry_last_blocker': wide_spread_entry_last_blocker,
+            'wide_spread_entry_last_age_ms': wide_spread_entry_last_age_ms,
+            'wide_spread_entry_last_surplus_bp': wide_spread_entry_last_surplus_bp,
+            'wide_spread_entry_last_net_krw': wide_spread_entry_last_net_krw,
             'paper_engine_reject_last_reason': paper_engine_reject_last_reason,
             'paper_engine_reject_last_detail': paper_engine_reject_last_detail,
             'paper_engine_reject_inventory_count': paper_engine_reject_counts.get('inventory', 0),
