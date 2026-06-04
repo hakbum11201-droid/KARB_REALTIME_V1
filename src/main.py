@@ -8,7 +8,7 @@ import time
 from collections import deque
 
 from config import cfg
-from secrets_manager import assert_live_credentials_available
+from secrets_manager import assert_live_credentials_available, get_key_status
 from upbit_public import UpbitPublic
 from binance_public import BinancePublic
 from bithumb_public import BithumbPublic
@@ -31,6 +31,9 @@ from paper_fill_simulator import simulate_paper_fill
 from rate_limiter import rate_limiter
 from bithumb_quote_cache import BithumbQuoteCache
 from rest_fallback_cache import RestFallbackQuoteCache
+
+
+ENTRY_REASONS = ('NORMAL_GO', 'RECHECK_ACTIONABLE', 'WIDE_SPREAD_RECHECK_ACTIONABLE')
 
 
 def _decision_record(calc_res, reason, is_safe, quote_source, quote_age_ms):
@@ -615,24 +618,186 @@ def _consume_completed_recheck_handoffs(pending, rest_cache, bithumb_cache, coun
         target['cache_completed_result'] = result
 
 
-def _try_recheck_paper_entry(opportunity, paper_eng):
-    if cfg.mode != 'paper':
-        return None
-    if opportunity.get('pair_id') != 'UPBIT_BITHUMB':
-        return None
-    status = opportunity.get('stale_recheck_status')
+def _entry_reason_from_recheck_status(status):
     entry_reason_by_status = {
         'RECHECK_ACTIONABLE_FAST_PASS': 'RECHECK_ACTIONABLE',
         'WIDE_SPREAD_RECHECK_ACTIONABLE': 'WIDE_SPREAD_RECHECK_ACTIONABLE',
     }
-    entry_reason = entry_reason_by_status.get(status)
+    return entry_reason_by_status.get(status)
+
+
+def _entry_quote_age_ms(signal, now=None):
+    now = time.time() if now is None else float(now)
+    refreshed_at = signal.get('stale_recheck_cache_completed_at') or signal.get('refreshed_at')
+    if refreshed_at:
+        try:
+            return round(max(0.0, now - float(refreshed_at)) * 1000, 2)
+        except (TypeError, ValueError):
+            pass
+    age = signal.get('max_leg_quote_age_ms')
+    return round(float(age), 2) if age is not None else None
+
+
+def _entry_quote_age_limit(signal, mode):
+    pair_id = signal.get('pair_id', 'UPBIT_BINANCE')
+    if mode == 'paper':
+        return (
+            cfg.paper_entry_domestic_max_quote_age_ms
+            if pair_id == 'UPBIT_BITHUMB'
+            else cfg.paper_entry_cross_border_max_quote_age_ms
+        )
+    if mode == 'tiny_live':
+        return (
+            cfg.tiny_live_domestic_quote_max_age_ms
+            if pair_id == 'UPBIT_BITHUMB'
+            else cfg.tiny_live_cross_border_quote_max_age_ms
+        )
+    return (
+        cfg.live_domestic_quote_max_age_ms
+        if pair_id == 'UPBIT_BITHUMB'
+        else cfg.live_cross_border_quote_max_age_ms
+    )
+
+
+def _execution_fields(signal, entry_reason):
+    pair_id = signal.get('pair_id', 'UPBIT_BINANCE')
+    direction = signal.get('best_direction') or signal.get('direction', '')
+    if pair_id == 'UPBIT_BITHUMB':
+        buy_venue, sell_venue = (
+            ('BITHUMB', 'UPBIT') if direction == 'UPBIT_BITHUMB_A' else ('UPBIT', 'BITHUMB')
+        )
+    else:
+        buy_venue, sell_venue = (
+            ('BINANCE', 'UPBIT') if direction == 'A' else ('UPBIT', 'BINANCE')
+        )
+    buy_price = float(signal.get('selected_buy_price_krw', 0) or 0)
+    sell_price = float(signal.get('selected_sell_price_krw', 0) or 0)
+    entry_fee = float(signal.get('selected_notional_krw', 0) or 0) * (
+        cfg.upbit_fee_bp + (cfg.bithumb_fee_bp if pair_id == 'UPBIT_BITHUMB' else cfg.binance_fee_bp)
+    ) / 10000
+    entry_quote_age = _entry_quote_age_ms(signal)
+    return {
+        **signal,
+        'direction': direction,
+        'entry_reason': entry_reason,
+        'raw_depth_qty': signal.get('max_fillable_qty_raw', signal.get('max_qty', signal.get('max_fillable_qty', 0))),
+        'effective_qty': signal.get('effective_qty', signal.get('selected_qty', signal.get('max_fillable_qty', 0))),
+        'buy_venue': buy_venue,
+        'sell_venue': sell_venue,
+        'buy_price': buy_price,
+        'sell_price': sell_price,
+        'buy_leg_quote_age_ms': signal.get('buy_leg_quote_age_ms'),
+        'sell_leg_quote_age_ms': signal.get('sell_leg_quote_age_ms'),
+        'entry_quote_age_ms': entry_quote_age,
+        'entry_refreshed_at': signal.get('stale_recheck_cache_completed_at') or signal.get('refreshed_at'),
+        'entry_fetch_ms': signal.get('stale_recheck_fetch_ms') or signal.get('fetch_ms'),
+        'entry_decision_wait_ms': signal.get('stale_recheck_elapsed_decision_wait_ms'),
+        'quote_source': signal.get('quote_source', signal.get('source', '')),
+        'expected_slippage_bp': signal.get('dynamic_slippage_bp', cfg.slippage_bp),
+        'expected_fee_krw': entry_fee,
+        'entry_surplus_bp': signal.get('best_net_surplus_bp', 0),
+        'entry_net_expected_profit_krw': signal.get('net_expected_profit_krw', 0),
+        'recheck_status': signal.get('stale_recheck_status', ''),
+        'wide_spread_recheck_status': (
+            signal.get('stale_recheck_status', '')
+            if entry_reason == 'WIDE_SPREAD_RECHECK_ACTIONABLE' else ''
+        ),
+    }
+
+
+def _live_key_blockers(pair_id):
+    status = get_key_status()
+    required = ['UPBIT_ACCESS_KEY', 'UPBIT_SECRET_KEY']
+    if pair_id == 'UPBIT_BITHUMB':
+        required += ['BITHUMB_ACCESS_KEY', 'BITHUMB_SECRET_KEY']
+    else:
+        required += ['BINANCE_API_KEY', 'BINANCE_API_SECRET']
+    return ['LIVE_API_KEY_MISSING'] if any(status.get(key) != 'Set' for key in required) else []
+
+
+def _entry_blockers(signal, mode, entry_reason, paper_eng=None):
+    blockers = []
+    pair_id = signal.get('pair_id', 'UPBIT_BINANCE')
+    if entry_reason not in ENTRY_REASONS:
+        blockers.append('ENTRY_REASON_UNKNOWN')
+    if float(signal.get('selected_qty', signal.get('max_fillable_qty', 0)) or 0) <= 0:
+        blockers.append('ENTRY_QTY_INVALID')
+    if float(signal.get('selected_notional_krw', 0) or 0) <= 0:
+        blockers.append('ENTRY_NOTIONAL_INVALID')
+    if cfg.paper_entry_require_positive_net and float(signal.get('net_expected_profit_krw', 0) or 0) <= 0:
+        blockers.append('ENTRY_NET_NOT_POSITIVE')
+    if signal.get('liquidity_class', 'NORMAL') not in ('GOOD', 'NORMAL'):
+        blockers.append('ENTRY_LIQUIDITY_BLOCKED')
+    if any(bool(signal.get(name)) for name in ('stale', 'stale_grace', 'has_stale_quote')):
+        blockers.append('ENTRY_STALE_QUOTE')
+    age = _entry_quote_age_ms(signal)
+    limit = _entry_quote_age_limit(signal, mode)
+    if age is None:
+        blockers.append('ENTRY_QUOTE_AGE_MISSING')
+    elif age > limit:
+        blockers.append('ENTRY_QUOTE_TOO_OLD')
+    if paper_eng is not None:
+        for trade in getattr(paper_eng, '_open_trades', {}).values():
+            if trade.get('symbol') == signal.get('symbol') and trade.get('pair_id', 'UPBIT_BINANCE') == pair_id:
+                blockers.append('DUPLICATE_OPEN_TRADE')
+                break
+    if mode in ('tiny_live', 'live'):
+        blockers.extend(_live_key_blockers(pair_id))
+        if mode == 'live':
+            if not cfg.enable_live_trading or not cfg.live_order_enabled or not cfg.live_mode_enabled:
+                blockers.append('LIVE_CONFIG_DISABLED')
+            if entry_reason == 'RECHECK_ACTIONABLE' and not cfg.live_allow_recheck_actionable_entries:
+                blockers.append('RECHECK_SIGNAL_NOT_ALLOWED')
+            if entry_reason == 'WIDE_SPREAD_RECHECK_ACTIONABLE' and not cfg.live_allow_wide_spread_recheck_entries:
+                blockers.append('WIDE_SPREAD_RECHECK_NOT_ALLOWED')
+        if mode == 'tiny_live':
+            if not cfg.enable_live_trading or not cfg.tiny_live_enabled or not cfg.live_order_enabled:
+                blockers.append('TINY_LIVE_CONFIG_DISABLED')
+            if entry_reason == 'RECHECK_ACTIONABLE' and not cfg.tiny_live_allow_recheck_actionable_entries:
+                blockers.append('RECHECK_SIGNAL_NOT_ALLOWED')
+            if entry_reason == 'WIDE_SPREAD_RECHECK_ACTIONABLE' and not cfg.tiny_live_allow_wide_spread_recheck_entries:
+                blockers.append('WIDE_SPREAD_RECHECK_NOT_ALLOWED')
+        blockers.extend(signal.get('live_freshness_blockers' if mode == 'live' else 'tiny_live_freshness_blockers', []))
+    return list(dict.fromkeys(blockers))
+
+
+def route_signal_to_execution(signal, entry_reason, paper_eng=None):
+    prepared = _execution_fields(signal, entry_reason)
+    mode = cfg.mode
+    blockers = _entry_blockers(prepared, mode, entry_reason, paper_eng)
+    result = {
+        'ok': False,
+        'mode': mode,
+        'entry_reason': entry_reason,
+        'symbol': prepared.get('symbol', ''),
+        'pair_id': prepared.get('pair_id', 'UPBIT_BINANCE'),
+        'entry_quote_age_ms': prepared.get('entry_quote_age_ms'),
+        'blockers': blockers,
+        'signal': prepared,
+    }
+    if blockers:
+        result['status'] = 'BLOCKED'
+        return result
+    if mode == 'paper':
+        trade = paper_eng.try_entry({**prepared, 'reason_no_trade': 'OK'}) if paper_eng else None
+        result.update({'ok': bool(trade), 'status': 'ENTERED' if trade else 'BLOCKED', 'trade': trade})
+        if not trade:
+            result['blockers'] = ['PAPER_ENGINE_REJECTED']
+        return result
+    result.update({
+        'ok': True,
+        'status': 'LIVE_EXECUTOR_CANDIDATE',
+        'plan': prepared,
+        'note': 'Existing executor path candidate only; no order function called here.',
+    })
+    return result
+
+
+def _try_recheck_paper_entry(opportunity, paper_eng):
+    if opportunity.get('pair_id') != 'UPBIT_BITHUMB':
+        return None
+    entry_reason = _entry_reason_from_recheck_status(opportunity.get('stale_recheck_status'))
     if not entry_reason:
-        return None
-    if opportunity.get('liquidity_class', 'NORMAL') not in ('GOOD', 'NORMAL'):
-        return None
-    if any(bool(opportunity.get(name)) for name in ('stale', 'stale_grace', 'has_stale_quote')):
-        return None
-    if float(opportunity.get('selected_notional_krw', 0) or 0) <= 0:
         return None
     net = float(
         opportunity.get(
@@ -642,14 +807,8 @@ def _try_recheck_paper_entry(opportunity, paper_eng):
     )
     if net <= 0:
         return None
-    paper_opportunity = {
-        **opportunity,
-        'reason_no_trade': 'OK',
-        'entry_reason': entry_reason,
-        'recheck_status': status,
-        'net_expected_profit_krw': net,
-    }
-    return paper_eng.try_entry(paper_opportunity)
+    route = route_signal_to_execution({**opportunity, 'net_expected_profit_krw': net}, entry_reason, paper_eng)
+    return route.get('trade') if route.get('ok') else None
 
 
 def main():
@@ -809,6 +968,24 @@ def main():
     paper_recheck_entry_last_reason = ''
     paper_wide_spread_recheck_entry_count = 0
     paper_wide_spread_recheck_last_symbol = ''
+    paper_entry_attempt_count = 0
+    paper_entry_success_count = 0
+    paper_entry_blocked_count = 0
+    paper_entry_blocked_quote_age_count = 0
+    paper_entry_blocked_duplicate_count = 0
+    paper_entry_blocked_stale_count = 0
+    paper_entry_blocked_liquidity_count = 0
+    paper_entry_last_symbol = ''
+    paper_entry_last_reason = ''
+    paper_entry_last_blocker = ''
+    paper_entry_last_quote_age_ms = None
+    paper_entry_quote_age_list: deque[float] = deque(maxlen=500)
+    live_entry_candidate_count = 0
+    live_entry_blocked_count = 0
+    live_entry_last_symbol = ''
+    live_entry_last_reason = ''
+    live_entry_last_blocker = ''
+    live_entry_last_quote_age_ms = None
     paper_exit_count  = 0
     error_count      = 0
     reason_counts:   dict[str, int] = {}
@@ -1106,18 +1283,41 @@ def main():
                 )
 
             # ── Paper 진입 ────────────────────────────────────────────────
-            if is_safe and cfg.mode == 'paper':
-                trade = paper_eng.try_entry(calc_res)
-                if trade:
-                    paper_entry_count += 1
-                    if not args.once:
-                        print(
-                            f"  [{sym}] PAPER ENTRY | Dir: {trade['best_direction']} | "
-                            f"Net: {trade['net_expected_profit_krw']:,.0f} KRW"
-                        )
-
-            elif is_safe and cfg.mode in ('tiny_live', 'live'):
-                print(f"  [{sym}] [{cfg.mode.upper()}] Execution not yet implemented.")
+            if is_safe:
+                route = route_signal_to_execution(calc_res, 'NORMAL_GO', paper_eng)
+                if cfg.mode == 'paper':
+                    paper_entry_attempt_count += 1
+                    paper_entry_last_symbol = route.get('symbol', '')
+                    paper_entry_last_reason = route.get('entry_reason', '')
+                    paper_entry_last_quote_age_ms = route.get('entry_quote_age_ms')
+                    if paper_entry_last_quote_age_ms is not None:
+                        paper_entry_quote_age_list.append(float(paper_entry_last_quote_age_ms))
+                    if route.get('ok'):
+                        trade = route.get('trade')
+                        paper_entry_success_count += 1
+                        paper_entry_count += 1
+                        if not args.once:
+                            print(
+                                f"  [{sym}] PAPER ENTRY | Dir: {trade['best_direction']} | "
+                                f"Net: {trade['net_expected_profit_krw']:,.0f} KRW"
+                            )
+                    else:
+                        blockers = route.get('blockers', [])
+                        paper_entry_blocked_count += 1
+                        paper_entry_last_blocker = blockers[0] if blockers else ''
+                        paper_entry_blocked_quote_age_count += int('ENTRY_QUOTE_TOO_OLD' in blockers)
+                        paper_entry_blocked_duplicate_count += int('DUPLICATE_OPEN_TRADE' in blockers)
+                        paper_entry_blocked_stale_count += int('ENTRY_STALE_QUOTE' in blockers)
+                        paper_entry_blocked_liquidity_count += int('ENTRY_LIQUIDITY_BLOCKED' in blockers)
+                elif cfg.mode in ('tiny_live', 'live'):
+                    if route.get('ok'):
+                        live_entry_candidate_count += 1
+                    else:
+                        live_entry_blocked_count += 1
+                    live_entry_last_symbol = route.get('symbol', '')
+                    live_entry_last_reason = route.get('entry_reason', '')
+                    live_entry_last_quote_age_ms = route.get('entry_quote_age_ms')
+                    live_entry_last_blocker = next(iter(route.get('blockers', [])), '')
 
         domestic_quotes = {'UPBIT_BITHUMB': {}}
         if cfg.upbit_bithumb_paper_enabled:
@@ -1222,33 +1422,94 @@ def main():
                     'go_no_go': 'GO' if domestic_safe else 'NO-GO',
                     'quote_source': 'rest',
                 })
-                recheck_trade = _try_recheck_paper_entry(domestic, paper_eng)
-                if recheck_trade:
-                    paper_entry_count += 1
-                    entry_reason = recheck_trade.get('entry_reason', '')
-                    if entry_reason == 'WIDE_SPREAD_RECHECK_ACTIONABLE':
-                        paper_wide_spread_recheck_entry_count += 1
-                        paper_wide_spread_recheck_last_symbol = recheck_trade.get('symbol', '')
-                    else:
-                        paper_recheck_entry_count += 1
-                    paper_recheck_entry_last_symbol = recheck_trade.get('symbol', '')
-                    paper_recheck_entry_last_reason = entry_reason
-                    if not args.once:
-                        print(
-                            f"  [UPBIT_BITHUMB:{sym}] PAPER RECHECK ENTRY | "
-                            f"Dir: {recheck_trade['best_direction']} | "
-                            f"Net: {recheck_trade['net_expected_profit_krw']:,.0f} KRW"
-                        )
-                if domestic_safe and cfg.mode == 'paper':
-                    trade = paper_eng.try_entry(domestic)
-                    if trade:
-                        paper_entry_count += 1
+                recheck_reason = _entry_reason_from_recheck_status(domestic.get('stale_recheck_status'))
+                if recheck_reason:
+                    net = float(
+                        domestic.get('stale_recheck_new_net_krw', domestic.get('net_expected_profit_krw', 0)) or 0
+                    )
+                    recheck_route = route_signal_to_execution(
+                        {**domestic, 'net_expected_profit_krw': net},
+                        recheck_reason,
+                        paper_eng,
+                    )
+                    if cfg.mode == 'paper':
+                        paper_entry_attempt_count += 1
+                        paper_entry_last_symbol = recheck_route.get('symbol', '')
+                        paper_entry_last_reason = recheck_route.get('entry_reason', '')
+                        paper_entry_last_quote_age_ms = recheck_route.get('entry_quote_age_ms')
+                        if paper_entry_last_quote_age_ms is not None:
+                            paper_entry_quote_age_list.append(float(paper_entry_last_quote_age_ms))
+                    if cfg.mode == 'paper' and recheck_route.get('ok'):
+                        recheck_trade = recheck_route.get('trade')
+                        paper_entry_success_count += int(cfg.mode == 'paper')
+                        paper_entry_count += int(cfg.mode == 'paper')
+                        entry_reason = recheck_trade.get('entry_reason', '')
+                        if entry_reason == 'WIDE_SPREAD_RECHECK_ACTIONABLE':
+                            paper_wide_spread_recheck_entry_count += 1
+                            paper_wide_spread_recheck_last_symbol = recheck_trade.get('symbol', '')
+                        else:
+                            paper_recheck_entry_count += 1
+                        paper_recheck_entry_last_symbol = recheck_trade.get('symbol', '')
+                        paper_recheck_entry_last_reason = entry_reason
                         if not args.once:
                             print(
-                                f"  [UPBIT_BITHUMB:{sym}] PAPER ENTRY | "
-                                f"Dir: {trade['best_direction']} | "
-                                f"Net: {trade['net_expected_profit_krw']:,.0f} KRW"
+                                f"  [UPBIT_BITHUMB:{sym}] PAPER RECHECK ENTRY | "
+                                f"Dir: {recheck_trade['best_direction']} | "
+                                f"Net: {recheck_trade['net_expected_profit_krw']:,.0f} KRW"
                             )
+                    elif cfg.mode in ('tiny_live', 'live'):
+                        if recheck_route.get('ok'):
+                            live_entry_candidate_count += 1
+                        else:
+                            live_entry_blocked_count += 1
+                        live_entry_last_symbol = recheck_route.get('symbol', '')
+                        live_entry_last_reason = recheck_route.get('entry_reason', '')
+                        live_entry_last_quote_age_ms = recheck_route.get('entry_quote_age_ms')
+                        live_entry_last_blocker = next(iter(recheck_route.get('blockers', [])), '')
+                    elif cfg.mode == 'paper':
+                        blockers = recheck_route.get('blockers', [])
+                        paper_entry_blocked_count += 1
+                        paper_entry_last_blocker = blockers[0] if blockers else ''
+                        paper_entry_blocked_quote_age_count += int('ENTRY_QUOTE_TOO_OLD' in blockers)
+                        paper_entry_blocked_duplicate_count += int('DUPLICATE_OPEN_TRADE' in blockers)
+                        paper_entry_blocked_stale_count += int('ENTRY_STALE_QUOTE' in blockers)
+                        paper_entry_blocked_liquidity_count += int('ENTRY_LIQUIDITY_BLOCKED' in blockers)
+                if domestic_safe:
+                    route = route_signal_to_execution(domestic, 'NORMAL_GO', paper_eng)
+                    if cfg.mode == 'paper':
+                        paper_entry_attempt_count += 1
+                        paper_entry_last_symbol = route.get('symbol', '')
+                        paper_entry_last_reason = route.get('entry_reason', '')
+                        paper_entry_last_quote_age_ms = route.get('entry_quote_age_ms')
+                        if paper_entry_last_quote_age_ms is not None:
+                            paper_entry_quote_age_list.append(float(paper_entry_last_quote_age_ms))
+                        if route.get('ok'):
+                            trade = route.get('trade')
+                            paper_entry_success_count += 1
+                            paper_entry_count += 1
+                            if not args.once:
+                                print(
+                                    f"  [UPBIT_BITHUMB:{sym}] PAPER ENTRY | "
+                                    f"Dir: {trade['best_direction']} | "
+                                    f"Net: {trade['net_expected_profit_krw']:,.0f} KRW"
+                                )
+                        else:
+                            blockers = route.get('blockers', [])
+                            paper_entry_blocked_count += 1
+                            paper_entry_last_blocker = blockers[0] if blockers else ''
+                            paper_entry_blocked_quote_age_count += int('ENTRY_QUOTE_TOO_OLD' in blockers)
+                            paper_entry_blocked_duplicate_count += int('DUPLICATE_OPEN_TRADE' in blockers)
+                            paper_entry_blocked_stale_count += int('ENTRY_STALE_QUOTE' in blockers)
+                            paper_entry_blocked_liquidity_count += int('ENTRY_LIQUIDITY_BLOCKED' in blockers)
+                    elif cfg.mode in ('tiny_live', 'live'):
+                        if route.get('ok'):
+                            live_entry_candidate_count += 1
+                        else:
+                            live_entry_blocked_count += 1
+                        live_entry_last_symbol = route.get('symbol', '')
+                        live_entry_last_reason = route.get('entry_reason', '')
+                        live_entry_last_quote_age_ms = route.get('entry_quote_age_ms')
+                        live_entry_last_blocker = next(iter(route.get('blockers', [])), '')
                 if args.once:
                     print(
                         f"  [UPBIT_BITHUMB:{sym}] Dir: {domestic.get('best_direction') or '--'} | "
@@ -1448,6 +1709,24 @@ def main():
             'paper_wide_spread_recheck_actionable_count': stale_recheck_counters['wide_actionable'],
             'paper_wide_spread_recheck_entry_count': paper_wide_spread_recheck_entry_count,
             'paper_wide_spread_recheck_last_symbol': paper_wide_spread_recheck_last_symbol,
+            'paper_entry_attempt_count': paper_entry_attempt_count,
+            'paper_entry_success_count': paper_entry_success_count,
+            'paper_entry_blocked_count': paper_entry_blocked_count,
+            'paper_entry_blocked_quote_age_count': paper_entry_blocked_quote_age_count,
+            'paper_entry_blocked_duplicate_count': paper_entry_blocked_duplicate_count,
+            'paper_entry_blocked_stale_count': paper_entry_blocked_stale_count,
+            'paper_entry_blocked_liquidity_count': paper_entry_blocked_liquidity_count,
+            'paper_entry_last_symbol': paper_entry_last_symbol,
+            'paper_entry_last_reason': paper_entry_last_reason,
+            'paper_entry_last_blocker': paper_entry_last_blocker,
+            'paper_entry_last_quote_age_ms': paper_entry_last_quote_age_ms,
+            'paper_entry_p95_quote_age_ms': _percentile(list(paper_entry_quote_age_list), 95),
+            'live_entry_candidate_count': live_entry_candidate_count,
+            'live_entry_blocked_count': live_entry_blocked_count,
+            'live_entry_last_symbol': live_entry_last_symbol,
+            'live_entry_last_reason': live_entry_last_reason,
+            'live_entry_last_blocker': live_entry_last_blocker,
+            'live_entry_last_quote_age_ms': live_entry_last_quote_age_ms,
             'live_fresh_candidate_count': live_fresh_candidate_count,
             'tiny_live_fresh_candidate_count': tiny_live_fresh_candidate_count,
             'live_blocked_quote_age_count': live_blocked_quote_age_count,

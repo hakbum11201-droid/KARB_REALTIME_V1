@@ -505,12 +505,13 @@ function renderTradeTable(trades) {
     const et=t.entry_time?new Date(t.entry_time*1000).toLocaleTimeString('ko-KR'):'--';
     const xt=t.exit_time?new Date(t.exit_time*1000).toLocaleTimeString('ko-KR'):'--';
     const entryReason=t.entry_reason?`<div class="muted-mini">${esc(t.entry_reason)}</div>`:'';
+    const entryMeta=`<div class="muted-mini">notional ${fmt(t.selected_notional_krw)} KRW / quote ${fmt(t.entry_quote_age_ms,1)} ms</div>`;
     return `<tr>
       <td>${(t.trade_id||'').slice(0,8)}</td><td><span class="pair-badge ${pairMeta(t.pair_id||'UPBIT_BINANCE').badge}">${esc(t.pair_id||'UPBIT_BINANCE')}</span> ${t.symbol||'--'}</td>
       <td class="${dc}">${t.best_direction||'--'}</td><td>${et}</td><td>${xt}</td>
       <td>${t.holding_sec!=null?Number(t.holding_sec).toFixed(0)+'s':'--'}</td>
       <td style="color:${pnlC(pnl)}">${pnl>=0?'+':''}${fmt(pnl)} ₩</td>
-      <td class="${wc}">${t.exit_reason||'--'}${t.clean_win?' ★':''}${entryReason}</td>
+      <td class="${wc}">${t.exit_reason||'--'}${t.clean_win?' ★':''}${entryReason}${entryMeta}</td>
       <td>${t.win?'✓':'✗'}</td>
     </tr>`;
   }).join('');
@@ -818,6 +819,7 @@ function renderLongRunTelemetry(t={}) {
   setClass('stale-status', `source-badge ${stale?'stale':'ok'}`);
   setText('no-go-top3', `NO-GO top 3: ${noGo.map(([reason,count])=>`${reason} ${count}`).join(' / ')||'--'}`);
   renderLiveFreshnessTelemetry(t);
+  renderEntryRouteTelemetry(t);
   renderStaleRecheckTelemetry(t);
   renderWebSocketHealth(t);
   renderMemoryTelemetry(t);
@@ -838,6 +840,21 @@ function renderLiveFreshnessTelemetry(t={}) {
   }
   if (!el) return;
   el.textContent=`Live Freshness | Quote Age All ${fmt(t.p95_quote_age_all_ms,1)} ms | Tradable ${fmt(t.p95_quote_age_tradable_ms,1)} ms | Domestic ${fmt(t.p95_quote_age_domestic_ms,1)} ms | Cross-border ${fmt(t.p95_quote_age_cross_border_ms,1)} ms | Best ${fmt(t.best_opportunity_quote_age_ms,1)} ms | Live Fresh ${fmt(t.live_fresh_candidate_count)} | Tiny Live Fresh ${fmt(t.tiny_live_fresh_candidate_count)} | Quote-age blocked live/tiny ${fmt(t.live_blocked_quote_age_count)}/${fmt(t.tiny_live_blocked_quote_age_count)} | Stale Grace blocked live/tiny ${fmt(t.live_blocked_stale_grace_count)}/${fmt(t.tiny_live_blocked_stale_grace_count)} | Watchlist blocked ${fmt(t.symbol_not_in_live_watchlist_count)}`;
+}
+
+function renderEntryRouteTelemetry(t={}) {
+  let el=document.getElementById('entry-route-telemetry');
+  if (!el) {
+    const anchor=document.getElementById('live-freshness-telemetry')||document.getElementById('no-go-top3');
+    if (anchor?.parentElement) {
+      el=document.createElement('div');
+      el.id='entry-route-telemetry';
+      el.className='active-symbol-list';
+      anchor.parentElement.append(el);
+    }
+  }
+  if (!el) return;
+  el.textContent=`Entry Route | Paper attempts/success/blocked ${fmt(t.paper_entry_attempt_count)} / ${fmt(t.paper_entry_success_count)} / ${fmt(t.paper_entry_blocked_count)} | Paper last ${t.paper_entry_last_symbol||'--'} ${t.paper_entry_last_reason||'--'} blocker ${t.paper_entry_last_blocker||'--'} quote ${fmt(t.paper_entry_last_quote_age_ms,1)} ms | Paper p95 entry quote ${fmt(t.paper_entry_p95_quote_age_ms,1)} ms | Live candidates/blocked ${fmt(t.live_entry_candidate_count)} / ${fmt(t.live_entry_blocked_count)} | Live last ${t.live_entry_last_symbol||'--'} ${t.live_entry_last_reason||'--'} blocker ${t.live_entry_last_blocker||'--'} quote ${fmt(t.live_entry_last_quote_age_ms,1)} ms`;
 }
 
 function renderStaleRecheckTelemetry(t={}) {

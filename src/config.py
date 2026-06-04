@@ -84,6 +84,24 @@ class Config:
     @property
     def live_use_dynamic_symbols(self): return self.get('live_use_dynamic_symbols', False)
     @property
+    def live_allow_recheck_actionable_entries(self): return self.get('live_allow_recheck_actionable_entries', True)
+    @property
+    def live_allow_wide_spread_recheck_entries(self): return self.get('live_allow_wide_spread_recheck_entries', True)
+    @property
+    def tiny_live_allow_recheck_actionable_entries(self): return self.get('tiny_live_allow_recheck_actionable_entries', True)
+    @property
+    def tiny_live_allow_wide_spread_recheck_entries(self): return self.get('tiny_live_allow_wide_spread_recheck_entries', True)
+    @property
+    def paper_entry_max_quote_age_ms(self): return self.get('paper_entry_max_quote_age_ms', 2500)
+    @property
+    def paper_entry_domestic_max_quote_age_ms(self): return self.get('paper_entry_domestic_max_quote_age_ms', 3000)
+    @property
+    def paper_entry_cross_border_max_quote_age_ms(self): return self.get('paper_entry_cross_border_max_quote_age_ms', 2000)
+    @property
+    def paper_entry_require_positive_net(self): return self.get('paper_entry_require_positive_net', True)
+    @property
+    def paper_entry_allow_live_blocked(self): return self.get('paper_entry_allow_live_blocked', True)
+    @property
     def stale_recheck_enabled(self): return self.get('stale_recheck_enabled', True)
     @property
     def stale_recheck_paper_only(self): return self.get('stale_recheck_paper_only', True)

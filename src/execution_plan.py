@@ -23,6 +23,7 @@ class ExecutionPlan:
     left_expected_price: float = 0
     right_expected_price: float = 0
     quote_source: str = ''
+    entry_reason: str = ''
     min_order_ok: bool = False
     risk_ok: bool = False
     iceberg_required: bool = False
@@ -47,6 +48,10 @@ class ExecutionPlan:
     bithumb_quote_age_ms: float | None = None
     buy_leg_quote_age_ms: float | None = None
     sell_leg_quote_age_ms: float | None = None
+    entry_quote_age_ms: float | None = None
+    entry_refreshed_at: float | None = None
+    entry_fetch_ms: float | None = None
+    entry_decision_wait_ms: float | None = None
     max_leg_quote_age_ms: float | None = None
     uses_stale_grace_quote: bool = False
     has_stale_quote: bool = False
@@ -63,10 +68,21 @@ class ExecutionPlan:
     binance_expected_price: float = 0
     fx_rate: float = 0
     expected_net_profit_krw: float = 0
+    entry_net_expected_profit_krw: float = 0
     best_net_surplus_bp: float = 0
+    entry_surplus_bp: float = 0
+    raw_depth_qty: float = 0
     selected_required_assets: dict = field(default_factory=dict)
     order_krw_used: float = 0
     effective_qty: float = 0
+    buy_venue: str = ''
+    sell_venue: str = ''
+    buy_price: float = 0
+    sell_price: float = 0
+    expected_slippage_bp: float = 0
+    expected_fee_krw: float = 0
+    recheck_status: str = ''
+    wide_spread_recheck_status: str = ''
     max_fillable_qty_raw: float = 0
     selected_notional_krw: float = 0
     selected_qty: float = 0

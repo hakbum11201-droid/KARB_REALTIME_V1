@@ -387,3 +387,10 @@ For long paper smoke tests, the recommended checks are:
   `WIDE_SPREAD_RECHECK_ACTIONABLE` separately because they represent different
   entry paths. This summary is for paper analysis only and remains disconnected
   from live and tiny-live order execution.
+- Entry signals now pass through a common `route_signal_to_execution` gate.
+  In `paper` mode, eligible `NORMAL_GO`, `RECHECK_ACTIONABLE`, and
+  `WIDE_SPREAD_RECHECK_ACTIONABLE` signals enter `PaperEngine` only after
+  per-signal quote freshness, stale, duplicate, liquidity, and positive-net
+  checks. In `tiny_live` or `live`, the same gate can only produce a guarded
+  execution-plan candidate; it does not call exchange order functions or bypass
+  the existing disabled-by-default live safety settings.

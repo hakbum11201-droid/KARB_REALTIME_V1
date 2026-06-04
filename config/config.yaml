@@ -28,6 +28,15 @@ tiny_live_allow_stale_grace_quotes: false
 live_require_both_legs_fresh: true
 live_freshness_observe_only: false
 tiny_live_freshness_observe_only: true
+live_allow_recheck_actionable_entries: true
+live_allow_wide_spread_recheck_entries: true
+tiny_live_allow_recheck_actionable_entries: true
+tiny_live_allow_wide_spread_recheck_entries: true
+paper_entry_max_quote_age_ms: 2500
+paper_entry_domestic_max_quote_age_ms: 3000
+paper_entry_cross_border_max_quote_age_ms: 2000
+paper_entry_require_positive_net: true
+paper_entry_allow_live_blocked: true
 paper_active_symbol_count: 20
 live_active_symbols: [BTC, ETH, XRP, SOL, DOGE, ADA, TRX, SUI]
 live_use_dynamic_symbols: false
