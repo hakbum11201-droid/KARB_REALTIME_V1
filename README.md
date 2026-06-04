@@ -399,3 +399,8 @@ For long paper smoke tests, the recommended checks are:
   is used only as a fallback, and the telemetry records
   `entry_quote_age_source` so `ENTRY_QUOTE_TOO_OLD` blocks can be diagnosed
   without weakening the quote-age guard.
+- Completed recheck handoffs are consumed after the in-memory quote snapshots are
+  available and are routed in the same loop through `route_signal_to_execution`.
+  Fresh handoffs can become paper entries immediately; stale handoffs are
+  skipped before routing with `COMPLETED_HANDOFF_TOO_OLD`, preserving the normal
+  quote-age and stale-quote guards.

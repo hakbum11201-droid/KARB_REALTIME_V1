@@ -607,6 +607,7 @@ def _expire_stale_rechecks(pending, counters, recent):
 
 def _consume_completed_recheck_handoffs(pending, rest_cache, bithumb_cache, counters):
     completed = []
+    matched = []
     for cache in (rest_cache, bithumb_cache):
         if cache and hasattr(cache, 'pop_completed_rechecks'):
             completed.extend(cache.pop_completed_rechecks())
@@ -631,6 +632,52 @@ def _consume_completed_recheck_handoffs(pending, rest_cache, bithumb_cache, coun
             counters['fetch_ms_total'] += float(fetch_ms or 0)
             counters['fetch_ms_count'] += 1
         target['cache_completed_result'] = result
+        matched.append(result)
+    return matched
+
+
+def _completed_handoff_id(result):
+    return result.get('id') or (
+        f"{result.get('pair_id', 'UPBIT_BINANCE')}:{result.get('symbol', '')}:"
+        f"{float(result.get('refreshed_at', 0) or 0):.6f}"
+    )
+
+
+def _completed_handoff_age_ms(result, now=None):
+    now = time.time() if now is None else float(now)
+    refreshed_at = result.get('refreshed_at')
+    try:
+        return round(max(0.0, now - float(refreshed_at)) * 1000, 2)
+    except (TypeError, ValueError):
+        return None
+
+
+def _completed_handoff_entry_ttl_ms(pair_id):
+    if pair_id == 'UPBIT_BITHUMB':
+        return cfg.completed_handoff_domestic_entry_ttl_ms
+    if pair_id == 'UPBIT_BINANCE':
+        return cfg.completed_handoff_cross_border_entry_ttl_ms
+    return cfg.completed_handoff_entry_ttl_ms
+
+
+def _completed_handoff_entry_fields(signal, result, now=None):
+    now = time.time() if now is None else float(now)
+    refreshed_at = result.get('refreshed_at')
+    age_ms = _completed_handoff_age_ms(result, now)
+    return {
+        **signal,
+        'entry_refresh_started_at': result.get('refresh_started_at'),
+        'entry_refreshed_at': refreshed_at,
+        'entry_fetch_ms': result.get('fetch_ms'),
+        'entry_quote_age_ms': age_ms,
+        'entry_quote_age_source': 'COMPLETED_HANDOFF',
+        'entry_decision_wait_ms': age_ms,
+        'stale_recheck_refresh_started_at': result.get('refresh_started_at'),
+        'stale_recheck_refreshed_at': refreshed_at,
+        'stale_recheck_cache_completed_at': refreshed_at,
+        'stale_recheck_fetch_ms': result.get('fetch_ms'),
+        'quote_source': 'targeted_refresh',
+    }
 
 
 def _entry_reason_from_recheck_status(status):
@@ -1099,6 +1146,14 @@ def main():
         'count': 0, 'pending_match': 0, 'unmatched': 0,
         'fetch_ms_total': 0.0, 'fetch_ms_count': 0,
     }
+    completed_handoff_entry_route_count = 0
+    completed_handoff_entry_skip_old_count = 0
+    completed_handoff_entry_duplicate_skip_count = 0
+    completed_handoff_entry_last_age_ms = None
+    completed_handoff_entry_last_symbol = ''
+    completed_handoff_entry_last_reason = ''
+    completed_handoff_processed_ids = set()
+    completed_handoff_processed_order = deque(maxlen=1000)
     skipped_bithumb_symbol_count = 0
     skipped_bithumb_quote_reasons: dict[str, int] = {}
     skipped_bithumb_timestamps: deque[float] = deque()
@@ -1164,13 +1219,6 @@ def main():
             print("[KARB] Stop requested detected. Finalizing...")
             break
 
-        _consume_completed_recheck_handoffs(
-            stale_recheck_pending,
-            rest_fallback_cache,
-            bithumb_quote_cache,
-            stale_recheck_handoff_counters,
-        )
-
         # ── FX 환율 ──────────────────────────────────────────────────────
         try:
             with rate_limiter.source('fx'):
@@ -1221,6 +1269,133 @@ def main():
         loop_opportunities = []
         skipped_bithumb_symbol_count_last_loop = 0
         skipped_bithumb_quote_reasons_last_loop: dict[str, int] = {}
+
+        completed_handoffs = _consume_completed_recheck_handoffs(
+            stale_recheck_pending,
+            rest_fallback_cache,
+            bithumb_quote_cache,
+            stale_recheck_handoff_counters,
+        )
+        for handoff in completed_handoffs:
+            handoff_id = _completed_handoff_id(handoff)
+            pair_id = handoff.get('pair_id', 'UPBIT_BINANCE')
+            sym = handoff.get('symbol', '')
+            handoff_age_ms = _completed_handoff_age_ms(handoff)
+            completed_handoff_entry_last_age_ms = handoff_age_ms
+            completed_handoff_entry_last_symbol = sym
+            if handoff_id in completed_handoff_processed_ids:
+                completed_handoff_entry_duplicate_skip_count += 1
+                completed_handoff_entry_last_reason = 'DUPLICATE_COMPLETED_HANDOFF'
+                continue
+            if len(completed_handoff_processed_order) == completed_handoff_processed_order.maxlen:
+                completed_handoff_processed_ids.discard(completed_handoff_processed_order[0])
+            completed_handoff_processed_order.append(handoff_id)
+            completed_handoff_processed_ids.add(handoff_id)
+            ttl_ms = _completed_handoff_entry_ttl_ms(pair_id)
+            if handoff_age_ms is None or handoff_age_ms > ttl_ms:
+                completed_handoff_entry_skip_old_count += 1
+                completed_handoff_entry_last_reason = 'COMPLETED_HANDOFF_TOO_OLD'
+                paper_entry_last_symbol = sym
+                paper_entry_last_blocker = 'COMPLETED_HANDOFF_TOO_OLD'
+                paper_entry_last_quote_age_ms = handoff_age_ms
+                paper_entry_last_quote_age_source = 'COMPLETED_HANDOFF'
+                paper_entry_last_refreshed_at = handoff.get('refreshed_at')
+                paper_entry_last_fetch_ms = handoff.get('fetch_ms')
+                stale_recheck_pending.pop((pair_id, sym), None)
+                continue
+            try:
+                if pair_id == 'UPBIT_BITHUMB':
+                    q = quotes.get(sym, {})
+                    upbit_q = q.get('upbit', {})
+                    bithumb_q = bithumb_quotes.get(sym, {})
+                    if not upbit_q or not bithumb_q:
+                        completed_handoff_entry_last_reason = 'QUOTE_UNAVAILABLE'
+                        continue
+                    signal = arb_calc.calculate_domestic_krw(sym, upbit_q, bithumb_q)
+                    signal['upbit_ts'] = upbit_q.get('ts')
+                    signal['bithumb_ts'] = bithumb_q.get('ts')
+                    signal['stale_grace'] = bool(bithumb_q.get('stale_grace'))
+                    signal['stale'] = bool(bithumb_q.get('stale'))
+                    signal.update(RiskGuard.quote_freshness_status(signal))
+                    history_key = f'UPBIT_BITHUMB:{sym}'
+                    history = quote_history.setdefault(
+                        history_key, deque(maxlen=cfg.quote_history_maxlen)
+                    )
+                    history.append(_history_row(upbit=upbit_q, bithumb=bithumb_q))
+                    if cfg.paper_latency_sim_enabled:
+                        signal.update(simulate_paper_fill(signal, history, cfg))
+                else:
+                    q = quotes.get(sym, {})
+                    upbit_q = q.get('upbit', {})
+                    binance_q = q.get('binance', {})
+                    if not upbit_q or not binance_q:
+                        completed_handoff_entry_last_reason = 'QUOTE_UNAVAILABLE'
+                        continue
+                    signal = arb_calc.calculate(sym, upbit_q, binance_q, krw_usdt)
+                    signal['fx_status'] = fx_status
+                    signal['upbit_ts'] = upbit_q.get('ts')
+                    signal['binance_ts'] = binance_q.get('ts')
+                    signal.update(RiskGuard.quote_freshness_status(signal))
+                    history = quote_history.setdefault(sym, deque(maxlen=cfg.quote_history_maxlen))
+                    history.append(_history_row(upbit=upbit_q, binance=binance_q))
+                    if cfg.paper_latency_sim_enabled:
+                        signal.update(simulate_paper_fill(signal, history, cfg))
+                signal = _completed_handoff_entry_fields(signal, handoff, time.time())
+                recheck_update = _resolve_stale_recheck(
+                    signal, stale_recheck_pending, stale_recheck_counters, stale_recheck_recent
+                )
+                if recheck_update:
+                    signal.update(recheck_update)
+                entry_reason = _entry_reason_from_recheck_status(signal.get('stale_recheck_status'))
+                if not entry_reason:
+                    completed_handoff_entry_last_reason = signal.get('stale_recheck_status', 'NOT_ACTIONABLE')
+                    continue
+                signal = _completed_handoff_entry_fields(signal, handoff, time.time())
+                route = route_signal_to_execution(signal, entry_reason, paper_eng)
+                completed_handoff_entry_route_count += 1
+                completed_handoff_entry_last_reason = entry_reason
+                if cfg.mode == 'paper':
+                    paper_entry_attempt_count += 1
+                    paper_entry_last_symbol = route.get('symbol', '')
+                    paper_entry_last_reason = route.get('entry_reason', '')
+                    paper_entry_last_quote_age_ms = route.get('entry_quote_age_ms')
+                    paper_entry_last_quote_age_source = route.get('entry_quote_age_source', '')
+                    paper_entry_last_refreshed_at = route.get('entry_refreshed_at')
+                    paper_entry_last_fetch_ms = route.get('entry_fetch_ms')
+                    if paper_entry_last_quote_age_ms is not None:
+                        paper_entry_quote_age_list.append(float(paper_entry_last_quote_age_ms))
+                    if route.get('ok'):
+                        trade = route.get('trade')
+                        paper_entry_success_count += 1
+                        paper_entry_count += 1
+                        if entry_reason == 'WIDE_SPREAD_RECHECK_ACTIONABLE':
+                            paper_wide_spread_recheck_entry_count += 1
+                            paper_wide_spread_recheck_last_symbol = trade.get('symbol', '')
+                        else:
+                            paper_recheck_entry_count += 1
+                        paper_recheck_entry_last_symbol = trade.get('symbol', '')
+                        paper_recheck_entry_last_reason = entry_reason
+                    else:
+                        blockers = route.get('blockers', [])
+                        paper_entry_blocked_count += 1
+                        paper_entry_last_blocker = blockers[0] if blockers else ''
+                        paper_entry_blocked_quote_age_count += int('ENTRY_QUOTE_TOO_OLD' in blockers)
+                        paper_entry_blocked_duplicate_count += int('DUPLICATE_OPEN_TRADE' in blockers)
+                        paper_entry_blocked_stale_count += int('ENTRY_STALE_QUOTE' in blockers)
+                        paper_entry_blocked_liquidity_count += int('ENTRY_LIQUIDITY_BLOCKED' in blockers)
+                elif cfg.mode in ('tiny_live', 'live'):
+                    if route.get('ok'):
+                        live_entry_candidate_count += 1
+                    else:
+                        live_entry_blocked_count += 1
+                    live_entry_last_symbol = route.get('symbol', '')
+                    live_entry_last_reason = route.get('entry_reason', '')
+                    live_entry_last_quote_age_ms = route.get('entry_quote_age_ms')
+                    live_entry_last_blocker = next(iter(route.get('blockers', [])), '')
+            except Exception as exc:
+                event_logger.log_error('completed_handoff_entry_route', exc)
+                completed_handoff_entry_last_reason = f'{type(exc).__name__}'
+                error_count += 1
 
         best_sym_this_loop    = ''
         best_dir_this_loop    = ''
@@ -1781,6 +1956,12 @@ def main():
             'paper_wide_spread_recheck_actionable_count': stale_recheck_counters['wide_actionable'],
             'paper_wide_spread_recheck_entry_count': paper_wide_spread_recheck_entry_count,
             'paper_wide_spread_recheck_last_symbol': paper_wide_spread_recheck_last_symbol,
+            'completed_handoff_entry_route_count': completed_handoff_entry_route_count,
+            'completed_handoff_entry_skip_old_count': completed_handoff_entry_skip_old_count,
+            'completed_handoff_entry_duplicate_skip_count': completed_handoff_entry_duplicate_skip_count,
+            'completed_handoff_entry_last_age_ms': completed_handoff_entry_last_age_ms,
+            'completed_handoff_entry_last_symbol': completed_handoff_entry_last_symbol,
+            'completed_handoff_entry_last_reason': completed_handoff_entry_last_reason,
             'paper_entry_attempt_count': paper_entry_attempt_count,
             'paper_entry_success_count': paper_entry_success_count,
             'paper_entry_blocked_count': paper_entry_blocked_count,

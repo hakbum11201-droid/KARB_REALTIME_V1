@@ -102,6 +102,12 @@ class Config:
     @property
     def paper_entry_allow_live_blocked(self): return self.get('paper_entry_allow_live_blocked', True)
     @property
+    def completed_handoff_entry_ttl_ms(self): return self.get('completed_handoff_entry_ttl_ms', 2000)
+    @property
+    def completed_handoff_domestic_entry_ttl_ms(self): return self.get('completed_handoff_domestic_entry_ttl_ms', 2500)
+    @property
+    def completed_handoff_cross_border_entry_ttl_ms(self): return self.get('completed_handoff_cross_border_entry_ttl_ms', 1800)
+    @property
     def stale_recheck_enabled(self): return self.get('stale_recheck_enabled', True)
     @property
     def stale_recheck_paper_only(self): return self.get('stale_recheck_paper_only', True)

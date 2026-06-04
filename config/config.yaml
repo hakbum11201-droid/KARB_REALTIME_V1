@@ -37,6 +37,9 @@ paper_entry_domestic_max_quote_age_ms: 3000
 paper_entry_cross_border_max_quote_age_ms: 2000
 paper_entry_require_positive_net: true
 paper_entry_allow_live_blocked: true
+completed_handoff_entry_ttl_ms: 2000
+completed_handoff_domestic_entry_ttl_ms: 2500
+completed_handoff_cross_border_entry_ttl_ms: 1800
 paper_active_symbol_count: 20
 live_active_symbols: [BTC, ETH, XRP, SOL, DOGE, ADA, TRX, SUI]
 live_use_dynamic_symbols: false
