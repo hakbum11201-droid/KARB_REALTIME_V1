@@ -415,3 +415,9 @@ For long paper smoke tests, the recommended checks are:
   inventory, duplicate, loss-limit, tracker, and emergency guards pass. No
   separate live executor is bundled yet, so live remains blocked with an explicit
   executor blocker unless one exists. Live and tiny-live defaults remain off.
+- Before trusting a long paper run, execute
+  `python tools/acceptance_check.py --base-url http://127.0.0.1:8000` against
+  the running dashboard API. The checker classifies healthy and unhealthy paper
+  routing, mock-trade filtering, entry-reason summaries, stale recheck health,
+  direct REST/429 telemetry, and live/tiny-live guard readiness. If it reports
+  `FAIL`, do not add features first; fix the printed failure reason.
