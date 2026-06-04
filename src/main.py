@@ -31,6 +31,7 @@ from paper_fill_simulator import simulate_paper_fill
 from rate_limiter import rate_limiter
 from bithumb_quote_cache import BithumbQuoteCache
 from rest_fallback_cache import RestFallbackQuoteCache
+from executors import TinyLiveExecutor
 
 
 ENTRY_REASONS = ('NORMAL_GO', 'RECHECK_ACTIONABLE', 'WIDE_SPREAD_RECHECK_ACTIONABLE')
@@ -903,11 +904,14 @@ def route_signal_to_execution(signal, entry_reason, paper_eng=None):
             result['paper_engine_reject_reason'] = reason
             result['paper_engine_reject_detail'] = detail
         return result
+    execution_route = _execute_existing_live_route(prepared)
     result.update({
-        'ok': True,
-        'status': 'LIVE_EXECUTOR_CANDIDATE',
+        'ok': bool(execution_route.get('ok')),
+        'status': execution_route.get('status', 'BLOCKED'),
         'plan': prepared,
-        'note': 'Existing executor path candidate only; no order function called here.',
+        'execution_result': execution_route.get('execution_result', {}),
+        'order_submit_attempted': bool(execution_route.get('order_submit_attempted')),
+        'blockers': execution_route.get('blockers', []),
     })
     return result
 
@@ -922,6 +926,53 @@ def _paper_engine_reject_bucket(reason: str) -> str:
         'PAPER_PRICE_INVALID': 'price',
     }
     return mapping.get(reason, 'other')
+
+
+_TINY_LIVE_EXECUTOR = None
+
+
+def _get_tiny_live_executor():
+    global _TINY_LIVE_EXECUTOR
+    if _TINY_LIVE_EXECUTOR is None:
+        _TINY_LIVE_EXECUTOR = TinyLiveExecutor()
+    return _TINY_LIVE_EXECUTOR
+
+
+def _execute_existing_live_route(prepared: dict) -> dict:
+    mode = cfg.mode
+    if mode == 'tiny_live':
+        executor = _get_tiny_live_executor()
+        execution = executor.execute_once(pair_id=prepared.get('pair_id', 'UPBIT_BINANCE'), plan=prepared)
+        submitted = bool(execution.get('results') or execution.get('errors'))
+        return {
+            'ok': bool(execution.get('ok')),
+            'status': execution.get('status', 'SUBMITTED' if execution.get('ok') else 'BLOCKED'),
+            'order_submit_attempted': submitted,
+            'execution_result': execution,
+            'blockers': execution.get('blockers', []),
+        }
+    return {
+        'ok': False,
+        'status': 'BLOCKED',
+        'order_submit_attempted': False,
+        'execution_result': {},
+        'blockers': ['EXECUTOR_NOT_FOUND'],
+    }
+
+
+def _record_live_route_metrics(counts: dict, route: dict, mode: str) -> None:
+    prefix = 'tiny_live' if mode == 'tiny_live' else 'live'
+    counts[f'{prefix}_entry_attempt_count'] += 1
+    if route.get('ok'):
+        counts[f'{prefix}_entry_success_count'] += 1
+    else:
+        counts[f'{prefix}_entry_blocked_count'] += 1
+    if route.get('order_submit_attempted'):
+        counts[f'{prefix}_order_submit_attempt_count'] += 1
+        if route.get('ok'):
+            counts[f'{prefix}_order_submit_success_count'] += 1
+        else:
+            counts[f'{prefix}_order_submit_fail_count'] += 1
 
 
 def _try_recheck_paper_entry(opportunity, paper_eng):
@@ -1131,6 +1182,20 @@ def main():
     live_entry_last_reason = ''
     live_entry_last_blocker = ''
     live_entry_last_quote_age_ms = None
+    live_execution_counts = {
+        'live_entry_attempt_count': 0,
+        'live_entry_success_count': 0,
+        'live_entry_blocked_count': 0,
+        'live_order_submit_attempt_count': 0,
+        'live_order_submit_success_count': 0,
+        'live_order_submit_fail_count': 0,
+        'tiny_live_entry_attempt_count': 0,
+        'tiny_live_entry_success_count': 0,
+        'tiny_live_entry_blocked_count': 0,
+        'tiny_live_order_submit_attempt_count': 0,
+        'tiny_live_order_submit_success_count': 0,
+        'tiny_live_order_submit_fail_count': 0,
+    }
     paper_exit_count  = 0
     error_count      = 0
     reason_counts:   dict[str, int] = {}
@@ -1431,6 +1496,7 @@ def main():
                         paper_entry_blocked_stale_count += int('ENTRY_STALE_QUOTE' in blockers)
                         paper_entry_blocked_liquidity_count += int('ENTRY_LIQUIDITY_BLOCKED' in blockers)
                 elif cfg.mode in ('tiny_live', 'live'):
+                    _record_live_route_metrics(live_execution_counts, route, cfg.mode)
                     if route.get('ok'):
                         live_entry_candidate_count += 1
                     else:
@@ -1603,6 +1669,7 @@ def main():
                         paper_entry_blocked_stale_count += int('ENTRY_STALE_QUOTE' in blockers)
                         paper_entry_blocked_liquidity_count += int('ENTRY_LIQUIDITY_BLOCKED' in blockers)
                 elif cfg.mode in ('tiny_live', 'live'):
+                    _record_live_route_metrics(live_execution_counts, route, cfg.mode)
                     if route.get('ok'):
                         live_entry_candidate_count += 1
                     else:
@@ -1755,6 +1822,7 @@ def main():
                                 f"Net: {recheck_trade['net_expected_profit_krw']:,.0f} KRW"
                             )
                     elif cfg.mode in ('tiny_live', 'live'):
+                        _record_live_route_metrics(live_execution_counts, recheck_route, cfg.mode)
                         if recheck_route.get('ok'):
                             live_entry_candidate_count += 1
                         else:
@@ -1811,6 +1879,7 @@ def main():
                             paper_entry_blocked_stale_count += int('ENTRY_STALE_QUOTE' in blockers)
                             paper_entry_blocked_liquidity_count += int('ENTRY_LIQUIDITY_BLOCKED' in blockers)
                     elif cfg.mode in ('tiny_live', 'live'):
+                        _record_live_route_metrics(live_execution_counts, route, cfg.mode)
                         if route.get('ok'):
                             live_entry_candidate_count += 1
                         else:
@@ -2055,6 +2124,18 @@ def main():
             'live_entry_last_reason': live_entry_last_reason,
             'live_entry_last_blocker': live_entry_last_blocker,
             'live_entry_last_quote_age_ms': live_entry_last_quote_age_ms,
+            'live_entry_attempt_count': live_execution_counts.get('live_entry_attempt_count', 0),
+            'live_entry_success_count': live_execution_counts.get('live_entry_success_count', 0),
+            'live_entry_blocked_count': live_execution_counts.get('live_entry_blocked_count', 0),
+            'live_order_submit_attempt_count': live_execution_counts.get('live_order_submit_attempt_count', 0),
+            'live_order_submit_success_count': live_execution_counts.get('live_order_submit_success_count', 0),
+            'live_order_submit_fail_count': live_execution_counts.get('live_order_submit_fail_count', 0),
+            'tiny_live_entry_attempt_count': live_execution_counts.get('tiny_live_entry_attempt_count', 0),
+            'tiny_live_entry_success_count': live_execution_counts.get('tiny_live_entry_success_count', 0),
+            'tiny_live_entry_blocked_count': live_execution_counts.get('tiny_live_entry_blocked_count', 0),
+            'tiny_live_order_submit_attempt_count': live_execution_counts.get('tiny_live_order_submit_attempt_count', 0),
+            'tiny_live_order_submit_success_count': live_execution_counts.get('tiny_live_order_submit_success_count', 0),
+            'tiny_live_order_submit_fail_count': live_execution_counts.get('tiny_live_order_submit_fail_count', 0),
             'live_fresh_candidate_count': live_fresh_candidate_count,
             'tiny_live_fresh_candidate_count': tiny_live_fresh_candidate_count,
             'live_blocked_quote_age_count': live_blocked_quote_age_count,

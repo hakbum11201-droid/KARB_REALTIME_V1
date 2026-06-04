@@ -409,3 +409,9 @@ For long paper smoke tests, the recommended checks are:
   This is simulator inventory for measuring paper win rate and PnL; it does not
   move assets, does not call exchange order functions, and does not change
   live/tiny-live inventory guards or disabled-by-default safety settings.
+- Paper, tiny-live, and live signals use the same `route_signal_to_execution`
+  gate. Paper creates `PaperEngine` open trades only. Tiny-live can continue
+  into the existing guarded `TinyLiveExecutor` after config, key, freshness,
+  inventory, duplicate, loss-limit, tracker, and emergency guards pass. No
+  separate live executor is bundled yet, so live remains blocked with an explicit
+  executor blocker unless one exists. Live and tiny-live defaults remain off.
