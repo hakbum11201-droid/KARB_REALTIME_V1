@@ -203,6 +203,10 @@ log_retention_days: 14
 
 paper_initial_upbit_krw: 1000000
 paper_initial_binance_usdt: 700
+paper_auto_seed_inventory: true
+paper_auto_seed_active_symbols: true
+paper_seed_notional_krw_per_symbol: 100000
+paper_seed_krw_per_venue: 10000000
 
 # paper 검증용 가상 코인 재고
 # 실제 보유량이 아니라 양방향 김프/역김프 검증을 위한 paper inventory임

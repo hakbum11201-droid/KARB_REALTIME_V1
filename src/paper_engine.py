@@ -34,7 +34,56 @@ class PaperEngine:
     # Entry
     # ──────────────────────────────────────────────────────────────────────
 
-    def try_entry(self, calc_result: dict) -> dict | None:
+    def _entry_result(self, ok: bool, reason: str, trade: dict | None = None, detail: dict | None = None) -> dict:
+        return {
+            'ok': ok,
+            'trade': trade,
+            'reason': reason,
+            'detail': detail or {},
+        }
+
+    def _entry_quote_age_limit(self, pair_id: str) -> float:
+        return (
+            cfg.paper_entry_domestic_max_quote_age_ms
+            if pair_id == 'UPBIT_BITHUMB'
+            else cfg.paper_entry_cross_border_max_quote_age_ms
+        )
+
+    def _entry_venues_and_prices(self, calc_result: dict) -> dict:
+        pair_id = calc_result.get('pair_id', 'UPBIT_BINANCE')
+        direction = calc_result.get('best_direction') or calc_result.get('direction', '')
+        krw_usdt = float(calc_result.get('krw_usdt', 0) or 0)
+        upbit_bid = float(calc_result.get('upbit_bid', 0) or 0)
+        upbit_ask = float(calc_result.get('upbit_ask', 0) or 0)
+        binance_bid = float(calc_result.get('binance_bid', 0) or 0)
+        binance_ask = float(calc_result.get('binance_ask', 0) or 0)
+        bithumb_bid = float(calc_result.get('bithumb_bid', 0) or 0)
+        bithumb_ask = float(calc_result.get('bithumb_ask', 0) or 0)
+        if pair_id == 'UPBIT_BITHUMB':
+            if direction == 'UPBIT_BITHUMB_A':
+                return {
+                    'buy_venue': 'BITHUMB', 'sell_venue': 'UPBIT',
+                    'buy_price': bithumb_ask, 'sell_price': upbit_bid,
+                }
+            if direction == 'UPBIT_BITHUMB_B':
+                return {
+                    'buy_venue': 'UPBIT', 'sell_venue': 'BITHUMB',
+                    'buy_price': upbit_ask, 'sell_price': bithumb_bid,
+                }
+            return {'unsupported_direction': direction}
+        if direction == 'A':
+            return {
+                'buy_venue': 'BINANCE', 'sell_venue': 'UPBIT',
+                'buy_price': binance_ask * krw_usdt, 'sell_price': upbit_bid,
+            }
+        if direction == 'B':
+            return {
+                'buy_venue': 'UPBIT', 'sell_venue': 'BINANCE',
+                'buy_price': upbit_ask, 'sell_price': binance_bid * krw_usdt,
+            }
+        return {'unsupported_direction': direction}
+
+    def try_entry(self, calc_result: dict) -> dict:
         """
         진입 조건 충족 시 open trade 생성.
         entry_reason은 NORMAL_GO, RECHECK_ACTIONABLE, WIDE_SPREAD_RECHECK_ACTIONABLE 등을 보존한다.
@@ -42,7 +91,9 @@ class PaperEngine:
         """
         # 조건 1: reason_no_trade == 'OK'만 허용
         if calc_result.get('reason_no_trade') != 'OK':
-            return None
+            return self._entry_result(False, 'PAPER_UNKNOWN_REJECT', detail={
+                'reason_no_trade': calc_result.get('reason_no_trade'),
+            })
 
         sym = calc_result['symbol']
         dirn = calc_result['best_direction']
@@ -51,15 +102,70 @@ class PaperEngine:
         # 조건 2: 같은 symbol/direction의 open이 있으면 스킵
         for t in self._open_trades.values():
             if t['symbol'] == sym and t.get('pair_id', 'UPBIT_BINANCE') == pair_id:
-                return None
+                return self._entry_result(False, 'PAPER_DUPLICATE_OPEN_TRADE', detail={
+                    'symbol': sym,
+                    'pair_id': pair_id,
+                    'open_trade_id': t.get('trade_id'),
+                })
 
         qty = float(calc_result.get('selected_qty', calc_result.get('max_fillable_qty', 0)) or 0)
         if qty <= 0:
-            return None
+            return self._entry_result(False, 'PAPER_SELECTED_QTY_INVALID', detail={
+                'selected_qty': qty,
+            })
         fees_bp = cfg.upbit_fee_bp + (
             cfg.bithumb_fee_bp if pair_id == 'UPBIT_BITHUMB' else cfg.binance_fee_bp
         )
         selected_notional_krw = float(calc_result.get('selected_notional_krw', 0) or 0)
+        if selected_notional_krw <= 0:
+            return self._entry_result(False, 'PAPER_SELECTED_NOTIONAL_INVALID', detail={
+                'selected_notional_krw': selected_notional_krw,
+            })
+        min_notional = float(cfg.bithumb_min_order_krw)
+        if selected_notional_krw < min_notional:
+            return self._entry_result(False, 'PAPER_MIN_ORDER_NOTIONAL', detail={
+                'selected_notional_krw': selected_notional_krw,
+                'min_notional_krw': min_notional,
+            })
+        if cfg.paper_entry_require_positive_net and float(calc_result.get('net_expected_profit_krw', 0) or 0) <= 0:
+            return self._entry_result(False, 'PAPER_NET_NOT_POSITIVE', detail={
+                'net_expected_profit_krw': calc_result.get('net_expected_profit_krw', 0),
+            })
+        if calc_result.get('liquidity_class', 'NORMAL') not in ('GOOD', 'NORMAL'):
+            return self._entry_result(False, 'PAPER_LIQUIDITY_BLOCKED', detail={
+                'liquidity_class': calc_result.get('liquidity_class'),
+            })
+        if any(bool(calc_result.get(name)) for name in ('stale', 'stale_grace', 'has_stale_quote')):
+            return self._entry_result(False, 'PAPER_STALE_QUOTE', detail={
+                'stale': bool(calc_result.get('stale')),
+                'stale_grace': bool(calc_result.get('stale_grace')),
+                'has_stale_quote': bool(calc_result.get('has_stale_quote')),
+            })
+        entry_quote_age_ms = calc_result.get('entry_quote_age_ms')
+        if entry_quote_age_ms is not None:
+            entry_quote_age_ms = float(entry_quote_age_ms)
+            limit_ms = self._entry_quote_age_limit(pair_id)
+            if entry_quote_age_ms > limit_ms:
+                return self._entry_result(False, 'PAPER_QUOTE_TOO_OLD', detail={
+                    'entry_quote_age_ms': entry_quote_age_ms,
+                    'limit_ms': limit_ms,
+                    'entry_quote_age_source': calc_result.get('entry_quote_age_source', ''),
+                })
+        price_info = self._entry_venues_and_prices(calc_result)
+        if price_info.get('unsupported_direction'):
+            return self._entry_result(False, 'PAPER_DIRECTION_UNSUPPORTED', detail={
+                'pair_id': pair_id,
+                'direction': price_info.get('unsupported_direction'),
+            })
+        buy_price = float(calc_result.get('selected_buy_price_krw', 0) or price_info.get('buy_price', 0) or 0)
+        sell_price = float(calc_result.get('selected_sell_price_krw', 0) or price_info.get('sell_price', 0) or 0)
+        if buy_price <= 0 or sell_price <= 0:
+            return self._entry_result(False, 'PAPER_PRICE_INVALID', detail={
+                'pair_id': pair_id,
+                'direction': dirn,
+                'buy_price': buy_price,
+                'sell_price': sell_price,
+            })
         entry_fee_krw = selected_notional_krw * fees_bp / 10000
         entry_reason = calc_result.get('entry_reason') or 'NORMAL_GO'
         entered_at = time.time()
@@ -79,7 +185,14 @@ class PaperEngine:
                 fee_krw=entry_fee_krw,
             )
             if status != 'OK':
-                return None
+                return self._entry_result(False, 'PAPER_INVENTORY_INSUFFICIENT', detail={
+                    'inventory_status': status,
+                    'symbol': sym,
+                    'pair_id': pair_id,
+                    'direction': dirn,
+                    'qty': qty,
+                    'selected_notional_krw': selected_notional_krw,
+                })
             inventory_delta = self._inv.apply_paper_entry(
                 symbol=sym, direction=dirn, qty=qty,
                 pair_id=pair_id,
@@ -111,12 +224,12 @@ class PaperEngine:
             'raw_depth_qty':         calc_result.get('raw_depth_qty', calc_result.get('max_fillable_qty_raw', qty)),
             'effective_qty':         calc_result.get('effective_qty', qty),
             'selected_required_assets': calc_result.get('selected_required_assets', {}),
-            'entry_buy_price_krw':   calc_result.get('selected_buy_price_krw', 0),
-            'entry_sell_price_krw':  calc_result.get('selected_sell_price_krw', 0),
-            'buy_venue':             calc_result.get('buy_venue', ''),
-            'sell_venue':            calc_result.get('sell_venue', ''),
-            'buy_price':             calc_result.get('buy_price', calc_result.get('selected_buy_price_krw', 0)),
-            'sell_price':            calc_result.get('sell_price', calc_result.get('selected_sell_price_krw', 0)),
+            'entry_buy_price_krw':   buy_price,
+            'entry_sell_price_krw':  sell_price,
+            'buy_venue':             calc_result.get('buy_venue') or price_info.get('buy_venue', ''),
+            'sell_venue':            calc_result.get('sell_venue') or price_info.get('sell_venue', ''),
+            'buy_price':             calc_result.get('buy_price') or buy_price,
+            'sell_price':            calc_result.get('sell_price') or sell_price,
             'buy_leg_quote_age_ms':  calc_result.get('buy_leg_quote_age_ms'),
             'sell_leg_quote_age_ms': calc_result.get('sell_leg_quote_age_ms'),
             'entry_fee_krw':         entry_fee_krw,
@@ -159,7 +272,7 @@ class PaperEngine:
         }
         self._open_trades[trade_id] = trade
         self._append_log({**trade})
-        return trade
+        return self._entry_result(True, 'ENTERED', trade=trade)
 
     # ──────────────────────────────────────────────────────────────────────
     # Exit check (매 루프마다 호출)

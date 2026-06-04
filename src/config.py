@@ -375,6 +375,14 @@ class Config:
     def paper_initial_binance_usdt(self): return self.get('paper_initial_binance_usdt', 700)
     @property
     def paper_initial_coin_qty(self): return self.get('paper_initial_coin_qty', {})
+    @property
+    def paper_auto_seed_inventory(self): return self.get('paper_auto_seed_inventory', True)
+    @property
+    def paper_auto_seed_active_symbols(self): return self.get('paper_auto_seed_active_symbols', True)
+    @property
+    def paper_seed_notional_krw_per_symbol(self): return self.get('paper_seed_notional_krw_per_symbol', 100000)
+    @property
+    def paper_seed_krw_per_venue(self): return self.get('paper_seed_krw_per_venue', 10000000)
 
     # Iceberg placeholder only. Split order execution is not implemented.
     @property

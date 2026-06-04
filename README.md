@@ -404,3 +404,8 @@ For long paper smoke tests, the recommended checks are:
   Fresh handoffs can become paper entries immediately; stale handoffs are
   skipped before routing with `COMPLETED_HANDOFF_TOO_OLD`, preserving the normal
   quote-age and stale-quote guards.
+- In `paper` mode only, active dynamic symbols can receive virtual inventory
+  seed balances for UPBIT, BITHUMB, and BINANCE using current quote prices.
+  This is simulator inventory for measuring paper win rate and PnL; it does not
+  move assets, does not call exchange order functions, and does not change
+  live/tiny-live inventory guards or disabled-by-default safety settings.

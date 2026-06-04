@@ -48,6 +48,89 @@ class InventoryManager:
             'coin_qty': copy.copy(venues['UPBIT']['coins']),
         }
 
+    @staticmethod
+    def _mid_price_krw(quote: dict, krw_usdt: float = 1.0) -> float:
+        bid = float(quote.get('bid', 0) or 0)
+        ask = float(quote.get('ask', 0) or 0)
+        if bid > 0 and ask > 0:
+            return (bid + ask) / 2 * krw_usdt
+        return max(bid, ask) * krw_usdt
+
+    @_inventory_locked
+    def seed_paper_active_symbols(
+        self,
+        symbols,
+        quotes: dict | None = None,
+        bithumb_quotes: dict | None = None,
+        krw_usdt: float = 0,
+        mode: str = 'paper',
+    ) -> dict:
+        """Top up virtual paper inventory for active symbols only."""
+        result = {
+            'enabled': False,
+            'mode': mode,
+            'seeded_symbols': [],
+            'seeded_venue_count': 0,
+            'skipped_symbols': [],
+            'last_reason': '',
+        }
+        if mode != 'paper' or not cfg.paper_auto_seed_inventory or not cfg.paper_auto_seed_active_symbols:
+            result['last_reason'] = 'DISABLED_OR_NOT_PAPER'
+            return result
+
+        quotes = quotes or {}
+        bithumb_quotes = bithumb_quotes or {}
+        symbols = list(dict.fromkeys(symbols or []))
+        seed_notional = float(cfg.paper_seed_notional_krw_per_symbol)
+        seed_krw = float(cfg.paper_seed_krw_per_venue)
+        fx = float(krw_usdt or 0)
+        result['enabled'] = True
+
+        self._paper_inventory['UPBIT']['KRW'] = max(self._paper_inventory['UPBIT']['KRW'], seed_krw)
+        self._paper_inventory['BITHUMB']['KRW'] = max(self._paper_inventory['BITHUMB']['KRW'], seed_krw)
+        if fx > 0:
+            self._paper_inventory['BINANCE']['USDT'] = max(
+                self._paper_inventory['BINANCE']['USDT'],
+                seed_krw / fx,
+            )
+
+        for symbol in symbols:
+            quote = quotes.get(symbol, {})
+            upbit_price = self._mid_price_krw(quote.get('upbit', {}))
+            binance_price = self._mid_price_krw(quote.get('binance', {}), fx) if fx > 0 else 0
+            bithumb_price = self._mid_price_krw(bithumb_quotes.get(symbol, {}))
+            seeded = []
+            if upbit_price > 0:
+                min_qty = seed_notional / upbit_price
+                if self._coin('UPBIT', symbol) < min_qty:
+                    self._paper_inventory['UPBIT']['coins'][symbol] = min_qty
+                    seeded.append('UPBIT')
+            if binance_price > 0:
+                min_qty = seed_notional / binance_price
+                if self._coin('BINANCE', symbol) < min_qty:
+                    self._paper_inventory['BINANCE']['coins'][symbol] = min_qty
+                    seeded.append('BINANCE')
+            if bithumb_price > 0:
+                min_qty = seed_notional / bithumb_price
+                if self._coin('BITHUMB', symbol) < min_qty:
+                    self._paper_inventory['BITHUMB']['coins'][symbol] = min_qty
+                    seeded.append('BITHUMB')
+            if seeded:
+                result['seeded_symbols'].append(symbol)
+                result['seeded_venue_count'] += len(seeded)
+            if not (upbit_price > 0 and (binance_price > 0 or bithumb_price > 0)):
+                result['skipped_symbols'].append({
+                    'symbol': symbol,
+                    'reason': 'PAPER_SEED_PRICE_MISSING',
+                    'upbit_price': upbit_price,
+                    'binance_price': binance_price,
+                    'bithumb_price': bithumb_price,
+                })
+        result['seeded_symbol_count'] = len(result['seeded_symbols'])
+        result['skipped_symbol_count'] = len(result['skipped_symbols'])
+        result['last_reason'] = 'OK' if not result['skipped_symbols'] else 'PAPER_SEED_PRICE_MISSING'
+        return result
+
     def inventory_summary(self, quotes: dict | None = None, mode: str = 'paper') -> dict:
         """Return display-only inventory readiness. Never moves assets."""
         quotes = quotes or {}

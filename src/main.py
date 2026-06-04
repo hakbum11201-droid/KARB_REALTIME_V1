@@ -886,10 +886,22 @@ def route_signal_to_execution(signal, entry_reason, paper_eng=None):
         result['status'] = 'BLOCKED'
         return result
     if mode == 'paper':
-        trade = paper_eng.try_entry({**prepared, 'reason_no_trade': 'OK'}) if paper_eng else None
-        result.update({'ok': bool(trade), 'status': 'ENTERED' if trade else 'BLOCKED', 'trade': trade})
-        if not trade:
-            result['blockers'] = ['PAPER_ENGINE_REJECTED']
+        paper_result = (
+            paper_eng.try_entry({**prepared, 'reason_no_trade': 'OK'})
+            if paper_eng else {'ok': False, 'trade': None, 'reason': 'PAPER_UNKNOWN_REJECT', 'detail': {}}
+        )
+        trade = paper_result.get('trade') if isinstance(paper_result, dict) else paper_result
+        ok = bool(paper_result.get('ok')) if isinstance(paper_result, dict) else bool(trade)
+        reason = (
+            paper_result.get('reason', 'PAPER_UNKNOWN_REJECT')
+            if isinstance(paper_result, dict) else 'PAPER_UNKNOWN_REJECT'
+        )
+        detail = paper_result.get('detail', {}) if isinstance(paper_result, dict) else {}
+        result.update({'ok': ok, 'status': 'ENTERED' if ok else 'BLOCKED', 'trade': trade})
+        if not ok:
+            result['blockers'] = [reason]
+            result['paper_engine_reject_reason'] = reason
+            result['paper_engine_reject_detail'] = detail
         return result
     result.update({
         'ok': True,
@@ -898,6 +910,18 @@ def route_signal_to_execution(signal, entry_reason, paper_eng=None):
         'note': 'Existing executor path candidate only; no order function called here.',
     })
     return result
+
+
+def _paper_engine_reject_bucket(reason: str) -> str:
+    mapping = {
+        'PAPER_INVENTORY_INSUFFICIENT': 'inventory',
+        'PAPER_SELECTED_QTY_INVALID': 'qty',
+        'PAPER_SELECTED_NOTIONAL_INVALID': 'notional',
+        'PAPER_MIN_ORDER_NOTIONAL': 'notional',
+        'PAPER_DUPLICATE_OPEN_TRADE': 'duplicate',
+        'PAPER_PRICE_INVALID': 'price',
+    }
+    return mapping.get(reason, 'other')
 
 
 def _try_recheck_paper_entry(opportunity, paper_eng):
@@ -1090,6 +1114,17 @@ def main():
     paper_entry_last_refreshed_at = None
     paper_entry_last_fetch_ms = None
     paper_entry_quote_age_list: deque[float] = deque(maxlen=500)
+    paper_engine_reject_last_reason = ''
+    paper_engine_reject_last_detail = {}
+    paper_engine_reject_counts = {
+        'inventory': 0,
+        'qty': 0,
+        'notional': 0,
+        'duplicate': 0,
+        'price': 0,
+        'other': 0,
+    }
+    paper_inventory_seed_status = {'enabled': False, 'seeded_symbol_count': 0, 'skipped_symbol_count': 0}
     live_entry_candidate_count = 0
     live_entry_blocked_count = 0
     live_entry_last_symbol = ''
@@ -1266,6 +1301,13 @@ def main():
             bithumb_quotes = bithumb_quote_cache.get_snapshot()
         else:
             bithumb_quotes = bithumb_pub.fetch_all_order_books(active_symbols)
+        paper_inventory_seed_status = inv_mgr.seed_paper_active_symbols(
+            active_symbols,
+            quotes=quotes,
+            bithumb_quotes=bithumb_quotes,
+            krw_usdt=krw_usdt,
+            mode=cfg.mode,
+        )
         loop_opportunities = []
         skipped_bithumb_symbol_count_last_loop = 0
         skipped_bithumb_quote_reasons_last_loop: dict[str, int] = {}
@@ -1368,6 +1410,7 @@ def main():
                         trade = route.get('trade')
                         paper_entry_success_count += 1
                         paper_entry_count += 1
+                        paper_entry_last_blocker = ''
                         if entry_reason == 'WIDE_SPREAD_RECHECK_ACTIONABLE':
                             paper_wide_spread_recheck_entry_count += 1
                             paper_wide_spread_recheck_last_symbol = trade.get('symbol', '')
@@ -1379,6 +1422,10 @@ def main():
                         blockers = route.get('blockers', [])
                         paper_entry_blocked_count += 1
                         paper_entry_last_blocker = blockers[0] if blockers else ''
+                        if route.get('paper_engine_reject_reason'):
+                            paper_engine_reject_last_reason = route.get('paper_engine_reject_reason', '')
+                            paper_engine_reject_last_detail = route.get('paper_engine_reject_detail', {})
+                            paper_engine_reject_counts[_paper_engine_reject_bucket(paper_engine_reject_last_reason)] += 1
                         paper_entry_blocked_quote_age_count += int('ENTRY_QUOTE_TOO_OLD' in blockers)
                         paper_entry_blocked_duplicate_count += int('DUPLICATE_OPEN_TRADE' in blockers)
                         paper_entry_blocked_stale_count += int('ENTRY_STALE_QUOTE' in blockers)
@@ -1537,6 +1584,7 @@ def main():
                         trade = route.get('trade')
                         paper_entry_success_count += 1
                         paper_entry_count += 1
+                        paper_entry_last_blocker = ''
                         if not args.once:
                             print(
                                 f"  [{sym}] PAPER ENTRY | Dir: {trade['best_direction']} | "
@@ -1546,6 +1594,10 @@ def main():
                         blockers = route.get('blockers', [])
                         paper_entry_blocked_count += 1
                         paper_entry_last_blocker = blockers[0] if blockers else ''
+                        if route.get('paper_engine_reject_reason'):
+                            paper_engine_reject_last_reason = route.get('paper_engine_reject_reason', '')
+                            paper_engine_reject_last_detail = route.get('paper_engine_reject_detail', {})
+                            paper_engine_reject_counts[_paper_engine_reject_bucket(paper_engine_reject_last_reason)] += 1
                         paper_entry_blocked_quote_age_count += int('ENTRY_QUOTE_TOO_OLD' in blockers)
                         paper_entry_blocked_duplicate_count += int('DUPLICATE_OPEN_TRADE' in blockers)
                         paper_entry_blocked_stale_count += int('ENTRY_STALE_QUOTE' in blockers)
@@ -1687,6 +1739,7 @@ def main():
                         recheck_trade = recheck_route.get('trade')
                         paper_entry_success_count += int(cfg.mode == 'paper')
                         paper_entry_count += int(cfg.mode == 'paper')
+                        paper_entry_last_blocker = ''
                         entry_reason = recheck_trade.get('entry_reason', '')
                         if entry_reason == 'WIDE_SPREAD_RECHECK_ACTIONABLE':
                             paper_wide_spread_recheck_entry_count += 1
@@ -1714,6 +1767,10 @@ def main():
                         blockers = recheck_route.get('blockers', [])
                         paper_entry_blocked_count += 1
                         paper_entry_last_blocker = blockers[0] if blockers else ''
+                        if recheck_route.get('paper_engine_reject_reason'):
+                            paper_engine_reject_last_reason = recheck_route.get('paper_engine_reject_reason', '')
+                            paper_engine_reject_last_detail = recheck_route.get('paper_engine_reject_detail', {})
+                            paper_engine_reject_counts[_paper_engine_reject_bucket(paper_engine_reject_last_reason)] += 1
                         paper_entry_blocked_quote_age_count += int('ENTRY_QUOTE_TOO_OLD' in blockers)
                         paper_entry_blocked_duplicate_count += int('DUPLICATE_OPEN_TRADE' in blockers)
                         paper_entry_blocked_stale_count += int('ENTRY_STALE_QUOTE' in blockers)
@@ -1734,6 +1791,7 @@ def main():
                             trade = route.get('trade')
                             paper_entry_success_count += 1
                             paper_entry_count += 1
+                            paper_entry_last_blocker = ''
                             if not args.once:
                                 print(
                                     f"  [UPBIT_BITHUMB:{sym}] PAPER ENTRY | "
@@ -1744,6 +1802,10 @@ def main():
                             blockers = route.get('blockers', [])
                             paper_entry_blocked_count += 1
                             paper_entry_last_blocker = blockers[0] if blockers else ''
+                            if route.get('paper_engine_reject_reason'):
+                                paper_engine_reject_last_reason = route.get('paper_engine_reject_reason', '')
+                                paper_engine_reject_last_detail = route.get('paper_engine_reject_detail', {})
+                                paper_engine_reject_counts[_paper_engine_reject_bucket(paper_engine_reject_last_reason)] += 1
                             paper_entry_blocked_quote_age_count += int('ENTRY_QUOTE_TOO_OLD' in blockers)
                             paper_entry_blocked_duplicate_count += int('DUPLICATE_OPEN_TRADE' in blockers)
                             paper_entry_blocked_stale_count += int('ENTRY_STALE_QUOTE' in blockers)
@@ -1977,6 +2039,16 @@ def main():
             'paper_entry_last_refreshed_at': paper_entry_last_refreshed_at,
             'paper_entry_last_fetch_ms': paper_entry_last_fetch_ms,
             'paper_entry_p95_quote_age_ms': _percentile(list(paper_entry_quote_age_list), 95),
+            'paper_engine_reject_last_reason': paper_engine_reject_last_reason,
+            'paper_engine_reject_last_detail': paper_engine_reject_last_detail,
+            'paper_engine_reject_inventory_count': paper_engine_reject_counts.get('inventory', 0),
+            'paper_engine_reject_qty_count': paper_engine_reject_counts.get('qty', 0),
+            'paper_engine_reject_notional_count': paper_engine_reject_counts.get('notional', 0),
+            'paper_engine_reject_duplicate_count': paper_engine_reject_counts.get('duplicate', 0),
+            'paper_engine_reject_price_count': paper_engine_reject_counts.get('price', 0),
+            'paper_inventory_seed_status': paper_inventory_seed_status,
+            'paper_inventory_seeded_symbol_count': paper_inventory_seed_status.get('seeded_symbol_count', 0),
+            'paper_inventory_seed_skipped_symbol_count': paper_inventory_seed_status.get('skipped_symbol_count', 0),
             'live_entry_candidate_count': live_entry_candidate_count,
             'live_entry_blocked_count': live_entry_blocked_count,
             'live_entry_last_symbol': live_entry_last_symbol,
