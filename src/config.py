@@ -118,6 +118,16 @@ class Config:
     @property
     def stale_recheck_priority_max_workers(self): return self.get('stale_recheck_priority_max_workers', 1)
     @property
+    def wide_spread_recheck_enabled(self): return self.get('wide_spread_recheck_enabled', True)
+    @property
+    def wide_spread_recheck_paper_only(self): return self.get('wide_spread_recheck_paper_only', True)
+    @property
+    def wide_spread_recheck_min_surplus_bp_extra(self): return self.get('wide_spread_recheck_min_surplus_bp_extra', 10)
+    @property
+    def wide_spread_recheck_min_net_profit_krw(self): return self.get('wide_spread_recheck_min_net_profit_krw', 10)
+    @property
+    def wide_spread_recheck_allowed_liquidity(self): return self.get('wide_spread_recheck_allowed_liquidity', ['GOOD', 'NORMAL'])
+    @property
     def use_websocket_market_data(self): return self.get('use_websocket_market_data', True)
     @property
     def rest_fallback_enabled(self): return self.get('rest_fallback_enabled', True)

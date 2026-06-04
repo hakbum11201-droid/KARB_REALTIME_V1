@@ -194,6 +194,31 @@ def _stale_recheck_candidate(item):
     return item.get('liquidity_class', 'NORMAL') in cfg.stale_recheck_allowed_liquidity
 
 
+def _wide_spread_recheck_candidate(item):
+    if not cfg.wide_spread_recheck_enabled:
+        return False
+    if cfg.wide_spread_recheck_paper_only and cfg.mode != 'paper':
+        return False
+    if item.get('reason_no_trade') != 'WIDE_SPREAD':
+        return False
+    if item.get('pair_id') != 'UPBIT_BITHUMB':
+        return False
+    if any(bool(item.get(name)) for name in ('stale', 'stale_grace', 'has_stale_quote')):
+        return False
+    if float(item.get('selected_notional_krw', 0) or 0) <= 0:
+        return False
+    threshold = cfg.min_net_surplus_bp + cfg.wide_spread_recheck_min_surplus_bp_extra
+    if float(item.get('best_net_surplus_bp', -9999) or -9999) < threshold:
+        return False
+    if float(item.get('net_expected_profit_krw', 0) or 0) < cfg.wide_spread_recheck_min_net_profit_krw:
+        return False
+    return item.get('liquidity_class', 'NORMAL') in cfg.wide_spread_recheck_allowed_liquidity
+
+
+def _recheck_candidate(item):
+    return _stale_recheck_candidate(item) or _wide_spread_recheck_candidate(item)
+
+
 def _record_stale_recheck_event(recent, event):
     recent.appendleft({'time': time.time(), **event})
 
@@ -250,6 +275,21 @@ def _is_actionable_stale_recheck(item, request, elapsed_ms, new_surplus, new_net
     return surplus_ok and new_net > 0 and liquidity_ok and not stale_blocked and source_ok
 
 
+def _is_actionable_wide_spread_recheck(item, request, new_surplus, new_net):
+    threshold = float(request.get('threshold_bp', 0) or 0)
+    liquidity_ok = item.get('liquidity_class', 'NORMAL') in cfg.wide_spread_recheck_allowed_liquidity
+    stale_blocked = any(bool(item.get(name)) for name in (
+        'stale', 'has_stale_quote', 'stale_grace', 'bithumb_stale_grace',
+    ))
+    return (
+        new_surplus >= threshold
+        and new_net > 0
+        and liquidity_ok
+        and not stale_blocked
+        and float(item.get('selected_notional_krw', 0) or 0) > 0
+    )
+
+
 def _stale_recheck_summary_bucket():
     return {
         'request_count': 0,
@@ -301,17 +341,23 @@ def _stale_recheck_summaries(recent):
         buckets = [pair_bucket] + ([symbol_bucket] if symbol_bucket is not None else [])
         status = event.get('status', '')
         for bucket in buckets:
-            if status == 'RECHECK_REQUESTED':
+            if status in ('RECHECK_REQUESTED', 'WIDE_SPREAD_RECHECK_REQUESTED'):
                 bucket['request_count'] += 1
-            elif status in ('RECHECK_FAST_PASS', 'RECHECK_ACTIONABLE_FAST_PASS'):
+            elif status in (
+                'RECHECK_FAST_PASS', 'RECHECK_ACTIONABLE_FAST_PASS',
+                'WIDE_SPREAD_RECHECK_ACTIONABLE',
+            ):
                 bucket['fast_pass_count'] += 1
-                if status == 'RECHECK_ACTIONABLE_FAST_PASS' or event.get('actionable_fast_pass'):
+                if status in (
+                    'RECHECK_ACTIONABLE_FAST_PASS',
+                    'WIDE_SPREAD_RECHECK_ACTIONABLE',
+                ) or event.get('actionable_fast_pass'):
                     bucket['actionable_fast_pass_count'] += 1
             elif status == 'RECHECK_LATE_PASS':
                 bucket['late_pass_count'] += 1
-            elif status == 'RECHECK_FAIL':
+            elif status in ('RECHECK_FAIL', 'WIDE_SPREAD_RECHECK_FAIL'):
                 bucket['fail_count'] += 1
-            elif status == 'RECHECK_TIMEOUT':
+            elif status in ('RECHECK_TIMEOUT', 'WIDE_SPREAD_RECHECK_TIMEOUT'):
                 bucket['timeout_count'] += 1
             elapsed = event.get('elapsed_total_ms', event.get('elapsed_ms'))
             if elapsed is not None:
@@ -357,13 +403,23 @@ def _request_stale_recheck(item, pending, request_times, counters, recent, rest_
     key = _stale_recheck_key(item)
     if key in pending:
         counters['skip_cooldown'] += 1
-        return {'stale_recheck_status': 'REQUESTED', 'stale_recheck_reason': 'RECHECK_ALREADY_PENDING'}
+        status = (
+            'WIDE_SPREAD_RECHECK_REQUESTED'
+            if pending[key].get('recheck_kind') == 'WIDE_SPREAD' else 'REQUESTED'
+        )
+        return {'stale_recheck_status': status, 'stale_recheck_reason': 'RECHECK_ALREADY_PENDING'}
     if len(request_times) >= cfg.stale_recheck_max_per_minute:
         counters['skip_rate_limit'] += 1
         return {'stale_recheck_status': 'NONE', 'stale_recheck_reason': 'RECHECK_RATE_LIMIT'}
     pair_id, symbol = key
     original_surplus_bp = float(item.get('best_net_surplus_bp', 0) or 0)
     original_net_krw = float(item.get('net_expected_profit_krw', 0) or 0)
+    is_wide_spread = _wide_spread_recheck_candidate(item)
+    request_status = 'WIDE_SPREAD_RECHECK_REQUESTED' if is_wide_spread else 'RECHECK_REQUESTED'
+    threshold_extra = (
+        cfg.wide_spread_recheck_min_surplus_bp_extra
+        if is_wide_spread else cfg.stale_recheck_min_surplus_bp_extra
+    )
     request_meta = {
         'reason': item.get('reason_no_trade'),
         'original_surplus_bp': original_surplus_bp,
@@ -377,7 +433,7 @@ def _request_stale_recheck(item, pending, request_times, counters, recent, rest_
         result = rest_cache.request_priority_refresh(pair_id, symbol, **request_meta)
     if result.get('queued'):
         request_times.append(now)
-        threshold = cfg.min_net_surplus_bp + cfg.stale_recheck_min_surplus_bp_extra
+        threshold = cfg.min_net_surplus_bp + threshold_extra
         pending[key] = {
             'pair_id': pair_id,
             'symbol': symbol,
@@ -389,23 +445,26 @@ def _request_stale_recheck(item, pending, request_times, counters, recent, rest_
             'original_surplus_bp': original_surplus_bp,
             'original_net_krw': original_net_krw,
             'reason': item.get('reason_no_trade', ''),
+            'recheck_kind': 'WIDE_SPREAD' if is_wide_spread else 'STALE_QUOTE',
         }
         counters['request'] += 1
+        if is_wide_spread:
+            counters['wide_request'] += 1
         _record_stale_recheck_event(recent, {
-            'pair_id': pair_id, 'symbol': symbol, 'status': 'RECHECK_REQUESTED',
+            'pair_id': pair_id, 'symbol': symbol, 'status': request_status,
             'original_surplus_bp': pending[key]['original_surplus_bp'],
             'original_net_krw': pending[key]['original_net_krw'],
             **_stale_recheck_breakdown(pending[key], now),
         })
         return {
-            'stale_recheck_status': 'REQUESTED',
+            'stale_recheck_status': request_status,
             'stale_recheck_original_surplus_bp': pending[key]['original_surplus_bp'],
             'stale_recheck_original_net_krw': pending[key]['original_net_krw'],
             'stale_recheck_elapsed_total_ms': 0.0,
             'stale_recheck_elapsed_queue_wait_ms': None,
             'stale_recheck_elapsed_fetch_ms': None,
             'stale_recheck_elapsed_decision_wait_ms': 0.0,
-            'stale_recheck_reason': 'RECHECK_REQUESTED',
+            'stale_recheck_reason': request_status,
         }
     reason = result.get('reason', 'RECHECK_NOT_QUEUED')
     if 'COOLDOWN' in reason or 'QUEUED' in reason:
@@ -428,31 +487,42 @@ def _resolve_stale_recheck(item, pending, counters, recent):
     )
     elapsed_ms = round((now - request['requested_at']) * 1000, 2)
     breakdown = _stale_recheck_breakdown(request, now)
+    is_wide_spread = request.get('recheck_kind') == 'WIDE_SPREAD'
     if not fresh:
         if now - request['requested_at'] <= cfg.stale_recheck_result_ttl_sec:
             return {
-                'stale_recheck_status': 'REQUESTED',
+                'stale_recheck_status': (
+                    'WIDE_SPREAD_RECHECK_REQUESTED' if is_wide_spread else 'REQUESTED'
+                ),
                 'stale_recheck_elapsed_ms': elapsed_ms,
                 'stale_recheck_elapsed_total_ms': breakdown['elapsed_total_ms'],
                 'stale_recheck_elapsed_queue_wait_ms': breakdown['elapsed_queue_wait_ms'],
                 'stale_recheck_elapsed_fetch_ms': breakdown['elapsed_fetch_ms'],
                 'stale_recheck_elapsed_decision_wait_ms': breakdown['elapsed_decision_wait_ms'],
             }
-        status = 'RECHECK_TIMEOUT'
+        status = 'WIDE_SPREAD_RECHECK_TIMEOUT' if is_wide_spread else 'RECHECK_TIMEOUT'
         counters['timeout'] += 1
     else:
         new_surplus = float(item.get('best_net_surplus_bp', -9999) or -9999)
         new_net = float(item.get('net_expected_profit_krw', 0) or 0)
-        status = _stale_recheck_pass_status(elapsed_ms) if new_surplus >= request['threshold_bp'] and new_net > 0 else 'RECHECK_FAIL'
-        if status == 'RECHECK_FAST_PASS':
-            counters['fast_pass'] += 1
-            if _is_actionable_stale_recheck(item, request, elapsed_ms, new_surplus, new_net):
-                status = 'RECHECK_ACTIONABLE_FAST_PASS'
-                counters['actionable_fast_pass'] += 1
-        elif status == 'RECHECK_LATE_PASS':
-            counters['late_pass'] += 1
+        if is_wide_spread:
+            if _is_actionable_wide_spread_recheck(item, request, new_surplus, new_net):
+                status = 'WIDE_SPREAD_RECHECK_ACTIONABLE'
+                counters['wide_actionable'] += 1
+            else:
+                status = 'WIDE_SPREAD_RECHECK_FAIL'
+                counters['fail'] += 1
         else:
-            counters['fail'] += 1
+            status = _stale_recheck_pass_status(elapsed_ms) if new_surplus >= request['threshold_bp'] and new_net > 0 else 'RECHECK_FAIL'
+            if status == 'RECHECK_FAST_PASS':
+                counters['fast_pass'] += 1
+                if _is_actionable_stale_recheck(item, request, elapsed_ms, new_surplus, new_net):
+                    status = 'RECHECK_ACTIONABLE_FAST_PASS'
+                    counters['actionable_fast_pass'] += 1
+            elif status == 'RECHECK_LATE_PASS':
+                counters['late_pass'] += 1
+            else:
+                counters['fail'] += 1
     pending.pop(key, None)
     result = {
         'stale_recheck_status': status,
@@ -466,7 +536,10 @@ def _resolve_stale_recheck(item, pending, counters, recent):
         'stale_recheck_elapsed_fetch_ms': breakdown['elapsed_fetch_ms'],
         'stale_recheck_elapsed_decision_wait_ms': breakdown['elapsed_decision_wait_ms'],
         'stale_recheck_reason': status,
-        'stale_recheck_actionable_fast_pass': status == 'RECHECK_ACTIONABLE_FAST_PASS',
+        'stale_recheck_actionable_fast_pass': status in (
+            'RECHECK_ACTIONABLE_FAST_PASS',
+            'WIDE_SPREAD_RECHECK_ACTIONABLE',
+        ),
         'stale_recheck_cache_completed_at': request.get('cache_completed_at'),
         'stale_recheck_fetch_ms': request.get('fetch_ms'),
     }
@@ -479,7 +552,10 @@ def _resolve_stale_recheck(item, pending, counters, recent):
         'new_net_krw': result['stale_recheck_new_net_krw'],
         'liquidity_class': item.get('liquidity_class', ''),
         'quote_source': item.get('quote_source', item.get('source', '')),
-        'actionable_fast_pass': status == 'RECHECK_ACTIONABLE_FAST_PASS',
+        'actionable_fast_pass': status in (
+            'RECHECK_ACTIONABLE_FAST_PASS',
+            'WIDE_SPREAD_RECHECK_ACTIONABLE',
+        ),
         'completed_handoff': bool(request.get('cache_completed_at')),
         'cache_completed_at': request.get('cache_completed_at'),
         'fetch_ms': request.get('fetch_ms'),
@@ -497,9 +573,13 @@ def _expire_stale_rechecks(pending, counters, recent):
         item = pending.pop(key)
         elapsed_ms = round((now - item['requested_at']) * 1000, 2)
         breakdown = _stale_recheck_breakdown(item, now)
+        status = (
+            'WIDE_SPREAD_RECHECK_TIMEOUT'
+            if item.get('recheck_kind') == 'WIDE_SPREAD' else 'RECHECK_TIMEOUT'
+        )
         counters['timeout'] += 1
         _record_stale_recheck_event(recent, {
-            'pair_id': key[0], 'symbol': key[1], 'status': 'RECHECK_TIMEOUT',
+            'pair_id': key[0], 'symbol': key[1], 'status': status,
             'elapsed_ms': elapsed_ms,
             **breakdown,
             'original_surplus_bp': item['original_surplus_bp'],
@@ -540,7 +620,13 @@ def _try_recheck_paper_entry(opportunity, paper_eng):
         return None
     if opportunity.get('pair_id') != 'UPBIT_BITHUMB':
         return None
-    if opportunity.get('stale_recheck_status') != 'RECHECK_ACTIONABLE_FAST_PASS':
+    status = opportunity.get('stale_recheck_status')
+    entry_reason_by_status = {
+        'RECHECK_ACTIONABLE_FAST_PASS': 'RECHECK_ACTIONABLE',
+        'WIDE_SPREAD_RECHECK_ACTIONABLE': 'WIDE_SPREAD_RECHECK_ACTIONABLE',
+    }
+    entry_reason = entry_reason_by_status.get(status)
+    if not entry_reason:
         return None
     if opportunity.get('liquidity_class', 'NORMAL') not in ('GOOD', 'NORMAL'):
         return None
@@ -559,8 +645,8 @@ def _try_recheck_paper_entry(opportunity, paper_eng):
     paper_opportunity = {
         **opportunity,
         'reason_no_trade': 'OK',
-        'entry_reason': 'RECHECK_ACTIONABLE',
-        'recheck_status': opportunity.get('stale_recheck_status'),
+        'entry_reason': entry_reason,
+        'recheck_status': status,
         'net_expected_profit_krw': net,
     }
     return paper_eng.try_entry(paper_opportunity)
@@ -721,6 +807,8 @@ def main():
     paper_recheck_entry_count = 0
     paper_recheck_entry_last_symbol = ''
     paper_recheck_entry_last_reason = ''
+    paper_wide_spread_recheck_entry_count = 0
+    paper_wide_spread_recheck_last_symbol = ''
     paper_exit_count  = 0
     error_count      = 0
     reason_counts:   dict[str, int] = {}
@@ -765,6 +853,7 @@ def main():
     stale_recheck_counters = {
         'request': 0, 'fast_pass': 0, 'late_pass': 0, 'fail': 0, 'timeout': 0,
         'actionable_fast_pass': 0, 'skip_cooldown': 0, 'skip_rate_limit': 0,
+        'wide_request': 0, 'wide_actionable': 0,
     }
     stale_recheck_handoff_counters = {
         'count': 0, 'pending_match': 0, 'unmatched': 0,
@@ -976,7 +1065,7 @@ def main():
             )
             if recheck_update:
                 calc_res.update(recheck_update)
-            elif _stale_recheck_candidate(calc_res):
+            elif _recheck_candidate(calc_res):
                 calc_res.update(_request_stale_recheck(
                     calc_res, stale_recheck_pending, stale_recheck_request_times,
                     stale_recheck_counters, stale_recheck_recent,
@@ -1089,7 +1178,7 @@ def main():
                 )
                 if recheck_update:
                     domestic.update(recheck_update)
-                elif _stale_recheck_candidate(domestic):
+                elif _recheck_candidate(domestic):
                     domestic.update(_request_stale_recheck(
                         domestic, stale_recheck_pending, stale_recheck_request_times,
                         stale_recheck_counters, stale_recheck_recent,
@@ -1136,9 +1225,14 @@ def main():
                 recheck_trade = _try_recheck_paper_entry(domestic, paper_eng)
                 if recheck_trade:
                     paper_entry_count += 1
-                    paper_recheck_entry_count += 1
+                    entry_reason = recheck_trade.get('entry_reason', '')
+                    if entry_reason == 'WIDE_SPREAD_RECHECK_ACTIONABLE':
+                        paper_wide_spread_recheck_entry_count += 1
+                        paper_wide_spread_recheck_last_symbol = recheck_trade.get('symbol', '')
+                    else:
+                        paper_recheck_entry_count += 1
                     paper_recheck_entry_last_symbol = recheck_trade.get('symbol', '')
-                    paper_recheck_entry_last_reason = recheck_trade.get('entry_reason', '')
+                    paper_recheck_entry_last_reason = entry_reason
                     if not args.once:
                         print(
                             f"  [UPBIT_BITHUMB:{sym}] PAPER RECHECK ENTRY | "
@@ -1350,6 +1444,10 @@ def main():
             'paper_recheck_entry_count': paper_recheck_entry_count,
             'paper_recheck_entry_last_symbol': paper_recheck_entry_last_symbol,
             'paper_recheck_entry_last_reason': paper_recheck_entry_last_reason,
+            'paper_wide_spread_recheck_request_count': stale_recheck_counters['wide_request'],
+            'paper_wide_spread_recheck_actionable_count': stale_recheck_counters['wide_actionable'],
+            'paper_wide_spread_recheck_entry_count': paper_wide_spread_recheck_entry_count,
+            'paper_wide_spread_recheck_last_symbol': paper_wide_spread_recheck_last_symbol,
             'live_fresh_candidate_count': live_fresh_candidate_count,
             'tiny_live_fresh_candidate_count': tiny_live_fresh_candidate_count,
             'live_blocked_quote_age_count': live_blocked_quote_age_count,

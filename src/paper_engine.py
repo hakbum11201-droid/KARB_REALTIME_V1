@@ -37,6 +37,7 @@ class PaperEngine:
     def try_entry(self, calc_result: dict) -> dict | None:
         """
         진입 조건 충족 시 open trade 생성.
+        entry_reason은 NORMAL_GO, RECHECK_ACTIONABLE, WIDE_SPREAD_RECHECK_ACTIONABLE 등을 보존한다.
         반환: trade 딕셔너리 or None (진입 거부)
         """
         # 조건 1: reason_no_trade == 'OK'만 허용

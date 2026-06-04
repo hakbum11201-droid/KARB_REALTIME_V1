@@ -376,3 +376,9 @@ For long paper smoke tests, the recommended checks are:
   `paper` mode only, with `entry_reason=RECHECK_ACTIONABLE`. This is still
   disconnected from live and tiny-live orders; the purpose is to produce real
   paper open/closed trades so win rate and PnL can be measured.
+- `WIDE_SPREAD` remains dangerous for live execution because the spread itself
+  can erase the edge. In `paper` mode only, a sufficiently profitable and
+  liquid `WIDE_SPREAD` domestic candidate can request the same priority recheck;
+  if the refreshed edge is still actionable it enters `PaperEngine` with
+  `entry_reason=WIDE_SPREAD_RECHECK_ACTIONABLE`. This is not connected to live
+  or tiny-live orders.

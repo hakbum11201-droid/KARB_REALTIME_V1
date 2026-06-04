@@ -48,6 +48,11 @@ stale_recheck_symbol_only_refresh: true
 stale_recheck_inflight_dedupe: true
 stale_recheck_priority_fetch_timeout_ms: 700
 stale_recheck_priority_max_workers: 1
+wide_spread_recheck_enabled: true
+wide_spread_recheck_paper_only: true
+wide_spread_recheck_min_surplus_bp_extra: 10
+wide_spread_recheck_min_net_profit_krw: 10
+wide_spread_recheck_allowed_liquidity: [GOOD, NORMAL]
 use_websocket_market_data: true
 rest_fallback_enabled: true
 rate_limiter_enabled: true
