@@ -11,6 +11,12 @@ from collections import deque, Counter
 
 
 PAIR_IDS = ('UPBIT_BINANCE', 'UPBIT_BITHUMB', 'UNKNOWN')
+ENTRY_REASONS = (
+    'NORMAL_GO',
+    'RECHECK_ACTIONABLE',
+    'WIDE_SPREAD_RECHECK_ACTIONABLE',
+    'UNKNOWN',
+)
 
 
 def summarize_pair_trades(trades: list[dict]) -> dict:
@@ -60,6 +66,51 @@ def pair_summary_leaders(pair_summary: dict) -> dict:
     }
 
 
+def _normalize_entry_reason(trade: dict) -> str:
+    reason = trade.get('entry_reason') or 'UNKNOWN'
+    return reason if reason in ENTRY_REASONS else 'UNKNOWN'
+
+
+def summarize_entry_reason_trades(trades: list[dict]) -> dict:
+    grouped = {reason: [] for reason in ENTRY_REASONS}
+    for trade in trades:
+        grouped[_normalize_entry_reason(trade)].append(trade)
+
+    summary = {}
+    for reason, reason_trades in grouped.items():
+        pnls = [float(trade.get('realized_pnl_krw', 0) or 0) for trade in reason_trades]
+        wins = sum(1 for trade in reason_trades if trade.get('win'))
+        losses = len(reason_trades) - wins
+        holding = [float(trade.get('holding_sec', 0) or 0) for trade in reason_trades]
+        summary[reason] = {
+            'entry_reason': reason,
+            'trade_count': len(reason_trades),
+            'win_count': wins,
+            'loss_count': losses,
+            'win_rate': round(wins / len(reason_trades) * 100, 2) if reason_trades else 0.0,
+            'net_pnl_krw': round(sum(pnls), 2),
+            'avg_pnl_krw': round(sum(pnls) / len(pnls), 2) if pnls else 0.0,
+            'best_trade_krw': round(max(pnls), 2) if pnls else 0.0,
+            'worst_trade_krw': round(min(pnls), 2) if pnls else 0.0,
+            'avg_holding_sec': round(sum(holding) / len(holding), 2) if holding else 0.0,
+            'last_trade_at': max(
+                (float(trade.get('exit_time', 0) or 0) for trade in reason_trades),
+                default=0,
+            ),
+        }
+    return summary
+
+
+def entry_reason_summary_leaders(by_entry_reason: dict) -> dict:
+    active = [row for row in by_entry_reason.values() if row.get('trade_count', 0) > 0]
+    if not active:
+        return {'best_entry_reason_by_pnl': '', 'most_active_entry_reason': ''}
+    return {
+        'best_entry_reason_by_pnl': max(active, key=lambda row: row['net_pnl_krw'])['entry_reason'],
+        'most_active_entry_reason': max(active, key=lambda row: row['trade_count'])['entry_reason'],
+    }
+
+
 class PerformanceTracker:
     MAX_TRADES = 500
 
@@ -89,6 +140,7 @@ class PerformanceTracker:
     def record_exit(self, trade: dict) -> None:
         """closed trade(EXIT 이벤트)를 기록하고 성과를 갱신한다."""
         trade.setdefault('pair_id', 'UPBIT_BINANCE')
+        trade['entry_reason'] = _normalize_entry_reason(trade)
         self._closed.append(trade)
 
         import datetime
@@ -142,6 +194,7 @@ class PerformanceTracker:
         source_total = sum(float(quote_summary.get(key, 0) or 0) for key in ('ws', 'rest'))
         ws_ratio = round(float(quote_summary.get('ws', 0) or 0) / source_total * 100, 2) if source_total else 0.0
         pair_summary = summarize_pair_trades(trades)
+        by_entry_reason = summarize_entry_reason_trades(trades)
         s = {
             'paper_trade_count':   total,
             'open_trade_count':    self._open_count,
@@ -175,6 +228,8 @@ class PerformanceTracker:
             'api_429_count': self._runtime_metrics.get('api_429_count', 0),
             'pair_summary':        pair_summary,
             **pair_summary_leaders(pair_summary),
+            'by_entry_reason':     by_entry_reason,
+            **entry_reason_summary_leaders(by_entry_reason),
             'updated_at':          time.time(),
             **self._runtime_metrics,
         }

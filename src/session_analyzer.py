@@ -19,7 +19,12 @@ import time
 import glob
 import statistics
 from config import cfg
-from performance_tracker import pair_summary_leaders, summarize_pair_trades
+from performance_tracker import (
+    entry_reason_summary_leaders,
+    pair_summary_leaders,
+    summarize_entry_reason_trades,
+    summarize_pair_trades,
+)
 
 
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
@@ -74,6 +79,7 @@ def analyze_session(run_id: str) -> dict:
     decision_sample = latest_decisions or decisions
     closed_trades = [trade for trade in trades if trade.get('event') == 'EXIT']
     pair_summary = summarize_pair_trades(closed_trades)
+    by_entry_reason = summarize_entry_reason_trades(closed_trades)
     pair_reason_counts = {}
     pair_signal_counts = {}
     for decision in decision_sample:
@@ -116,6 +122,8 @@ def analyze_session(run_id: str) -> dict:
         'error_count': sum(1 for d in decisions if d.get('error') or d.get('fx_status') == 'ERROR'),
         'avg_trade_size_krw': cfg.max_one_trade_krw,
         'pair_summary': pair_summary,
+        'by_entry_reason': by_entry_reason,
+        **entry_reason_summary_leaders(by_entry_reason),
         'pair_reason_counts': pair_reason_counts,
         'pair_signal_counts': pair_signal_counts,
         **pair_summary_leaders(pair_summary),
@@ -198,6 +206,9 @@ class SessionAnalyzer:
             'paper_edge_fail_count': session_stats.get('paper_edge_fail_count', 0),
             'avg_latency_used_ms': session_stats.get('avg_latency_used_ms', 0.0),
             'pair_summary':       session_stats.get('pair_summary', {}),
+            'by_entry_reason':    session_stats.get('by_entry_reason', {}),
+            'best_entry_reason_by_pnl': session_stats.get('best_entry_reason_by_pnl', ''),
+            'most_active_entry_reason': session_stats.get('most_active_entry_reason', ''),
             'pair_reason_counts': session_stats.get('pair_reason_counts', {}),
             'pair_signal_counts': session_stats.get('pair_signal_counts', {}),
             'best_pair_by_pnl':   session_stats.get('best_pair_by_pnl', ''),
@@ -392,6 +403,21 @@ class SessionAnalyzer:
                     f"  Avg PnL:     {pair.get('avg_pnl_krw', 0):+,.0f} KRW",
                     f"  Max DD:      {pair.get('max_drawdown_krw', 0):,.0f} KRW",
                     f"  Best/Worst:  {pair.get('best_trade_krw', 0):+,.0f} / {pair.get('worst_trade_krw', 0):+,.0f} KRW",
+                ])
+            lines.extend(["", "ENTRY REASON SUMMARY"])
+            for reason in (
+                'NORMAL_GO',
+                'RECHECK_ACTIONABLE',
+                'WIDE_SPREAD_RECHECK_ACTIONABLE',
+                'UNKNOWN',
+            ):
+                row = r.get('by_entry_reason', {}).get(reason, {})
+                lines.extend([
+                    f"- {reason}",
+                    f"  Trades:      {row.get('trade_count', 0)}",
+                    f"  Win Rate:    {row.get('win_rate', 0):.1f}%",
+                    f"  Net PnL:     {row.get('net_pnl_krw', 0):+,.0f} KRW",
+                    f"  Avg PnL:     {row.get('avg_pnl_krw', 0):+,.0f} KRW",
                 ])
             lines.extend(["", "REASON COUNTS"])
             for reason, count in sorted(r.get('reason_counts', {}).items(), key=lambda x: -x[1]):

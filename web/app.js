@@ -226,6 +226,46 @@ function renderPairPerformance(perf) {
       </div>
     </div>`;
   }).join('');
+  renderEntryReasonPerformance(perf, grid.parentElement);
+}
+
+function renderEntryReasonPerformance(perf, parent) {
+  if (!parent) return;
+  let label = document.getElementById('entry-reason-performance-label');
+  let grid = document.getElementById('entry-reason-performance-grid');
+  if (!label) {
+    label = document.createElement('div');
+    label.id = 'entry-reason-performance-label';
+    label.className = 'section-label';
+    label.textContent = 'Entry Reason Performance';
+    parent.append(label);
+  }
+  if (!grid) {
+    grid = document.createElement('div');
+    grid.id = 'entry-reason-performance-grid';
+    grid.className = 'pair-performance-grid';
+    grid.setAttribute('aria-label', 'Entry Reason Performance');
+    parent.append(grid);
+  }
+  const summary = perf.by_entry_reason || {};
+  const reasons = ['NORMAL_GO','RECHECK_ACTIONABLE','WIDE_SPREAD_RECHECK_ACTIONABLE','UNKNOWN'];
+  grid.innerHTML = reasons.map(reason => {
+    const row = summary[reason] || {};
+    const trades = Number(row.trade_count || 0);
+    const pnl = Number(row.net_pnl_krw || 0);
+    const avg = Number(row.avg_pnl_krw || 0);
+    const status = !trades ? 'NO DATA' : pnl >= 0 ? 'POSITIVE' : 'NEGATIVE';
+    const statusClass = status === 'POSITIVE' ? 'positive' : status === 'NEGATIVE' ? 'negative' : 'no-data';
+    return `<div class="pair-performance-card ${statusClass}">
+      <div class="pair-performance-title"><span>${esc(reason)}</span><strong>${status}</strong></div>
+      <div class="pair-performance-stats">
+        <div><span>Trades</span><strong>${fmt(trades)}</strong></div>
+        <div><span>Win Rate</span><strong>${Number(row.win_rate||0).toFixed(1)}%</strong></div>
+        <div><span>Net PnL</span><strong style="color:${pnlC(pnl)}">${pnl>=0?'+':''}${fmt(pnl)} KRW</strong></div>
+        <div><span>Avg PnL</span><strong>${avg>=0?'+':''}${fmt(avg)} KRW</strong></div>
+      </div>
+    </div>`;
+  }).join('');
 }
 
 function judgementClass(judgement) {

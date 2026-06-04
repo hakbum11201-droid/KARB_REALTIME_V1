@@ -382,3 +382,8 @@ For long paper smoke tests, the recommended checks are:
   if the refreshed edge is still actionable it enters `PaperEngine` with
   `entry_reason=WIDE_SPREAD_RECHECK_ACTIONABLE`. This is not connected to live
   or tiny-live orders.
+- Paper performance should also be reviewed by `entry_reason`. Compare
+  `NORMAL_GO`, `RECHECK_ACTIONABLE`, and
+  `WIDE_SPREAD_RECHECK_ACTIONABLE` separately because they represent different
+  entry paths. This summary is for paper analysis only and remains disconnected
+  from live and tiny-live order execution.

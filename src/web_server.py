@@ -187,6 +187,9 @@ def _pair_performance_payload():
         'best_pair_by_pnl': perf.get('best_pair_by_pnl', ''),
         'best_pair_by_win_rate': perf.get('best_pair_by_win_rate', ''),
         'most_active_pair': perf.get('most_active_pair', ''),
+        'by_entry_reason': perf.get('by_entry_reason', {}),
+        'best_entry_reason_by_pnl': perf.get('best_entry_reason_by_pnl', ''),
+        'most_active_entry_reason': perf.get('most_active_entry_reason', ''),
         'updated_at': perf.get('updated_at', 0),
     }
 
@@ -636,6 +639,7 @@ class KarbHandler(SimpleHTTPRequestHandler):
             exits = [r for r in recent if r.get('event') == 'EXIT'][-20:]
             for trade in exits:
                 trade.setdefault('pair_id', 'UPBIT_BINANCE')
+                trade.setdefault('entry_reason', 'UNKNOWN')
             self._send_json({'performance': perf, 'recent_trades': exits})
 
         elif self.path == '/api/performance':
@@ -717,6 +721,7 @@ class KarbHandler(SimpleHTTPRequestHandler):
             exits = [r for r in recent if r.get('event') == 'EXIT'][-20:]
             for trade in exits:
                 trade.setdefault('pair_id', 'UPBIT_BINANCE')
+                trade.setdefault('entry_reason', 'UNKNOWN')
             self._send_json({'trades': exits})
 
         elif self.path == '/api/session/last':
