@@ -2057,6 +2057,7 @@ def main():
             stale_recheck_queue_size,
             api_429_delta,
         )
+        paper_exit_stats = paper_eng.exit_stats() if cfg.mode == 'paper' else {}
         runtime_metrics = {
             'started_at':           started_at,
             'loop_count':           total_loops,
@@ -2118,6 +2119,7 @@ def main():
             'paper_inventory_seed_status': paper_inventory_seed_status,
             'paper_inventory_seeded_symbol_count': paper_inventory_seed_status.get('seeded_symbol_count', 0),
             'paper_inventory_seed_skipped_symbol_count': paper_inventory_seed_status.get('skipped_symbol_count', 0),
+            **paper_exit_stats,
             'live_entry_candidate_count': live_entry_candidate_count,
             'live_entry_blocked_count': live_entry_blocked_count,
             'live_entry_last_symbol': live_entry_last_symbol,

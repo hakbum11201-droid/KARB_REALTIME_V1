@@ -23,6 +23,19 @@ class PaperEngine:
         self._inv = inventory_manager   # InventoryManager (옵션)
         self._open_trades:  dict[str, dict] = {}  # trade_id → trade
         self._closed_trades: list[dict] = []
+        self._exit_stats = {
+            'paper_exit_sl_count': 0,
+            'paper_exit_sl_deferred_count': 0,
+            'paper_exit_min_hold_skip_count': 0,
+            'paper_exit_invalid_price_count': 0,
+            'paper_exit_timeout_count': 0,
+            'paper_exit_take_profit_count': 0,
+            'paper_exit_stale_quote_count': 0,
+            'paper_exit_last_reason': '',
+            'paper_exit_last_holding_sec': None,
+            'paper_exit_last_symbol': '',
+            'paper_exit_last_pnl_krw': None,
+        }
 
         base_dir  = os.path.dirname(os.path.abspath(__file__))
         logs_dir  = os.path.normpath(os.path.join(base_dir, '..', 'logs'))
@@ -302,6 +315,7 @@ class PaperEngine:
             if exit_trade:
                 del self._open_trades[trade_id]
                 self._closed_trades.append(exit_trade)
+                self._record_exit_stats(exit_trade)
 
                 if self._inv is not None:
                     inventory_delta = self._inv.apply_paper_exit(
@@ -345,6 +359,15 @@ class PaperEngine:
             return self._evaluate_domestic_exit(trade, quote, now, holding_sec, qty)
         b_bid = quote['binance']['bid']
         b_ask = quote['binance']['ask']
+        entry_buy = float(trade.get('entry_buy_price_krw', 0) or 0)
+        entry_sell = float(trade.get('entry_sell_price_krw', 0) or 0)
+        if min(float(u_bid or 0), float(u_ask or 0), float(b_bid or 0), float(b_ask or 0), float(krw_usdt or 0), entry_buy, entry_sell) <= 0:
+            return self._invalid_exit_trade(
+                trade, now, holding_sec,
+                exit_upbit_bid=u_bid, exit_upbit_ask=u_ask,
+                exit_binance_bid=b_bid, exit_binance_ask=b_ask,
+                exit_krw_usdt=krw_usdt,
+            )
 
         # 현재 방향별 순익 bp 계산
         total_cost_bp = cfg.total_cost_bp
@@ -359,13 +382,28 @@ class PaperEngine:
             realized_pnl_krw   = qty * (b_bid * krw_usdt - u_ask) - qty * u_ask * (total_cost_bp / 10000)
             realized_bp        = current_surplus_bp - total_cost_bp
 
+        if dirn == 'A':
+            exit_buy = float(u_ask)
+            exit_sell = float(b_bid) * krw_usdt
+        else:
+            exit_buy = float(b_ask) * krw_usdt
+            exit_sell = float(u_bid)
+        exit_fee_krw = qty * exit_buy * trade['fees_bp'] / 10000
+        realized_pnl_krw = (
+            qty * ((entry_sell - entry_buy) + (exit_sell - exit_buy))
+            - float(trade.get('entry_fee_krw', 0) or 0)
+            - exit_fee_krw
+        )
+        notional = float(trade.get('selected_notional_krw', 0) or 0)
+        realized_bp = realized_pnl_krw / notional * 10000 if notional else 0.0
+
         entry_bp = trade['best_net_surplus_bp']
         bp_change = realized_bp - entry_bp   # 양수 = 스프레드 확대(불리), 음수 = 축소(유리)
 
         exit_reason = None
 
         # TIMEOUT
-        if holding_sec >= cfg.paper_timeout_sec:
+        if holding_sec >= max(cfg.paper_timeout_sec, cfg.paper_min_hold_before_timeout_sec):
             exit_reason = 'TIMEOUT'
 
         # TP: realized_bp가 entry_bp에서 take_profit_bp만큼 개선
@@ -378,6 +416,9 @@ class PaperEngine:
         # SL: realized_pnl_krw < -SL_threshold
         sl_threshold_krw = trade['net_expected_profit_krw'] * (cfg.paper_stop_loss_bp / 10000)
         if exit_reason is None and realized_pnl_krw <= -sl_threshold_krw:
+            if holding_sec < cfg.paper_min_hold_before_sl_sec:
+                self._defer_exit('SL', trade, holding_sec, realized_pnl_krw)
+                return None
             exit_reason = 'SL'
 
         if exit_reason is None:
@@ -412,6 +453,13 @@ class PaperEngine:
         direction = trade['best_direction']
         entry_buy = float(trade.get('entry_buy_price_krw', 0) or 0)
         entry_sell = float(trade.get('entry_sell_price_krw', 0) or 0)
+        if min(float(u_bid or 0), float(u_ask or 0), float(h_bid or 0), float(h_ask or 0), entry_buy, entry_sell) <= 0:
+            return self._invalid_exit_trade(
+                trade, now, holding_sec,
+                exit_upbit_bid=u_bid, exit_upbit_ask=u_ask,
+                exit_bithumb_bid=h_bid, exit_bithumb_ask=h_ask,
+                exit_krw_usdt=None,
+            )
         exit_buy, exit_sell = (
             (u_ask, h_bid) if direction == 'UPBIT_BITHUMB_A' else (h_ask, u_bid)
         )
@@ -424,7 +472,7 @@ class PaperEngine:
         notional = float(trade.get('selected_notional_krw', 0) or 0)
         realized_bp = realized_pnl_krw / notional * 10000 if notional else 0.0
         exit_reason = None
-        if holding_sec >= cfg.paper_timeout_sec:
+        if holding_sec >= max(cfg.paper_timeout_sec, cfg.paper_min_hold_before_timeout_sec):
             exit_reason = 'TIMEOUT'
         tp_threshold_krw = trade['net_expected_profit_krw'] * (
             1 + cfg.paper_take_profit_bp / 10000
@@ -435,6 +483,9 @@ class PaperEngine:
             cfg.paper_stop_loss_bp / 10000
         )
         if exit_reason is None and realized_pnl_krw <= -sl_threshold_krw:
+            if holding_sec < cfg.paper_min_hold_before_sl_sec:
+                self._defer_exit('SL', trade, holding_sec, realized_pnl_krw)
+                return None
             exit_reason = 'SL'
         if exit_reason is None:
             return None
@@ -454,6 +505,50 @@ class PaperEngine:
     # ──────────────────────────────────────────────────────────────────────
     # 조회 헬퍼
     # ──────────────────────────────────────────────────────────────────────
+
+    def _invalid_exit_trade(self, trade: dict, now: float, holding_sec: float, **prices) -> dict:
+        return {
+            **trade,
+            'event': 'EXIT',
+            'status': 'CLOSED',
+            'exit_time': now,
+            'exit_reason': 'INVALID_EXIT_PRICE',
+            'holding_sec': round(holding_sec, 2),
+            'realized_pnl_krw': 0.0,
+            'realized_bp': 0.0,
+            **prices,
+            'win': False,
+            'clean_win': False,
+        }
+
+    def _defer_exit(self, reason: str, trade: dict, holding_sec: float, pnl_krw: float) -> None:
+        self._exit_stats['paper_exit_min_hold_skip_count'] += 1
+        if reason == 'SL':
+            self._exit_stats['paper_exit_sl_deferred_count'] += 1
+        self._exit_stats['paper_exit_last_reason'] = 'MIN_HOLD_SKIP'
+        self._exit_stats['paper_exit_last_holding_sec'] = round(holding_sec, 2)
+        self._exit_stats['paper_exit_last_symbol'] = trade.get('symbol', '')
+        self._exit_stats['paper_exit_last_pnl_krw'] = round(pnl_krw, 2)
+
+    def _record_exit_stats(self, exit_trade: dict) -> None:
+        reason = exit_trade.get('exit_reason', '')
+        if reason == 'SL':
+            self._exit_stats['paper_exit_sl_count'] += 1
+        elif reason == 'TIMEOUT':
+            self._exit_stats['paper_exit_timeout_count'] += 1
+        elif reason in ('TP', 'TAKE_PROFIT'):
+            self._exit_stats['paper_exit_take_profit_count'] += 1
+        elif reason == 'INVALID_EXIT_PRICE':
+            self._exit_stats['paper_exit_invalid_price_count'] += 1
+        elif reason == 'STALE_EXIT_QUOTE':
+            self._exit_stats['paper_exit_stale_quote_count'] += 1
+        self._exit_stats['paper_exit_last_reason'] = reason
+        self._exit_stats['paper_exit_last_holding_sec'] = exit_trade.get('holding_sec')
+        self._exit_stats['paper_exit_last_symbol'] = exit_trade.get('symbol', '')
+        self._exit_stats['paper_exit_last_pnl_krw'] = exit_trade.get('realized_pnl_krw')
+
+    def exit_stats(self) -> dict:
+        return dict(self._exit_stats)
 
     def open_count(self) -> int:
         return len(self._open_trades)

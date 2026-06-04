@@ -370,6 +370,10 @@ class Config:
     @property
     def paper_stop_loss_bp(self): return self.get('paper_stop_loss_bp', 20)
     @property
+    def paper_min_hold_before_sl_sec(self): return self.get('paper_min_hold_before_sl_sec', 3)
+    @property
+    def paper_min_hold_before_timeout_sec(self): return self.get('paper_min_hold_before_timeout_sec', 1)
+    @property
     def paper_initial_upbit_krw(self): return self.get('paper_initial_upbit_krw', 1000000)
     @property
     def paper_initial_binance_usdt(self): return self.get('paper_initial_binance_usdt', 700)

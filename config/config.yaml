@@ -186,6 +186,8 @@ consecutive_fail_limit: 3
 paper_timeout_sec: 300
 paper_take_profit_bp: 20
 paper_stop_loss_bp: 20
+paper_min_hold_before_sl_sec: 3
+paper_min_hold_before_timeout_sec: 1
 
 raw_save_enabled: false
 bounded_collector_enabled: false

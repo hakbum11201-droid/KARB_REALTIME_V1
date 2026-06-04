@@ -421,3 +421,7 @@ For long paper smoke tests, the recommended checks are:
   routing, mock-trade filtering, entry-reason summaries, stale recheck health,
   direct REST/429 telemetry, and live/tiny-live guard readiness. If it reports
   `FAIL`, do not add features first; fix the printed failure reason.
+- Paper exits use a small minimum hold window before SL/TIMEOUT evaluation so a
+  trade is not opened and stopped out on the same quote tick. This does not
+  remove SL or improve PnL artificially; it keeps paper evaluation closer to a
+  real unwind flow and reports deferred SL/min-hold counters in telemetry.
