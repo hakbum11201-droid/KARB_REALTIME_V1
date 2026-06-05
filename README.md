@@ -476,3 +476,12 @@ For long paper smoke tests, the recommended checks are:
   `tiny_live_enabled: true` and `tiny_live_calibration.enabled: true` are set
   and the preflight returns `can_submit=true`. With `one_shot_first: true`, the
   first calibration session allows only one submit; defaults remain off.
+- After H7-C, stricter per-leg freshness can reduce paper entries. The
+  `/api/entry-diagnostics` endpoint and the Entry Diagnostics UI line show
+  suppression counts, top blockers, leg-quote block ratios, and paper-only
+  recovery results. Recovery is not a cap relaxation: stale-leg candidates keep
+  the same paper/tiny/live freshness caps, and paper mode may request one
+  bounded priority refresh before the candidate is judged again. Tiny-live and
+  live keep strict freshness guards. `NO_ELIGIBLE_CANDIDATE` in
+  `/api/tiny-live/preflight` is normal when no allowed-symbol candidate has
+  positive expected net, sufficient depth/fill, and fresh legs.

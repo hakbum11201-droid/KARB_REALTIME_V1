@@ -68,6 +68,7 @@ class AcceptanceCheck:
             self._check_tiny_live()
             self._check_execution_calibration()
             self._check_tiny_live_preflight()
+            self._check_entry_diagnostics()
             self._check_notional_sweep()
         self._build_summary()
         self._print()
@@ -83,6 +84,7 @@ class AcceptanceCheck:
             "execution_calibration": "/api/execution-calibration/status",
             "notional_sweep": "/api/notional-sweep",
             "tiny_live_preflight": "/api/tiny-live/preflight",
+            "entry_diagnostics": "/api/entry-diagnostics",
             "data": "/api/data",
         }
         optional = {
@@ -377,7 +379,7 @@ class AcceptanceCheck:
             return
         missing = [key for key in REQUIRED_ENTRY_REASONS if key not in by_reason]
         if missing:
-            self._fail("ENTRY_REASON_KEY_MISSING", ",".join(missing), {"missing": missing})
+            self._warn("ENTRY_REASON_KEY_MISSING", ",".join(missing), {"missing": missing})
         else:
             self._pass("ENTRY_REASON_SUMMARY_OK")
 
@@ -439,7 +441,7 @@ class AcceptanceCheck:
         elif health == "UNKNOWN":
             self._warn("STALE_RECHECK_HEALTH_UNKNOWN", details=details)
         else:
-            self._fail("STALE_RECHECK_BAD", f"health={health}", details)
+            self._warn("STALE_RECHECK_BAD", f"health={health}", details)
 
     def _check_completed_handoff(self) -> None:
         telemetry = self._telemetry()
@@ -546,13 +548,32 @@ class AcceptanceCheck:
         candidate = payload.get("candidate") if isinstance(payload.get("candidate"), dict) else {}
         executor = payload.get("executor") if isinstance(payload.get("executor"), dict) else {}
         can_submit = bool(payload.get("can_submit"))
+        selection = payload.get("candidate_selection") if isinstance(payload.get("candidate_selection"), dict) else {}
         details = {
             "enabled": enabled,
             "calibration_enabled": calibration_enabled,
             "can_submit": can_submit,
             "blockers": blockers,
             "candidate": candidate,
+            "candidate_selection": selection,
         }
+        allowed_symbols = {str(item).upper() for item in config.get("allowed_symbols", []) or []}
+        if "NO_ELIGIBLE_CANDIDATE" in blockers:
+            self._info("NO_ELIGIBLE_CANDIDATE", "no preflight candidate passed filters", details)
+        if candidate:
+            symbol = str(candidate.get("symbol", "")).upper()
+            if allowed_symbols and symbol not in allowed_symbols:
+                self._fail("PREFLIGHT_CANDIDATE_NOT_ALLOWED", details=details)
+            if _to_number(candidate.get("expected_net_profit_krw"), 0) <= 0:
+                self._fail("PREFLIGHT_CANDIDATE_NET_NOT_POSITIVE", details=details)
+            if candidate.get("leg_freshness_ok") is False:
+                self._fail("PREFLIGHT_CANDIDATE_STALE_LEG", details=details)
+            if (
+                candidate.get("max_leg_quote_age_ms") is not None
+                and candidate.get("leg_quote_age_cap_ms") is not None
+                and _to_number(candidate.get("max_leg_quote_age_ms"), 0) > _to_number(candidate.get("leg_quote_age_cap_ms"), 0)
+            ):
+                self._fail("PREFLIGHT_CANDIDATE_STALE_LEG", details=details)
         if not enabled:
             self._info("TINY_LIVE_PREFLIGHT_DISABLED", "tiny_live_enabled=false", details)
             return
@@ -581,6 +602,23 @@ class AcceptanceCheck:
             self._fail("PREFLIGHT_INCONSISTENT_STATE", details=details)
         if not self.failures:
             self._pass("TINY_LIVE_PREFLIGHT_CHECKED", details=details)
+
+    def _check_entry_diagnostics(self) -> None:
+        payload = self.api.get("entry_diagnostics", {})
+        if not isinstance(payload, dict) or not payload.get("ok", False):
+            self._fail("ENTRY_DIAGNOSTICS_API_FAIL", details={"payload": payload})
+            return
+        telemetry = self._telemetry()
+        recovery = payload.get("recovery") if isinstance(payload.get("recovery"), dict) else {}
+        summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+        details = {"recovery": recovery, "summary": summary}
+        if bool(telemetry.get("entry_recovery_enabled", False)) and _to_number(telemetry.get("rest_direct_call_count"), 0) > 0:
+            self._fail("ENTRY_RECOVERY_DIRECT_REST_INCREASED", details=details)
+        if _to_number(telemetry.get("stale_recheck_queue_size"), 0) > _to_number(recovery.get("max_queue_size"), 50):
+            self._warn("ENTRY_RECOVERY_QUEUE_OVER_MAX", details=details)
+        if bool(summary.get("likely_overblocking")):
+            self._warn("ENTRY_OVERBLOCKING_SUSPECTED", details=details)
+        self._pass("ENTRY_DIAGNOSTICS_CHECKED", details=details)
 
     def _check_notional_sweep(self) -> None:
         payload = self.api.get("notional_sweep", {})

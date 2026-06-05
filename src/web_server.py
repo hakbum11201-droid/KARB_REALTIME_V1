@@ -333,6 +333,7 @@ def _tiny_live_status_payload():
 
 
 def _tiny_live_preflight_payload(pair_id='UPBIT_BITHUMB'):
+    # Contract includes candidate_blockers and NO_ELIGIBLE_CANDIDATE from the preflight selector.
     return build_tiny_live_preflight(pair_id=pair_id or 'UPBIT_BITHUMB', check_balances=True)
 
 
@@ -354,6 +355,48 @@ def _telemetry_payload():
         'notional_sweep_notionals_krw': notionals,
     })
     return {'ok': True, 'error': '', 'blockers': [], 'telemetry': telemetry}
+
+
+def _entry_diagnostics_payload():
+    telemetry = _read_json(os.path.join(RUNTIME_DIR, 'telemetry.json'))
+    suppression_by_reason = telemetry.get('entry_suppression_by_reason', {}) or {}
+    suppression_by_entry_reason = telemetry.get('entry_suppression_by_entry_reason', {}) or {}
+    recovery = {
+        'request_count': telemetry.get('entry_recovery_request_count', 0),
+        'retry_count': telemetry.get('entry_recovery_retry_count', 0),
+        'success_count': telemetry.get('entry_recovery_success_count', 0),
+        'fail_count': telemetry.get('entry_recovery_fail_count', 0),
+        'last_symbol': telemetry.get('entry_recovery_last_symbol', ''),
+        'last_reason': telemetry.get('entry_recovery_last_reason', ''),
+        'last_result': telemetry.get('entry_recovery_last_result', ''),
+        'max_queue_size': telemetry.get('entry_recovery_queue_max_size', cfg.entry_recovery_max_queue_size),
+    }
+    top_blockers = telemetry.get('entry_diagnostics_top_blockers') or [
+        {'reason': reason, 'count': count}
+        for reason, count in sorted(
+            suppression_by_reason.items(), key=lambda item: item[1], reverse=True
+        )[:5]
+    ]
+    summary = {
+        'trade_rate_per_hour': telemetry.get('entry_diagnostics_trade_rate_per_hour', 0),
+        'recovery_success_ratio': telemetry.get('entry_diagnostics_recovery_success_ratio', 0),
+        'leg_quote_block_ratio': telemetry.get('entry_diagnostics_leg_quote_block_ratio', 0),
+        'likely_overblocking': bool(telemetry.get('entry_diagnostics_likely_overblocking', False)),
+    }
+    return {
+        'ok': True,
+        'error': '',
+        'blockers': [],
+        'updated_at': telemetry.get('updated_at', 0),
+        'entry_attempts': telemetry.get('paper_entry_attempt_count', 0),
+        'entry_success': telemetry.get('paper_entry_success_count', 0),
+        'entry_blocked': telemetry.get('paper_entry_blocked_count', 0),
+        'suppression_by_reason': suppression_by_reason,
+        'suppression_by_entry_reason': suppression_by_entry_reason,
+        'recovery': recovery,
+        'top_blockers': top_blockers,
+        'summary': summary,
+    }
 
 
 def _execution_calibration_status_payload():
@@ -860,6 +903,9 @@ class KarbHandler(SimpleHTTPRequestHandler):
 
         elif self.path == '/api/telemetry':
             self._send_guarded_json(_telemetry_payload)
+
+        elif self.path == '/api/entry-diagnostics':
+            self._send_guarded_json(_entry_diagnostics_payload)
 
         elif path == '/api/notional-sweep':
             self._send_guarded_json(_notional_sweep_payload)

@@ -36,6 +36,7 @@ let latestRateLimit = {};
 let latestCalibration = {};
 let latestNotionalSweep = {};
 let latestTinyLivePreflight = {};
+let latestEntryDiagnostics = {};
 let lastSummaryFetchAt = 0;
 
 const durationText = seconds => {
@@ -892,6 +893,7 @@ function renderLongRunTelemetry(t={}) {
   setText('no-go-top3', `NO-GO top 3: ${noGo.map(([reason,count])=>`${reason} ${count}`).join(' / ')||'--'}`);
   renderLiveFreshnessTelemetry(t);
   renderEntryRouteTelemetry(t);
+  renderEntryDiagnostics(latestEntryDiagnostics, t);
   renderStaleRecheckTelemetry(t);
   renderWebSocketHealth(t);
   renderMemoryTelemetry(t);
@@ -929,6 +931,27 @@ function renderEntryRouteTelemetry(t={}) {
   if (!el) return;
   const rejectDetail=t.paper_engine_reject_last_detail?JSON.stringify(t.paper_engine_reject_last_detail).slice(0,160):'{}';
   el.textContent=`Entry Route | Paper attempts/success/blocked ${fmt(t.paper_entry_attempt_count)} / ${fmt(t.paper_entry_success_count)} / ${fmt(t.paper_entry_blocked_count)} | Completed handoff route/old/dup ${fmt(t.completed_handoff_entry_route_count)} / ${fmt(t.completed_handoff_entry_skip_old_count)} / ${fmt(t.completed_handoff_entry_duplicate_skip_count)} last ${t.completed_handoff_entry_last_symbol||'--'} ${t.completed_handoff_entry_last_reason||'--'} age ${fmt(t.completed_handoff_entry_last_age_ms,1)} ms | Decision wait last/p95 ${fmt(t.entry_decision_wait_ms,1)} / ${fmt(t.entry_decision_wait_p95_ms,1)} ms warn ${fmt(t.entry_decision_wait_warn_count)} handoff plan/route ${fmt(t.completed_handoff_to_plan_ms,1)} / ${fmt(t.completed_handoff_to_route_ms,1)} ms fast ${fmt(t.completed_handoff_fast_route_count)} | Leg age buy/sell/max/cap ${fmt(t.leg_quote_last_buy_age_ms,1)} / ${fmt(t.leg_quote_last_sell_age_ms,1)} / ${fmt(t.leg_quote_last_max_age_ms,1)} / ${fmt(t.leg_quote_last_cap_ms,1)} ms blocker ${t.leg_quote_last_blocker||'--'} refresh ${fmt(t.stale_leg_priority_refresh_request_count)} ${t.stale_leg_priority_refresh_last_venue||'--'}:${t.stale_leg_priority_refresh_last_symbol||'--'} fallback ${fmt(t.stale_leg_priority_refresh_fallback_count)} | Paper last ${t.paper_entry_last_symbol||'--'} ${t.paper_entry_last_reason||'--'} blocker ${t.paper_entry_last_blocker||'--'} quote age ${fmt(t.paper_entry_last_quote_age_ms,1)} ms / cap ${fmt(t.paper_entry_last_quote_age_cap_ms,1)} ms ${t.paper_entry_last_quote_age_source||'UNKNOWN'} refreshed ${t.paper_entry_last_refreshed_at?ageText(Date.now()/1000-t.paper_entry_last_refreshed_at):'--'} fetch ${fmt(t.paper_entry_last_fetch_ms,1)} ms | WIDE_SPREAD blocks total/age/edge/slip ${fmt(t.wide_spread_entry_blocked_count)} / ${fmt(t.wide_spread_entry_blocked_quote_age_count)} / ${fmt(t.wide_spread_entry_blocked_edge_count)} / ${fmt(t.wide_spread_entry_blocked_slippage_count)} last ${t.wide_spread_entry_last_blocker||'--'} age ${fmt(t.wide_spread_entry_last_age_ms,1)} surplus ${fmt(t.wide_spread_entry_last_surplus_bp,1)} net ${fmt(t.wide_spread_entry_last_net_krw,0)} | Paper Engine Reject ${t.paper_engine_reject_last_reason||'--'} detail ${rejectDetail} inventory/qty/notional/dup/price ${fmt(t.paper_engine_reject_inventory_count)} / ${fmt(t.paper_engine_reject_qty_count)} / ${fmt(t.paper_engine_reject_notional_count)} / ${fmt(t.paper_engine_reject_duplicate_count)} / ${fmt(t.paper_engine_reject_price_count)} | Seed ${fmt(t.paper_inventory_seeded_symbol_count)} seeded / ${fmt(t.paper_inventory_seed_skipped_symbol_count)} skipped | Paper p95 entry quote ${fmt(t.paper_entry_p95_quote_age_ms,1)} ms | Paper exit SL/deferred/minhold/invalid ${fmt(t.paper_exit_sl_count)} / ${fmt(t.paper_exit_sl_deferred_count)} / ${fmt(t.paper_exit_min_hold_skip_count)} / ${fmt(t.paper_exit_invalid_price_count)} last ${t.paper_exit_last_symbol||'--'} ${t.paper_exit_last_reason||'--'} hold ${fmt(t.paper_exit_last_holding_sec,1)}s pnl ${fmt(t.paper_exit_last_pnl_krw,0)} | Live candidates/blocked ${fmt(t.live_entry_candidate_count)} / ${fmt(t.live_entry_blocked_count)} submit ${fmt(t.live_order_submit_attempt_count)} / ${fmt(t.live_order_submit_success_count)} / ${fmt(t.live_order_submit_fail_count)} | Tiny entry ${fmt(t.tiny_live_entry_attempt_count)} / ${fmt(t.tiny_live_entry_success_count)} / ${fmt(t.tiny_live_entry_blocked_count)} submit ${fmt(t.tiny_live_order_submit_attempt_count)} / ${fmt(t.tiny_live_order_submit_success_count)} / ${fmt(t.tiny_live_order_submit_fail_count)} | Live last ${t.live_entry_last_symbol||'--'} ${t.live_entry_last_reason||'--'} blocker ${t.live_entry_last_blocker||'--'} quote ${fmt(t.live_entry_last_quote_age_ms,1)} ms`;
+}
+
+function renderEntryDiagnostics(d={}, t={}) {
+  let el=document.getElementById('entry-diagnostics-status');
+  if (!el) {
+    const anchor=document.getElementById('entry-route-telemetry')||document.getElementById('live-freshness-telemetry')||document.getElementById('no-go-top3');
+    if (anchor?.parentElement) {
+      el=document.createElement('div');
+      el.id='entry-diagnostics-status';
+      el.className='active-symbol-list';
+      anchor.parentElement.append(el);
+    }
+  }
+  if (!el) return;
+  const summary=d.summary||{};
+  const recovery=d.recovery||{};
+  const blockers=(d.top_blockers||t.entry_diagnostics_top_blockers||[])
+    .slice(0,3)
+    .map(row=>`${row.reason}:${fmt(row.count)}`)
+    .join(', ')||'--';
+  el.textContent=`Entry Diagnostics | trade rate ${fmt(summary.trade_rate_per_hour??t.entry_diagnostics_trade_rate_per_hour,3)}/h | top blockers ${blockers} | leg quote blocked ${fmt((summary.leg_quote_block_ratio??t.entry_diagnostics_leg_quote_block_ratio)*100,1)}% | recovery req/success/fail ${fmt(recovery.request_count??t.entry_recovery_request_count)} / ${fmt(recovery.success_count??t.entry_recovery_success_count)} / ${fmt(recovery.fail_count??t.entry_recovery_fail_count)} | last ${recovery.last_symbol||t.entry_recovery_last_symbol||'--'} ${recovery.last_reason||t.entry_recovery_last_reason||'--'} ${recovery.last_result||t.entry_recovery_last_result||'--'} | likely overblocking ${String(Boolean(summary.likely_overblocking??t.entry_diagnostics_likely_overblocking))}`;
 }
 
 function renderStaleRecheckTelemetry(t={}) {
@@ -1027,22 +1050,25 @@ function renderRestFallbackCacheStatus(t={}) {
 
 async function fetchRuntimeServices() {
   try {
-    const [scannerRes, storeRes, rateLimitRes, calibrationRes, preflightRes] = await Promise.all([
+    const [scannerRes, storeRes, rateLimitRes, calibrationRes, preflightRes, entryDiagnosticsRes] = await Promise.all([
       fetch('/api/market/scanner'),
       fetch('/api/runtime-store/status'),
       fetch('/api/rate-limit/status'),
       fetch('/api/execution-calibration/status'),
       fetch('/api/tiny-live/preflight'),
+      fetch('/api/entry-diagnostics'),
     ]);
-    if (!scannerRes.ok || !storeRes.ok || !rateLimitRes.ok || !calibrationRes.ok || !preflightRes.ok) return;
+    if (!scannerRes.ok || !storeRes.ok || !rateLimitRes.ok || !calibrationRes.ok || !preflightRes.ok || !entryDiagnosticsRes.ok) return;
     latestScanner = await scannerRes.json();
     latestRuntimeStore = await storeRes.json();
     latestRateLimit = await rateLimitRes.json();
     latestCalibration = await calibrationRes.json();
     latestTinyLivePreflight = await preflightRes.json();
+    latestEntryDiagnostics = await entryDiagnosticsRes.json();
     renderRuntimeServices(latestScanner, latestRuntimeStore, latestRateLimit);
     renderExecutionCalibration(latestTelemetry, latestCalibration);
     renderTinyLivePreflight(latestTinyLivePreflight, latestTelemetry);
+    renderEntryDiagnostics(latestEntryDiagnostics, latestTelemetry);
   } catch (error) {
     console.error('[runtime services] failed', error);
   }

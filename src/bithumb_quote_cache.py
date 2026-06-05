@@ -253,6 +253,7 @@ class BithumbQuoteCache:
             ),
             'pair_id': request.get('pair_id', 'UPBIT_BITHUMB'),
             'symbol': request.get('symbol', ''),
+            'reason': request.get('reason', ''),
             'requested_at': request.get('requested_at'),
             'refresh_started_at': refresh_started_at,
             'refreshed_at': refreshed_at,

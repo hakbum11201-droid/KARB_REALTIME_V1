@@ -82,6 +82,17 @@ wide_spread_recheck_paper_only: true
 wide_spread_recheck_min_surplus_bp_extra: 10
 wide_spread_recheck_min_net_profit_krw: 10
 wide_spread_recheck_allowed_liquidity: [GOOD, NORMAL]
+entry_recovery:
+  enabled: true
+  paper_only: true
+  max_retry_per_signal: 1
+  retry_cooldown_sec: 2
+  max_queue_size: 50
+  min_expected_net_krw: 30
+  allowed_reasons:
+    - BUY_LEG_QUOTE_TOO_OLD
+    - SELL_LEG_QUOTE_TOO_OLD
+    - MAX_LEG_QUOTE_TOO_OLD
 use_websocket_market_data: true
 rest_fallback_enabled: true
 rate_limiter_enabled: true

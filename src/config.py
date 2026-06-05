@@ -196,6 +196,22 @@ class Config:
     @property
     def wide_spread_entry_max_dynamic_slippage_bp(self): return self.get('wide_spread_entry_max_dynamic_slippage_bp', 20)
     @property
+    def entry_recovery(self): return self.get('entry_recovery', {})
+    @property
+    def entry_recovery_enabled(self): return self.entry_recovery.get('enabled', True)
+    @property
+    def entry_recovery_paper_only(self): return self.entry_recovery.get('paper_only', True)
+    @property
+    def entry_recovery_max_retry_per_signal(self): return self.entry_recovery.get('max_retry_per_signal', 1)
+    @property
+    def entry_recovery_retry_cooldown_sec(self): return self.entry_recovery.get('retry_cooldown_sec', 2)
+    @property
+    def entry_recovery_max_queue_size(self): return self.entry_recovery.get('max_queue_size', 50)
+    @property
+    def entry_recovery_min_expected_net_krw(self): return self.entry_recovery.get('min_expected_net_krw', 30)
+    @property
+    def entry_recovery_allowed_reasons(self): return self.entry_recovery.get('allowed_reasons', ['BUY_LEG_QUOTE_TOO_OLD', 'SELL_LEG_QUOTE_TOO_OLD', 'MAX_LEG_QUOTE_TOO_OLD'])
+    @property
     def use_websocket_market_data(self): return self.get('use_websocket_market_data', True)
     @property
     def rest_fallback_enabled(self): return self.get('rest_fallback_enabled', True)

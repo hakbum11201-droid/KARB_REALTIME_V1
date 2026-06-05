@@ -56,6 +56,31 @@ LEG_QUOTE_STATS = {
     'stale_leg_priority_refresh_last_symbol': '',
     'stale_leg_priority_refresh_fallback_count': 0,
 }
+ENTRY_SUPPRESSION_STATS = {
+    'entry_suppression_total_count': 0,
+    'entry_suppression_by_reason': {},
+    'entry_suppression_by_entry_reason': {},
+    'entry_suppression_leg_quote_count': 0,
+    'entry_suppression_positive_net_count': 0,
+    'entry_suppression_depth_count': 0,
+    'entry_suppression_duplicate_count': 0,
+    'entry_suppression_risk_count': 0,
+    'entry_suppression_last_symbol': '',
+    'entry_suppression_last_reason': '',
+    'entry_suppression_last_expected_net_krw': 0.0,
+    'entry_suppression_last_max_leg_age_ms': None,
+    'entry_suppression_last_cap_ms': None,
+}
+ENTRY_RECOVERY_STATS = {
+    'entry_recovery_request_count': 0,
+    'entry_recovery_retry_count': 0,
+    'entry_recovery_success_count': 0,
+    'entry_recovery_fail_count': 0,
+    'entry_recovery_last_symbol': '',
+    'entry_recovery_last_reason': '',
+    'entry_recovery_last_result': '',
+}
+ENTRY_RECOVERY_KEYS = {}
 
 
 def _decision_record(calc_res, reason, is_safe, quote_source, quote_age_ms):
@@ -698,6 +723,7 @@ def _completed_handoff_entry_fields(signal, result, now=None):
         'stale_recheck_refreshed_at': refreshed_at,
         'stale_recheck_cache_completed_at': refreshed_at,
         'stale_recheck_fetch_ms': result.get('fetch_ms'),
+        'completed_handoff_reason': result.get('reason', ''),
         'quote_source': 'targeted_refresh',
     }
 
@@ -868,7 +894,7 @@ def _request_stale_leg_priority_refresh(signal, rest_cache=None, bithumb_cache=N
     symbol = signal.get('stale_leg_symbol') or signal.get('symbol', '')
     pair_id = signal.get('pair_id', 'UPBIT_BINANCE')
     if not venue or not symbol:
-        return
+        return {'queued': False, 'reason': 'STALE_LEG_UNAVAILABLE'}
     result = {'queued': False}
     if venue == 'BITHUMB' and bithumb_cache is not None:
         result = bithumb_cache.request_priority_refresh(
@@ -889,11 +915,72 @@ def _request_stale_leg_priority_refresh(signal, rest_cache=None, bithumb_cache=N
         if venue not in ('UPBIT', 'BINANCE'):
             LEG_QUOTE_STATS['stale_leg_priority_refresh_fallback_count'] += 1
     else:
-        return
+        return {'queued': False, 'reason': 'CACHE_UNAVAILABLE'}
     if result.get('queued'):
         LEG_QUOTE_STATS['stale_leg_priority_refresh_request_count'] += 1
         LEG_QUOTE_STATS['stale_leg_priority_refresh_last_venue'] = venue
         LEG_QUOTE_STATS['stale_leg_priority_refresh_last_symbol'] = symbol
+    return result
+
+
+def _record_entry_suppression(signal, entry_reason, blockers):
+    if not blockers:
+        return
+    reason = next(iter(blockers), 'UNKNOWN')
+    ENTRY_SUPPRESSION_STATS['entry_suppression_total_count'] += 1
+    by_reason = ENTRY_SUPPRESSION_STATS['entry_suppression_by_reason']
+    by_reason[reason] = int(by_reason.get(reason, 0) or 0) + 1
+    by_entry_reason = ENTRY_SUPPRESSION_STATS['entry_suppression_by_entry_reason']
+    by_entry_reason[entry_reason] = int(by_entry_reason.get(entry_reason, 0) or 0) + 1
+    ENTRY_SUPPRESSION_STATS['entry_suppression_last_symbol'] = signal.get('symbol', '')
+    ENTRY_SUPPRESSION_STATS['entry_suppression_last_reason'] = reason
+    ENTRY_SUPPRESSION_STATS['entry_suppression_last_expected_net_krw'] = signal.get('net_expected_profit_krw', 0)
+    ENTRY_SUPPRESSION_STATS['entry_suppression_last_max_leg_age_ms'] = signal.get('max_leg_quote_age_ms')
+    ENTRY_SUPPRESSION_STATS['entry_suppression_last_cap_ms'] = signal.get('leg_quote_age_cap_ms')
+    if any(item in blockers for item in ('LEG_QUOTE_TOO_OLD', 'BUY_LEG_QUOTE_TOO_OLD', 'SELL_LEG_QUOTE_TOO_OLD', 'MAX_LEG_QUOTE_TOO_OLD', 'UNKNOWN_LEG_QUOTE_AGE')):
+        ENTRY_SUPPRESSION_STATS['entry_suppression_leg_quote_count'] += 1
+        if float(signal.get('net_expected_profit_krw', 0) or 0) > 0:
+            ENTRY_SUPPRESSION_STATS['entry_suppression_positive_net_count'] += 1
+    if any(item in blockers for item in ('DEPTH_INSUFFICIENT', 'ENTRY_LIQUIDITY_BLOCKED')):
+        ENTRY_SUPPRESSION_STATS['entry_suppression_depth_count'] += 1
+    if 'DUPLICATE_OPEN_TRADE' in blockers:
+        ENTRY_SUPPRESSION_STATS['entry_suppression_duplicate_count'] += 1
+    if any(item in blockers for item in ('RISK_GUARD_BLOCKED', 'ENTRY_NET_NOT_POSITIVE', 'WIDE_SPREAD_EDGE_TOO_LOW')):
+        ENTRY_SUPPRESSION_STATS['entry_suppression_risk_count'] += 1
+
+
+def _request_entry_recovery(signal, blockers, rest_cache=None, bithumb_cache=None):
+    if not cfg.entry_recovery_enabled:
+        return {'queued': False, 'reason': 'ENTRY_RECOVERY_DISABLED'}
+    if cfg.entry_recovery_paper_only and cfg.mode != 'paper':
+        return {'queued': False, 'reason': 'ENTRY_RECOVERY_PAPER_ONLY'}
+    reason = signal.get('leg_freshness_blocker') or next(iter(blockers), '')
+    if reason not in set(cfg.entry_recovery_allowed_reasons):
+        return {'queued': False, 'reason': 'ENTRY_RECOVERY_REASON_NOT_ALLOWED'}
+    if float(signal.get('net_expected_profit_krw', 0) or 0) < float(cfg.entry_recovery_min_expected_net_krw):
+        return {'queued': False, 'reason': 'ENTRY_RECOVERY_NET_TOO_LOW'}
+    now = time.time()
+    key = (
+        signal.get('pair_id', 'UPBIT_BINANCE'),
+        signal.get('symbol', ''),
+        signal.get('best_direction') or signal.get('direction', ''),
+        reason,
+    )
+    last = ENTRY_RECOVERY_KEYS.get(key, {'count': 0, 'last_at': 0.0})
+    if int(last.get('count', 0) or 0) >= int(cfg.entry_recovery_max_retry_per_signal):
+        return {'queued': False, 'reason': 'ENTRY_RECOVERY_RETRY_LIMIT'}
+    if now - float(last.get('last_at', 0) or 0) < float(cfg.entry_recovery_retry_cooldown_sec):
+        return {'queued': False, 'reason': 'ENTRY_RECOVERY_COOLDOWN'}
+    ENTRY_RECOVERY_KEYS[key] = {'count': int(last.get('count', 0) or 0) + 1, 'last_at': now}
+    signal['entry_recovery_requested'] = True
+    signal['entry_recovery_reason'] = reason
+    result = _request_stale_leg_priority_refresh(signal, rest_cache, bithumb_cache) or {'queued': False}
+    ENTRY_RECOVERY_STATS['entry_recovery_request_count'] += 1
+    ENTRY_RECOVERY_STATS['entry_recovery_retry_count'] += 1
+    ENTRY_RECOVERY_STATS['entry_recovery_last_symbol'] = signal.get('symbol', '')
+    ENTRY_RECOVERY_STATS['entry_recovery_last_reason'] = reason
+    ENTRY_RECOVERY_STATS['entry_recovery_last_result'] = result.get('reason', 'QUEUED' if result.get('queued') else 'NOT_QUEUED')
+    return result
 
 
 def _entry_blockers(signal, mode, entry_reason, paper_eng=None):
@@ -1006,12 +1093,15 @@ def route_signal_to_execution(signal, entry_reason, paper_eng=None, rest_cache=N
         'signal': prepared,
     }
     if blockers:
+        _record_entry_suppression(prepared, entry_reason, blockers)
         if any(item in blockers for item in (
             'LEG_QUOTE_TOO_OLD', 'BUY_LEG_QUOTE_TOO_OLD', 'SELL_LEG_QUOTE_TOO_OLD',
             'MAX_LEG_QUOTE_TOO_OLD', 'UNKNOWN_LEG_QUOTE_AGE',
         )):
             _record_leg_quote_block(prepared)
-            _request_stale_leg_priority_refresh(prepared, rest_cache, bithumb_cache)
+            if mode == 'paper':
+                recovery_result = _request_entry_recovery(prepared, blockers, rest_cache, bithumb_cache)
+                result['entry_recovery'] = recovery_result
         result['status'] = 'BLOCKED'
         return result
     if mode == 'paper':
@@ -2035,6 +2125,9 @@ def main():
                         trade = route.get('trade')
                         paper_entry_success_count += 1
                         paper_entry_count += 1
+                        if route.get('signal', {}).get('completed_handoff_reason') == 'STALE_LEG_QUOTE':
+                            ENTRY_RECOVERY_STATS['entry_recovery_success_count'] += 1
+                            ENTRY_RECOVERY_STATS['entry_recovery_last_result'] = 'ENTERED'
                         if _record_immediate_paper_fill(trade, perf_tracker, risk_guard):
                             paper_exit_count += 1
                         paper_entry_last_blocker = ''
@@ -2048,6 +2141,9 @@ def main():
                     else:
                         blockers = route.get('blockers', [])
                         paper_entry_blocked_count += 1
+                        if route.get('signal', {}).get('completed_handoff_reason') == 'STALE_LEG_QUOTE':
+                            ENTRY_RECOVERY_STATS['entry_recovery_fail_count'] += 1
+                            ENTRY_RECOVERY_STATS['entry_recovery_last_result'] = blockers[0] if blockers else 'BLOCKED'
                         paper_entry_last_blocker = blockers[0] if blockers else ''
                         if route.get('paper_engine_reject_reason'):
                             paper_engine_reject_last_reason = route.get('paper_engine_reject_reason', '')
@@ -2673,6 +2769,31 @@ def main():
             stale_recheck_queue_size,
             api_429_delta,
         )
+        suppression_by_reason = dict(ENTRY_SUPPRESSION_STATS['entry_suppression_by_reason'])
+        suppression_total = int(ENTRY_SUPPRESSION_STATS['entry_suppression_total_count'] or 0)
+        leg_quote_block_ratio = round(
+            ENTRY_SUPPRESSION_STATS['entry_suppression_leg_quote_count'] / max(1, suppression_total),
+            4,
+        )
+        recovery_done = (
+            int(ENTRY_RECOVERY_STATS['entry_recovery_success_count'] or 0)
+            + int(ENTRY_RECOVERY_STATS['entry_recovery_fail_count'] or 0)
+        )
+        recovery_success_ratio = round(
+            int(ENTRY_RECOVERY_STATS['entry_recovery_success_count'] or 0) / max(1, recovery_done),
+            4,
+        )
+        likely_overblocking = (
+            leg_quote_block_ratio >= 0.5
+            and recovery_success_ratio >= 0.3
+            and int(ENTRY_SUPPRESSION_STATS['entry_suppression_positive_net_count'] or 0) > 0
+        )
+        top_entry_blockers = [
+            {'reason': reason, 'count': count}
+            for reason, count in sorted(
+                suppression_by_reason.items(), key=lambda item: item[1], reverse=True
+            )[:5]
+        ]
         paper_exit_stats = paper_eng.exit_stats() if cfg.mode == 'paper' else {}
         paper_exit_stats.setdefault('paper_arb_fill_count', 0)
         paper_exit_stats.setdefault('paper_arb_fill_win_count', 0)
@@ -2750,6 +2871,18 @@ def main():
             **LEG_QUOTE_STATS,
             'paper_entry_blocked_reason_quote_age_count': paper_entry_blocked_reason_quote_age_count,
             'paper_entry_blocked_wide_spread_quote_age_count': paper_entry_blocked_wide_spread_quote_age_count,
+            **ENTRY_SUPPRESSION_STATS,
+            **ENTRY_RECOVERY_STATS,
+            'entry_recovery_enabled': cfg.entry_recovery_enabled,
+            'entry_recovery_queue_max_size': cfg.entry_recovery_max_queue_size,
+            'entry_diagnostics_top_blockers': top_entry_blockers,
+            'entry_diagnostics_trade_rate_per_hour': round(
+                paper_entry_success_count / max(1 / 3600, max(1e-9, now - started_at) / 3600),
+                4,
+            ),
+            'entry_diagnostics_recovery_success_ratio': recovery_success_ratio,
+            'entry_diagnostics_leg_quote_block_ratio': leg_quote_block_ratio,
+            'entry_diagnostics_likely_overblocking': likely_overblocking,
             'wide_spread_entry_blocked_count': wide_spread_entry_blocked_count,
             'wide_spread_entry_blocked_quote_age_count': wide_spread_entry_blocked_quote_age_count,
             'wide_spread_entry_blocked_edge_count': wide_spread_entry_blocked_edge_count,
