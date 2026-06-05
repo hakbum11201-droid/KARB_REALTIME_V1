@@ -610,12 +610,55 @@ class AcceptanceCheck:
             return
         telemetry = self._telemetry()
         recovery = payload.get("recovery") if isinstance(payload.get("recovery"), dict) else {}
+        stale_recovery = (
+            payload.get("profitable_stale_recovery")
+            if isinstance(payload.get("profitable_stale_recovery"), dict)
+            else {}
+        )
         summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
-        details = {"recovery": recovery, "summary": summary}
+        details = {"recovery": recovery, "profitable_stale_recovery": stale_recovery, "summary": summary}
         if bool(telemetry.get("entry_recovery_enabled", False)) and _to_number(telemetry.get("rest_direct_call_count"), 0) > 0:
             self._fail("ENTRY_RECOVERY_DIRECT_REST_INCREASED", details=details)
         if _to_number(telemetry.get("stale_recheck_queue_size"), 0) > _to_number(recovery.get("max_queue_size"), 50):
             self._warn("ENTRY_RECOVERY_QUEUE_OVER_MAX", details=details)
+        if _to_number(stale_recovery.get("queue_size"), 0) > _to_number(stale_recovery.get("max_queue_size"), 100):
+            self._warn("PROFITABLE_STALE_QUEUE_OVER_MAX", details=details)
+        stale_positive = _to_number(
+            stale_recovery.get("stale_quote_positive_count", telemetry.get("stale_quote_positive_count")),
+            0,
+        )
+        stale_requests = _to_number(
+            stale_recovery.get("request_count", telemetry.get("profitable_stale_recovery_request_count")),
+            0,
+        )
+        stale_success = _to_number(
+            stale_recovery.get("success_count", telemetry.get("profitable_stale_recovery_success_count")),
+            0,
+        )
+        paper_arb_fill_count = _to_number(telemetry.get("paper_arb_fill_count"), 0)
+        if stale_positive > 0 and stale_requests == 0:
+            self._warn("PROFITABLE_STALE_NOT_RECOVERED", details=details)
+        if stale_success > 0 and paper_arb_fill_count == 0:
+            self._warn("RECOVERY_SUCCESS_WITHOUT_FILL", details=details)
+        if _to_number(telemetry.get("live_order_submit_attempt_count"), 0) > 0:
+            self._fail("LIVE_ORDER_SUBMIT_ATTEMPT_DETECTED", details=details)
+        if _to_number(telemetry.get("tiny_live_order_submit_attempt_count"), 0) > 0:
+            self._fail("TINY_LIVE_ORDER_SUBMIT_ATTEMPT_DETECTED", details=details)
+        stale_direct_fills = [
+            {
+                "trade_id": trade.get("trade_id"),
+                "symbol": trade.get("symbol"),
+                "entry_reason": trade.get("entry_reason"),
+                "reason_no_trade": trade.get("reason_no_trade"),
+                "completed_handoff_reason": trade.get("completed_handoff_reason"),
+            }
+            for trade in self._extract_trades(self.api.get("trades", {}))
+            if trade.get("exit_reason") == "ARB_FILLED"
+            and trade.get("reason_no_trade") == "STALE_QUOTE"
+            and not trade.get("completed_handoff_reason")
+        ]
+        if stale_direct_fills:
+            self._fail("STALE_QUOTE_DIRECT_FILL", details={"trades": stale_direct_fills[:5]})
         if bool(summary.get("likely_overblocking")):
             self._warn("ENTRY_OVERBLOCKING_SUSPECTED", details=details)
         self._pass("ENTRY_DIAGNOSTICS_CHECKED", details=details)

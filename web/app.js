@@ -947,11 +947,16 @@ function renderEntryDiagnostics(d={}, t={}) {
   if (!el) return;
   const summary=d.summary||{};
   const recovery=d.recovery||{};
+  const staleRecovery=d.profitable_stale_recovery||{};
   const blockers=(d.top_blockers||t.entry_diagnostics_top_blockers||[])
     .slice(0,3)
     .map(row=>`${row.reason}:${fmt(row.count)}`)
     .join(', ')||'--';
-  el.textContent=`Entry Diagnostics | trade rate ${fmt(summary.trade_rate_per_hour??t.entry_diagnostics_trade_rate_per_hour,3)}/h | top blockers ${blockers} | leg quote blocked ${fmt((summary.leg_quote_block_ratio??t.entry_diagnostics_leg_quote_block_ratio)*100,1)}% | recovery req/success/fail ${fmt(recovery.request_count??t.entry_recovery_request_count)} / ${fmt(recovery.success_count??t.entry_recovery_success_count)} / ${fmt(recovery.fail_count??t.entry_recovery_fail_count)} | last ${recovery.last_symbol||t.entry_recovery_last_symbol||'--'} ${recovery.last_reason||t.entry_recovery_last_reason||'--'} ${recovery.last_result||t.entry_recovery_last_result||'--'} | likely overblocking ${String(Boolean(summary.likely_overblocking??t.entry_diagnostics_likely_overblocking))}`;
+  const staleTop=(staleRecovery.top_symbols||t.top_profitable_stale_symbols||[])
+    .slice(0,3)
+    .map(row=>`${row.symbol}:${fmt(row.count)}`)
+    .join(', ')||'--';
+  el.textContent=`Entry Diagnostics | trade rate ${fmt(summary.trade_rate_per_hour??t.entry_diagnostics_trade_rate_per_hour,3)}/h | top blockers ${blockers} | leg quote blocked ${fmt((summary.leg_quote_block_ratio??t.entry_diagnostics_leg_quote_block_ratio)*100,1)}% | recovery req/success/fail ${fmt(recovery.request_count??t.entry_recovery_request_count)} / ${fmt(recovery.success_count??t.entry_recovery_success_count)} / ${fmt(recovery.fail_count??t.entry_recovery_fail_count)} | last ${recovery.last_symbol||t.entry_recovery_last_symbol||'--'} ${recovery.last_reason||t.entry_recovery_last_reason||'--'} ${recovery.last_result||t.entry_recovery_last_result||'--'} | likely overblocking ${String(Boolean(summary.likely_overblocking??t.entry_diagnostics_likely_overblocking))} | Profitable Stale candidates ${fmt(staleRecovery.candidates??t.profitable_stale_candidates)} positive ${fmt(staleRecovery.stale_quote_positive_count??t.stale_quote_positive_count)} avg net ${fmt(staleRecovery.stale_quote_positive_avg_net_krw??t.stale_quote_positive_avg_net_krw,0)} | Stale Recovery req/success/fail/expired ${fmt(staleRecovery.request_count??t.profitable_stale_recovery_request_count)} / ${fmt(staleRecovery.success_count??t.profitable_stale_recovery_success_count)} / ${fmt(staleRecovery.fail_count??t.profitable_stale_recovery_fail_count)} / ${fmt(staleRecovery.expired_count??t.profitable_stale_recovery_expired_count)} recovered ${fmt(staleRecovery.recovered_trade_count??t.stale_quote_recovered_trade_count)} ratio ${fmt((staleRecovery.success_ratio??t.stale_quote_recovery_success_ratio)*100,1)}% status ${summary.stale_recovery_status||t.entry_diagnostics_stale_recovery_status||'--'} top ${staleTop} last ${staleRecovery.last_symbol||t.profitable_stale_recovery_last_symbol||'--'} ${staleRecovery.last_result||t.profitable_stale_recovery_last_result||'--'}`;
 }
 
 function renderStaleRecheckTelemetry(t={}) {

@@ -371,6 +371,32 @@ def _entry_diagnostics_payload():
         'last_result': telemetry.get('entry_recovery_last_result', ''),
         'max_queue_size': telemetry.get('entry_recovery_queue_max_size', cfg.entry_recovery_max_queue_size),
     }
+    profitable_stale_recovery = {
+        'enabled': telemetry.get('profitable_stale_recovery_enabled', cfg.profitable_stale_recovery_enabled),
+        'candidates': telemetry.get('profitable_stale_candidates', 0),
+        'stale_quote_positive_count': telemetry.get('stale_quote_positive_count', 0),
+        'stale_quote_positive_avg_net_krw': telemetry.get('stale_quote_positive_avg_net_krw', 0),
+        'request_count': telemetry.get('profitable_stale_recovery_request_count', 0),
+        'retry_count': telemetry.get('profitable_stale_recovery_retry_count', 0),
+        'success_count': telemetry.get('profitable_stale_recovery_success_count', 0),
+        'fail_count': telemetry.get('profitable_stale_recovery_fail_count', 0),
+        'expired_count': telemetry.get('profitable_stale_recovery_expired_count', 0),
+        'recovered_trade_count': telemetry.get('stale_quote_recovered_trade_count', 0),
+        'success_ratio': telemetry.get('stale_quote_recovery_success_ratio', 0),
+        'queue_size': telemetry.get('profitable_stale_recovery_queue_size', 0),
+        'max_queue_size': telemetry.get(
+            'profitable_stale_recovery_queue_max_size',
+            cfg.profitable_stale_recovery_max_queue_size,
+        ),
+        'last_symbol': telemetry.get('profitable_stale_recovery_last_symbol', ''),
+        'last_reason': telemetry.get('profitable_stale_recovery_last_reason', ''),
+        'last_expected_net_krw': telemetry.get('profitable_stale_recovery_last_expected_net_krw', 0),
+        'last_result': telemetry.get('profitable_stale_recovery_last_result', ''),
+        'top_symbols': telemetry.get('top_profitable_stale_symbols', []),
+        'notional_sweep_recovery_candidate_count': telemetry.get('notional_sweep_recovery_candidate_count', 0),
+        'notional_sweep_recovery_request_count': telemetry.get('notional_sweep_recovery_request_count', 0),
+        'notional_sweep_recovery_success_count': telemetry.get('notional_sweep_recovery_success_count', 0),
+    }
     top_blockers = telemetry.get('entry_diagnostics_top_blockers') or [
         {'reason': reason, 'count': count}
         for reason, count in sorted(
@@ -382,6 +408,10 @@ def _entry_diagnostics_payload():
         'recovery_success_ratio': telemetry.get('entry_diagnostics_recovery_success_ratio', 0),
         'leg_quote_block_ratio': telemetry.get('entry_diagnostics_leg_quote_block_ratio', 0),
         'likely_overblocking': bool(telemetry.get('entry_diagnostics_likely_overblocking', False)),
+        'likely_overblocking_by_stale_quote': bool(
+            telemetry.get('entry_diagnostics_likely_overblocking_by_stale_quote', False)
+        ),
+        'stale_recovery_status': telemetry.get('entry_diagnostics_stale_recovery_status', ''),
     }
     return {
         'ok': True,
@@ -394,6 +424,13 @@ def _entry_diagnostics_payload():
         'suppression_by_reason': suppression_by_reason,
         'suppression_by_entry_reason': suppression_by_entry_reason,
         'recovery': recovery,
+        'profitable_stale_recovery': profitable_stale_recovery,
+        'profitable_stale_candidates': profitable_stale_recovery['candidates'],
+        'stale_quote_positive_count': profitable_stale_recovery['stale_quote_positive_count'],
+        'stale_quote_positive_avg_net_krw': profitable_stale_recovery['stale_quote_positive_avg_net_krw'],
+        'stale_quote_recovered_trade_count': profitable_stale_recovery['recovered_trade_count'],
+        'stale_quote_recovery_success_ratio': profitable_stale_recovery['success_ratio'],
+        'top_profitable_stale_symbols': profitable_stale_recovery['top_symbols'],
         'top_blockers': top_blockers,
         'summary': summary,
     }

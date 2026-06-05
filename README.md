@@ -416,6 +416,14 @@ For long paper smoke tests, the recommended checks are:
   Fresh handoffs can become paper entries immediately; stale handoffs are
   skipped before routing with `COMPLETED_HANDOFF_TOO_OLD`, preserving the normal
   quote-age and stale-quote guards.
+- In `paper` mode only, positive stale/rest-source candidates can request a
+  profitable stale recovery through the existing priority refresh queues. The
+  original stale signal is never filled directly: after the fresh handoff returns
+  the system rebuilds the opportunity and `ExecutionPlan`, then routes it through
+  the same quote-age, liquidity, notional, fee, slippage, duplicate, and
+  positive-net checks. This includes positive notional-sweep style stale
+  candidates for diagnostics, keeps all caps unchanged, and remains disconnected
+  from live/tiny-live order submission.
 - In `paper` mode only, active dynamic symbols can receive virtual inventory
   seed balances for UPBIT, BITHUMB, and BINANCE using current quote prices.
   This is simulator inventory for measuring paper win rate and PnL; it does not

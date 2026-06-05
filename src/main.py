@@ -81,6 +81,29 @@ ENTRY_RECOVERY_STATS = {
     'entry_recovery_last_result': '',
 }
 ENTRY_RECOVERY_KEYS = {}
+PROFITABLE_STALE_RECOVERY_STATS = {
+    'profitable_stale_recovery_request_count': 0,
+    'profitable_stale_recovery_retry_count': 0,
+    'profitable_stale_recovery_success_count': 0,
+    'profitable_stale_recovery_fail_count': 0,
+    'profitable_stale_recovery_expired_count': 0,
+    'profitable_stale_recovery_last_symbol': '',
+    'profitable_stale_recovery_last_reason': '',
+    'profitable_stale_recovery_last_expected_net_krw': 0.0,
+    'profitable_stale_recovery_last_result': '',
+    'profitable_stale_recovery_queue_size': 0,
+    'profitable_stale_candidates': 0,
+    'stale_quote_positive_count': 0,
+    'stale_quote_positive_net_sum_krw': 0.0,
+    'stale_quote_recovered_trade_count': 0,
+    'notional_sweep_recovery_candidate_count': 0,
+    'notional_sweep_recovery_request_count': 0,
+    'notional_sweep_recovery_success_count': 0,
+    'notional_sweep_recovery_last_symbol': '',
+    'notional_sweep_recovery_last_expected_net_krw': 0.0,
+}
+PROFITABLE_STALE_RECOVERY_KEYS = {}
+PROFITABLE_STALE_SYMBOL_COUNTS = {}
 
 
 def _decision_record(calc_res, reason, is_safe, quote_source, quote_age_ms):
@@ -244,6 +267,77 @@ def _stale_recheck_candidate(item):
     return item.get('liquidity_class', 'NORMAL') in cfg.stale_recheck_allowed_liquidity
 
 
+def _profitable_stale_quote_age_ms(item):
+    for key in ('max_leg_quote_age_ms', 'entry_quote_age_ms', 'quote_age_ms'):
+        value = item.get(key)
+        if value is not None:
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                pass
+    return None
+
+
+def _profitable_stale_source(item):
+    return str(item.get('quote_source') or item.get('source') or '').lower()
+
+
+def _profitable_stale_recovery_candidate(item):
+    if not cfg.profitable_stale_recovery_enabled:
+        return False
+    if cfg.profitable_stale_recovery_paper_only and cfg.mode != 'paper':
+        return False
+    if item.get('pair_id', 'UPBIT_BINANCE') != 'UPBIT_BITHUMB':
+        return False
+    allowed_reasons = set(cfg.profitable_stale_recovery_allowed_reasons)
+    reason_values = {
+        item.get('reason_no_trade'),
+        item.get('entry_reason'),
+        item.get('paper_edge_quality'),
+    }
+    if not any(reason in allowed_reasons for reason in reason_values if reason):
+        return False
+    source = _profitable_stale_source(item)
+    if source and source not in set(str(x).lower() for x in cfg.profitable_stale_recovery_allowed_sources):
+        return False
+    if not (
+        item.get('reason_no_trade') == 'STALE_QUOTE'
+        or item.get('has_stale_quote')
+        or item.get('stale')
+        or 'PAPER_EDGE_FAIL' in reason_values
+    ):
+        return False
+    if float(item.get('net_expected_profit_krw', 0) or 0) < float(cfg.profitable_stale_recovery_min_expected_net_krw):
+        return False
+    expected_bp = float(item.get('expected_net_bp', item.get('best_net_surplus_bp', 0)) or 0)
+    if expected_bp < float(cfg.profitable_stale_recovery_min_expected_net_bp):
+        return False
+    if cfg.profitable_stale_recovery_require_depth_ok and item.get('depth_ok') is False:
+        return False
+    if item.get('liquidity_class', 'NORMAL') not in ('GOOD', 'NORMAL'):
+        return False
+    if float(item.get('selected_notional_krw', 0) or 0) < float(cfg.bithumb_min_order_krw):
+        return False
+    age_ms = _profitable_stale_quote_age_ms(item)
+    if age_ms is not None and age_ms > float(cfg.profitable_stale_recovery_max_original_quote_age_ms):
+        return False
+    return True
+
+
+def _record_profitable_stale_candidate(item):
+    if not _profitable_stale_recovery_candidate(item):
+        return False
+    symbol = item.get('symbol', '')
+    expected_net = float(item.get('net_expected_profit_krw', 0) or 0)
+    PROFITABLE_STALE_RECOVERY_STATS['profitable_stale_candidates'] += 1
+    PROFITABLE_STALE_RECOVERY_STATS['stale_quote_positive_count'] += 1
+    PROFITABLE_STALE_RECOVERY_STATS['stale_quote_positive_net_sum_krw'] += expected_net
+    PROFITABLE_STALE_RECOVERY_STATS['notional_sweep_recovery_candidate_count'] += 1
+    if symbol:
+        PROFITABLE_STALE_SYMBOL_COUNTS[symbol] = PROFITABLE_STALE_SYMBOL_COUNTS.get(symbol, 0) + 1
+    return True
+
+
 def _wide_spread_recheck_candidate(item):
     if not cfg.wide_spread_recheck_enabled:
         return False
@@ -266,7 +360,11 @@ def _wide_spread_recheck_candidate(item):
 
 
 def _recheck_candidate(item):
-    return _stale_recheck_candidate(item) or _wide_spread_recheck_candidate(item)
+    return (
+        _profitable_stale_recovery_candidate(item)
+        or _stale_recheck_candidate(item)
+        or _wide_spread_recheck_candidate(item)
+    )
 
 
 def _record_stale_recheck_event(recent, event):
@@ -391,23 +489,38 @@ def _stale_recheck_summaries(recent):
         buckets = [pair_bucket] + ([symbol_bucket] if symbol_bucket is not None else [])
         status = event.get('status', '')
         for bucket in buckets:
-            if status in ('RECHECK_REQUESTED', 'WIDE_SPREAD_RECHECK_REQUESTED'):
+            if status in (
+                'RECHECK_REQUESTED',
+                'WIDE_SPREAD_RECHECK_REQUESTED',
+                'PROFITABLE_STALE_RECHECK_REQUESTED',
+                'PAPER_EDGE_STALE_RECOVERY_REQUESTED',
+            ):
                 bucket['request_count'] += 1
             elif status in (
                 'RECHECK_FAST_PASS', 'RECHECK_ACTIONABLE_FAST_PASS',
                 'WIDE_SPREAD_RECHECK_ACTIONABLE',
+                'PROFITABLE_STALE_RECHECK_ACTIONABLE',
             ):
                 bucket['fast_pass_count'] += 1
                 if status in (
                     'RECHECK_ACTIONABLE_FAST_PASS',
                     'WIDE_SPREAD_RECHECK_ACTIONABLE',
+                    'PROFITABLE_STALE_RECHECK_ACTIONABLE',
                 ) or event.get('actionable_fast_pass'):
                     bucket['actionable_fast_pass_count'] += 1
             elif status == 'RECHECK_LATE_PASS':
                 bucket['late_pass_count'] += 1
-            elif status in ('RECHECK_FAIL', 'WIDE_SPREAD_RECHECK_FAIL'):
+            elif status in (
+                'RECHECK_FAIL',
+                'WIDE_SPREAD_RECHECK_FAIL',
+                'PROFITABLE_STALE_RECHECK_FAIL',
+            ):
                 bucket['fail_count'] += 1
-            elif status in ('RECHECK_TIMEOUT', 'WIDE_SPREAD_RECHECK_TIMEOUT'):
+            elif status in (
+                'RECHECK_TIMEOUT',
+                'WIDE_SPREAD_RECHECK_TIMEOUT',
+                'PROFITABLE_STALE_RECHECK_TIMEOUT',
+            ):
                 bucket['timeout_count'] += 1
             elapsed = event.get('elapsed_total_ms', event.get('elapsed_ms'))
             if elapsed is not None:
@@ -453,9 +566,13 @@ def _request_stale_recheck(item, pending, request_times, counters, recent, rest_
     key = _stale_recheck_key(item)
     if key in pending:
         counters['skip_cooldown'] += 1
+        kind = pending[key].get('recheck_kind')
         status = (
-            'WIDE_SPREAD_RECHECK_REQUESTED'
-            if pending[key].get('recheck_kind') == 'WIDE_SPREAD' else 'REQUESTED'
+            'WIDE_SPREAD_RECHECK_REQUESTED' if kind == 'WIDE_SPREAD'
+            else 'PAPER_EDGE_STALE_RECOVERY_REQUESTED'
+            if pending[key].get('reason') == 'PAPER_EDGE_FAIL'
+            else 'PROFITABLE_STALE_RECHECK_REQUESTED' if kind == 'PROFITABLE_STALE'
+            else 'RECHECK_REQUESTED'
         )
         return {'stale_recheck_status': status, 'stale_recheck_reason': 'RECHECK_ALREADY_PENDING'}
     if len(request_times) >= cfg.stale_recheck_max_per_minute:
@@ -464,14 +581,51 @@ def _request_stale_recheck(item, pending, request_times, counters, recent, rest_
     pair_id, symbol = key
     original_surplus_bp = float(item.get('best_net_surplus_bp', 0) or 0)
     original_net_krw = float(item.get('net_expected_profit_krw', 0) or 0)
+    is_profitable_stale = _profitable_stale_recovery_candidate(item)
     is_wide_spread = _wide_spread_recheck_candidate(item)
-    request_status = 'WIDE_SPREAD_RECHECK_REQUESTED' if is_wide_spread else 'RECHECK_REQUESTED'
-    threshold_extra = (
-        cfg.wide_spread_recheck_min_surplus_bp_extra
-        if is_wide_spread else cfg.stale_recheck_min_surplus_bp_extra
+    direction = item.get('best_direction') or item.get('direction', '')
+    if is_profitable_stale:
+        recovery_key = (pair_id, symbol, direction)
+        last = PROFITABLE_STALE_RECOVERY_KEYS.get(recovery_key, {'count': 0, 'last_at': 0.0})
+        if int(last.get('count', 0) or 0) >= int(cfg.profitable_stale_recovery_max_retry_per_signal):
+            PROFITABLE_STALE_RECOVERY_STATS['profitable_stale_recovery_last_result'] = 'RETRY_LIMIT'
+            return {'stale_recheck_status': 'NONE', 'stale_recheck_reason': 'PROFITABLE_STALE_RETRY_LIMIT'}
+        if now - float(last.get('last_at', 0) or 0) < float(cfg.profitable_stale_recovery_retry_cooldown_sec):
+            PROFITABLE_STALE_RECOVERY_STATS['profitable_stale_recovery_last_result'] = 'COOLDOWN'
+            return {'stale_recheck_status': 'NONE', 'stale_recheck_reason': 'PROFITABLE_STALE_COOLDOWN'}
+        profitable_pending_size = sum(
+            1 for request in pending.values()
+            if request.get('recheck_kind') == 'PROFITABLE_STALE'
+        )
+        if profitable_pending_size >= int(cfg.profitable_stale_recovery_max_queue_size):
+            PROFITABLE_STALE_RECOVERY_STATS['profitable_stale_recovery_last_result'] = 'QUEUE_FULL'
+            return {'stale_recheck_status': 'NONE', 'stale_recheck_reason': 'PROFITABLE_STALE_QUEUE_FULL'}
+        PROFITABLE_STALE_RECOVERY_KEYS[recovery_key] = {
+            'count': int(last.get('count', 0) or 0) + 1,
+            'last_at': now,
+        }
+        PROFITABLE_STALE_RECOVERY_STATS['profitable_stale_recovery_queue_size'] = profitable_pending_size + 1
+    paper_edge_stale = (
+        is_profitable_stale
+        and (
+            item.get('paper_edge_quality') == 'PAPER_EDGE_FAIL'
+            or item.get('reason_no_trade') == 'PAPER_EDGE_FAIL'
+        )
     )
+    request_status = (
+        'PAPER_EDGE_STALE_RECOVERY_REQUESTED' if paper_edge_stale
+        else 'PROFITABLE_STALE_RECHECK_REQUESTED' if is_profitable_stale
+        else 'WIDE_SPREAD_RECHECK_REQUESTED' if is_wide_spread
+        else 'RECHECK_REQUESTED'
+    )
+    if is_profitable_stale:
+        threshold_extra = cfg.profitable_stale_recovery_min_expected_net_bp - cfg.min_net_surplus_bp
+    elif is_wide_spread:
+        threshold_extra = cfg.wide_spread_recheck_min_surplus_bp_extra
+    else:
+        threshold_extra = cfg.stale_recheck_min_surplus_bp_extra
     request_meta = {
-        'reason': item.get('reason_no_trade'),
+        'reason': 'PROFITABLE_STALE_QUOTE' if is_profitable_stale else item.get('reason_no_trade'),
         'original_surplus_bp': original_surplus_bp,
         'original_net_krw': original_net_krw,
     }
@@ -495,9 +649,24 @@ def _request_stale_recheck(item, pending, request_times, counters, recent, rest_
             'original_surplus_bp': original_surplus_bp,
             'original_net_krw': original_net_krw,
             'reason': item.get('reason_no_trade', ''),
-            'recheck_kind': 'WIDE_SPREAD' if is_wide_spread else 'STALE_QUOTE',
+            'recheck_kind': (
+                'PROFITABLE_STALE' if is_profitable_stale
+                else 'WIDE_SPREAD' if is_wide_spread else 'STALE_QUOTE'
+            ),
+            'direction': item.get('best_direction') or item.get('direction', ''),
         }
         counters['request'] += 1
+        if is_profitable_stale:
+            counters['profitable_request'] += 1
+            PROFITABLE_STALE_RECOVERY_STATS['profitable_stale_recovery_request_count'] += 1
+            PROFITABLE_STALE_RECOVERY_STATS['profitable_stale_recovery_retry_count'] += 1
+            PROFITABLE_STALE_RECOVERY_STATS['profitable_stale_recovery_last_symbol'] = symbol
+            PROFITABLE_STALE_RECOVERY_STATS['profitable_stale_recovery_last_reason'] = request_status
+            PROFITABLE_STALE_RECOVERY_STATS['profitable_stale_recovery_last_expected_net_krw'] = original_net_krw
+            PROFITABLE_STALE_RECOVERY_STATS['profitable_stale_recovery_last_result'] = 'QUEUED'
+            PROFITABLE_STALE_RECOVERY_STATS['notional_sweep_recovery_request_count'] += 1
+            PROFITABLE_STALE_RECOVERY_STATS['notional_sweep_recovery_last_symbol'] = symbol
+            PROFITABLE_STALE_RECOVERY_STATS['notional_sweep_recovery_last_expected_net_krw'] = original_net_krw
         if is_wide_spread:
             counters['wide_request'] += 1
         _record_stale_recheck_event(recent, {
@@ -538,11 +707,16 @@ def _resolve_stale_recheck(item, pending, counters, recent):
     elapsed_ms = round((now - request['requested_at']) * 1000, 2)
     breakdown = _stale_recheck_breakdown(request, now)
     is_wide_spread = request.get('recheck_kind') == 'WIDE_SPREAD'
+    is_profitable_stale = request.get('recheck_kind') == 'PROFITABLE_STALE'
     if not fresh:
         if now - request['requested_at'] <= cfg.stale_recheck_result_ttl_sec:
             return {
                 'stale_recheck_status': (
-                    'WIDE_SPREAD_RECHECK_REQUESTED' if is_wide_spread else 'REQUESTED'
+                    'WIDE_SPREAD_RECHECK_REQUESTED' if is_wide_spread
+                    else 'PAPER_EDGE_STALE_RECOVERY_REQUESTED'
+                    if is_profitable_stale and request.get('reason') == 'PAPER_EDGE_FAIL'
+                    else 'PROFITABLE_STALE_RECHECK_REQUESTED' if is_profitable_stale
+                    else 'RECHECK_REQUESTED'
                 ),
                 'stale_recheck_elapsed_ms': elapsed_ms,
                 'stale_recheck_elapsed_total_ms': breakdown['elapsed_total_ms'],
@@ -550,12 +724,47 @@ def _resolve_stale_recheck(item, pending, counters, recent):
                 'stale_recheck_elapsed_fetch_ms': breakdown['elapsed_fetch_ms'],
                 'stale_recheck_elapsed_decision_wait_ms': breakdown['elapsed_decision_wait_ms'],
             }
-        status = 'WIDE_SPREAD_RECHECK_TIMEOUT' if is_wide_spread else 'RECHECK_TIMEOUT'
+        status = (
+            'WIDE_SPREAD_RECHECK_TIMEOUT' if is_wide_spread
+            else 'PROFITABLE_STALE_RECHECK_TIMEOUT' if is_profitable_stale
+            else 'RECHECK_TIMEOUT'
+        )
         counters['timeout'] += 1
+        if is_profitable_stale:
+            PROFITABLE_STALE_RECOVERY_STATS['profitable_stale_recovery_expired_count'] += 1
     else:
         new_surplus = float(item.get('best_net_surplus_bp', -9999) or -9999)
         new_net = float(item.get('net_expected_profit_krw', 0) or 0)
-        if is_wide_spread:
+        if is_profitable_stale:
+            depth_ok = item.get('depth_ok') is not False
+            leg_ok = item.get('leg_freshness_ok', True)
+            positive_ok = (
+                new_net > 0
+                if cfg.profitable_stale_recovery_require_positive_after_refresh else True
+            )
+            if (
+                new_surplus >= request['threshold_bp']
+                and positive_ok
+                and depth_ok
+                and leg_ok
+                and item.get('liquidity_class', 'NORMAL') in ('GOOD', 'NORMAL')
+            ):
+                status = 'PROFITABLE_STALE_RECHECK_ACTIONABLE'
+                counters['profitable_actionable'] += 1
+                counters['fast_pass'] += 1
+                counters['actionable_fast_pass'] += 1
+                PROFITABLE_STALE_RECOVERY_STATS['profitable_stale_recovery_last_result'] = 'ACTIONABLE'
+            else:
+                status = 'PROFITABLE_STALE_RECHECK_FAIL'
+                counters['fail'] += 1
+                PROFITABLE_STALE_RECOVERY_STATS['profitable_stale_recovery_fail_count'] += 1
+                PROFITABLE_STALE_RECOVERY_STATS['profitable_stale_recovery_last_result'] = (
+                    'NET_NOT_POSITIVE' if not positive_ok
+                    else 'LEG_STALE' if not leg_ok
+                    else 'DEPTH_INSUFFICIENT' if not depth_ok
+                    else 'REFRESHED_EDGE_TOO_LOW'
+                )
+        elif is_wide_spread:
             if _is_actionable_wide_spread_recheck(item, request, new_surplus, new_net):
                 status = 'WIDE_SPREAD_RECHECK_ACTIONABLE'
                 counters['wide_actionable'] += 1
@@ -600,6 +809,7 @@ def _resolve_stale_recheck(item, pending, counters, recent):
         'stale_recheck_actionable_fast_pass': status in (
             'RECHECK_ACTIONABLE_FAST_PASS',
             'WIDE_SPREAD_RECHECK_ACTIONABLE',
+            'PROFITABLE_STALE_RECHECK_ACTIONABLE',
         ),
         'stale_recheck_refresh_started_at': refresh_started_at,
         'stale_recheck_refreshed_at': refreshed_at,
@@ -618,6 +828,7 @@ def _resolve_stale_recheck(item, pending, counters, recent):
         'actionable_fast_pass': status in (
             'RECHECK_ACTIONABLE_FAST_PASS',
             'WIDE_SPREAD_RECHECK_ACTIONABLE',
+            'PROFITABLE_STALE_RECHECK_ACTIONABLE',
         ),
         'completed_handoff': bool(refreshed_at),
         'refresh_started_at': refresh_started_at,
@@ -640,9 +851,15 @@ def _expire_stale_rechecks(pending, counters, recent):
         breakdown = _stale_recheck_breakdown(item, now)
         status = (
             'WIDE_SPREAD_RECHECK_TIMEOUT'
-            if item.get('recheck_kind') == 'WIDE_SPREAD' else 'RECHECK_TIMEOUT'
+            if item.get('recheck_kind') == 'WIDE_SPREAD'
+            else 'PROFITABLE_STALE_RECHECK_TIMEOUT'
+            if item.get('recheck_kind') == 'PROFITABLE_STALE'
+            else 'RECHECK_TIMEOUT'
         )
         counters['timeout'] += 1
+        if item.get('recheck_kind') == 'PROFITABLE_STALE':
+            PROFITABLE_STALE_RECOVERY_STATS['profitable_stale_recovery_expired_count'] += 1
+            PROFITABLE_STALE_RECOVERY_STATS['profitable_stale_recovery_last_result'] = 'TIMEOUT'
         _record_stale_recheck_event(recent, {
             'pair_id': key[0], 'symbol': key[1], 'status': status,
             'elapsed_ms': elapsed_ms,
@@ -731,6 +948,7 @@ def _completed_handoff_entry_fields(signal, result, now=None):
 def _entry_reason_from_recheck_status(status):
     entry_reason_by_status = {
         'RECHECK_ACTIONABLE_FAST_PASS': 'RECHECK_ACTIONABLE',
+        'PROFITABLE_STALE_RECHECK_ACTIONABLE': 'RECHECK_ACTIONABLE',
         'WIDE_SPREAD_RECHECK_ACTIONABLE': 'WIDE_SPREAD_RECHECK_ACTIONABLE',
     }
     return entry_reason_by_status.get(status)
@@ -1853,6 +2071,7 @@ def main():
         'request': 0, 'fast_pass': 0, 'late_pass': 0, 'fail': 0, 'timeout': 0,
         'actionable_fast_pass': 0, 'skip_cooldown': 0, 'skip_rate_limit': 0,
         'wide_request': 0, 'wide_actionable': 0,
+        'profitable_request': 0, 'profitable_actionable': 0,
     }
     stale_recheck_handoff_counters = {
         'count': 0, 'pending_match': 0, 'unmatched': 0,
@@ -2128,6 +2347,11 @@ def main():
                         if route.get('signal', {}).get('completed_handoff_reason') == 'STALE_LEG_QUOTE':
                             ENTRY_RECOVERY_STATS['entry_recovery_success_count'] += 1
                             ENTRY_RECOVERY_STATS['entry_recovery_last_result'] = 'ENTERED'
+                        if route.get('signal', {}).get('completed_handoff_reason') == 'PROFITABLE_STALE_QUOTE':
+                            PROFITABLE_STALE_RECOVERY_STATS['profitable_stale_recovery_success_count'] += 1
+                            PROFITABLE_STALE_RECOVERY_STATS['stale_quote_recovered_trade_count'] += 1
+                            PROFITABLE_STALE_RECOVERY_STATS['notional_sweep_recovery_success_count'] += 1
+                            PROFITABLE_STALE_RECOVERY_STATS['profitable_stale_recovery_last_result'] = 'ARB_FILLED'
                         if _record_immediate_paper_fill(trade, perf_tracker, risk_guard):
                             paper_exit_count += 1
                         paper_entry_last_blocker = ''
@@ -2144,6 +2368,11 @@ def main():
                         if route.get('signal', {}).get('completed_handoff_reason') == 'STALE_LEG_QUOTE':
                             ENTRY_RECOVERY_STATS['entry_recovery_fail_count'] += 1
                             ENTRY_RECOVERY_STATS['entry_recovery_last_result'] = blockers[0] if blockers else 'BLOCKED'
+                        if route.get('signal', {}).get('completed_handoff_reason') == 'PROFITABLE_STALE_QUOTE':
+                            PROFITABLE_STALE_RECOVERY_STATS['profitable_stale_recovery_fail_count'] += 1
+                            PROFITABLE_STALE_RECOVERY_STATS['profitable_stale_recovery_last_result'] = (
+                                blockers[0] if blockers else 'BLOCKED'
+                            )
                         paper_entry_last_blocker = blockers[0] if blockers else ''
                         if route.get('paper_engine_reject_reason'):
                             paper_engine_reject_last_reason = route.get('paper_engine_reject_reason', '')
@@ -2265,6 +2494,7 @@ def main():
             if recheck_update:
                 calc_res.update(recheck_update)
             elif _recheck_candidate(calc_res):
+                _record_profitable_stale_candidate(calc_res)
                 calc_res.update(_request_stale_recheck(
                     calc_res, stale_recheck_pending, stale_recheck_request_times,
                     stale_recheck_counters, stale_recheck_recent,
@@ -2422,6 +2652,7 @@ def main():
                 if recheck_update:
                     domestic.update(recheck_update)
                 elif _recheck_candidate(domestic):
+                    _record_profitable_stale_candidate(domestic)
                     domestic.update(_request_stale_recheck(
                         domestic, stale_recheck_pending, stale_recheck_request_times,
                         stale_recheck_counters, stale_recheck_recent,
@@ -2495,6 +2726,11 @@ def main():
                         recheck_trade = recheck_route.get('trade')
                         paper_entry_success_count += int(cfg.mode == 'paper')
                         paper_entry_count += int(cfg.mode == 'paper')
+                        if domestic.get('stale_recheck_status') == 'PROFITABLE_STALE_RECHECK_ACTIONABLE':
+                            PROFITABLE_STALE_RECOVERY_STATS['profitable_stale_recovery_success_count'] += 1
+                            PROFITABLE_STALE_RECOVERY_STATS['stale_quote_recovered_trade_count'] += 1
+                            PROFITABLE_STALE_RECOVERY_STATS['notional_sweep_recovery_success_count'] += 1
+                            PROFITABLE_STALE_RECOVERY_STATS['profitable_stale_recovery_last_result'] = 'ARB_FILLED'
                         if _record_immediate_paper_fill(recheck_trade, perf_tracker, risk_guard):
                             paper_exit_count += 1
                         paper_entry_last_blocker = ''
@@ -2525,6 +2761,11 @@ def main():
                     elif cfg.mode == 'paper':
                         blockers = recheck_route.get('blockers', [])
                         paper_entry_blocked_count += 1
+                        if domestic.get('stale_recheck_status') == 'PROFITABLE_STALE_RECHECK_ACTIONABLE':
+                            PROFITABLE_STALE_RECOVERY_STATS['profitable_stale_recovery_fail_count'] += 1
+                            PROFITABLE_STALE_RECOVERY_STATS['profitable_stale_recovery_last_result'] = (
+                                blockers[0] if blockers else 'BLOCKED'
+                            )
                         paper_entry_last_blocker = blockers[0] if blockers else ''
                         if recheck_route.get('paper_engine_reject_reason'):
                             paper_engine_reject_last_reason = recheck_route.get('paper_engine_reject_reason', '')
@@ -2758,6 +2999,10 @@ def main():
             + bithumb_quote_cache.get_recheck_status().get('recheck_queue_size', 0)
             + len(stale_recheck_pending)
         )
+        PROFITABLE_STALE_RECOVERY_STATS['profitable_stale_recovery_queue_size'] = sum(
+            1 for request in stale_recheck_pending.values()
+            if request.get('recheck_kind') == 'PROFITABLE_STALE'
+        )
         api_429_delta = sum(
             int(exchange.get('api_429_count', 0) or 0)
             for exchange in (rate_limit_status.get('exchanges', {}) or {}).values()
@@ -2788,6 +3033,44 @@ def main():
             and recovery_success_ratio >= 0.3
             and int(ENTRY_SUPPRESSION_STATS['entry_suppression_positive_net_count'] or 0) > 0
         )
+        stale_positive_count = int(
+            PROFITABLE_STALE_RECOVERY_STATS['stale_quote_positive_count'] or 0
+        )
+        stale_recovery_request_count = int(
+            PROFITABLE_STALE_RECOVERY_STATS['profitable_stale_recovery_request_count'] or 0
+        )
+        stale_recovered_trade_count = int(
+            PROFITABLE_STALE_RECOVERY_STATS['stale_quote_recovered_trade_count'] or 0
+        )
+        stale_quote_positive_avg_net_krw = round(
+            float(PROFITABLE_STALE_RECOVERY_STATS['stale_quote_positive_net_sum_krw'] or 0.0)
+            / max(1, stale_positive_count),
+            2,
+        )
+        stale_quote_recovery_success_ratio = round(
+            stale_recovered_trade_count / max(1, stale_recovery_request_count),
+            4,
+        )
+        top_profitable_stale_symbols = [
+            {'symbol': symbol, 'count': count}
+            for symbol, count in sorted(
+                PROFITABLE_STALE_SYMBOL_COUNTS.items(),
+                key=lambda item: item[1],
+                reverse=True,
+            )[:10]
+        ]
+        profitable_stale_likely_overblocking = (
+            stale_positive_count > 0
+            and stale_recovery_request_count == 0
+        )
+        if stale_positive_count <= 0:
+            stale_recovery_status = 'NO_PROFITABLE_STALE'
+        elif stale_recovered_trade_count > 0:
+            stale_recovery_status = 'RECOVERY_HELPING'
+        elif stale_recovery_request_count > 0:
+            stale_recovery_status = 'RECOVERY_PENDING_OR_BLOCKED'
+        else:
+            stale_recovery_status = 'STALE_RECOVERY_NOT_WORKING'
         top_entry_blockers = [
             {'reason': reason, 'count': count}
             for reason, count in sorted(
@@ -2830,6 +3113,8 @@ def main():
             'paper_recheck_entry_last_reason': paper_recheck_entry_last_reason,
             'paper_wide_spread_recheck_request_count': stale_recheck_counters['wide_request'],
             'paper_wide_spread_recheck_actionable_count': stale_recheck_counters['wide_actionable'],
+            'profitable_stale_recheck_request_count': stale_recheck_counters['profitable_request'],
+            'profitable_stale_recheck_actionable_count': stale_recheck_counters['profitable_actionable'],
             'paper_wide_spread_recheck_entry_count': paper_wide_spread_recheck_entry_count,
             'paper_wide_spread_recheck_last_symbol': paper_wide_spread_recheck_last_symbol,
             'completed_handoff_entry_route_count': completed_handoff_entry_route_count,
@@ -2873,8 +3158,16 @@ def main():
             'paper_entry_blocked_wide_spread_quote_age_count': paper_entry_blocked_wide_spread_quote_age_count,
             **ENTRY_SUPPRESSION_STATS,
             **ENTRY_RECOVERY_STATS,
+            **PROFITABLE_STALE_RECOVERY_STATS,
             'entry_recovery_enabled': cfg.entry_recovery_enabled,
             'entry_recovery_queue_max_size': cfg.entry_recovery_max_queue_size,
+            'profitable_stale_recovery_enabled': cfg.profitable_stale_recovery_enabled,
+            'profitable_stale_recovery_queue_max_size': cfg.profitable_stale_recovery_max_queue_size,
+            'stale_quote_positive_avg_net_krw': stale_quote_positive_avg_net_krw,
+            'stale_quote_recovery_success_ratio': stale_quote_recovery_success_ratio,
+            'top_profitable_stale_symbols': top_profitable_stale_symbols,
+            'entry_diagnostics_likely_overblocking_by_stale_quote': profitable_stale_likely_overblocking,
+            'entry_diagnostics_stale_recovery_status': stale_recovery_status,
             'entry_diagnostics_top_blockers': top_entry_blockers,
             'entry_diagnostics_trade_rate_per_hour': round(
                 paper_entry_success_count / max(1 / 3600, max(1e-9, now - started_at) / 3600),

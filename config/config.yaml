@@ -93,6 +93,23 @@ entry_recovery:
     - BUY_LEG_QUOTE_TOO_OLD
     - SELL_LEG_QUOTE_TOO_OLD
     - MAX_LEG_QUOTE_TOO_OLD
+profitable_stale_recovery:
+  enabled: true
+  paper_only: true
+  min_expected_net_krw: 20
+  min_expected_net_bp: 8
+  max_original_quote_age_ms: 5000
+  max_retry_per_signal: 1
+  retry_cooldown_sec: 2
+  max_queue_size: 100
+  allowed_reasons:
+    - STALE_QUOTE
+    - PAPER_EDGE_FAIL
+  allowed_sources:
+    - rest
+    - stale_recheck
+  require_depth_ok: true
+  require_positive_after_refresh: true
 use_websocket_market_data: true
 rest_fallback_enabled: true
 rate_limiter_enabled: true

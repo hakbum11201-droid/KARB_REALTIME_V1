@@ -212,6 +212,32 @@ class Config:
     @property
     def entry_recovery_allowed_reasons(self): return self.entry_recovery.get('allowed_reasons', ['BUY_LEG_QUOTE_TOO_OLD', 'SELL_LEG_QUOTE_TOO_OLD', 'MAX_LEG_QUOTE_TOO_OLD'])
     @property
+    def profitable_stale_recovery(self): return self.get('profitable_stale_recovery', {})
+    @property
+    def profitable_stale_recovery_enabled(self): return self.profitable_stale_recovery.get('enabled', True)
+    @property
+    def profitable_stale_recovery_paper_only(self): return self.profitable_stale_recovery.get('paper_only', True)
+    @property
+    def profitable_stale_recovery_min_expected_net_krw(self): return self.profitable_stale_recovery.get('min_expected_net_krw', 20)
+    @property
+    def profitable_stale_recovery_min_expected_net_bp(self): return self.profitable_stale_recovery.get('min_expected_net_bp', 8)
+    @property
+    def profitable_stale_recovery_max_original_quote_age_ms(self): return self.profitable_stale_recovery.get('max_original_quote_age_ms', 5000)
+    @property
+    def profitable_stale_recovery_max_retry_per_signal(self): return self.profitable_stale_recovery.get('max_retry_per_signal', 1)
+    @property
+    def profitable_stale_recovery_retry_cooldown_sec(self): return self.profitable_stale_recovery.get('retry_cooldown_sec', 2)
+    @property
+    def profitable_stale_recovery_max_queue_size(self): return self.profitable_stale_recovery.get('max_queue_size', 100)
+    @property
+    def profitable_stale_recovery_allowed_reasons(self): return self.profitable_stale_recovery.get('allowed_reasons', ['STALE_QUOTE', 'PAPER_EDGE_FAIL'])
+    @property
+    def profitable_stale_recovery_allowed_sources(self): return self.profitable_stale_recovery.get('allowed_sources', ['rest', 'stale_recheck'])
+    @property
+    def profitable_stale_recovery_require_depth_ok(self): return self.profitable_stale_recovery.get('require_depth_ok', True)
+    @property
+    def profitable_stale_recovery_require_positive_after_refresh(self): return self.profitable_stale_recovery.get('require_positive_after_refresh', True)
+    @property
     def use_websocket_market_data(self): return self.get('use_websocket_market_data', True)
     @property
     def rest_fallback_enabled(self): return self.get('rest_fallback_enabled', True)
