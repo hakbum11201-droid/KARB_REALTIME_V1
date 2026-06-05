@@ -34,6 +34,7 @@ let latestScanner = {};
 let latestRuntimeStore = {};
 let latestRateLimit = {};
 let latestCalibration = {};
+let latestNotionalSweep = {};
 let lastSummaryFetchAt = 0;
 
 const durationText = seconds => {
@@ -519,6 +520,72 @@ function renderTradeTable(trades) {
       <td>${t.win?'✓':'✗'}</td>
     </tr>`;
   }).join('');
+}
+
+async function fetchNotionalSweep() {
+  try {
+    const r = await fetch('/api/notional-sweep');
+    if (!r.ok) return;
+    latestNotionalSweep = await r.json();
+    renderNotionalSweep(latestNotionalSweep);
+  } catch (error) {
+    console.error('[notional sweep] failed', error);
+  }
+}
+
+function renderNotionalSweep(payload={}) {
+  let panel = document.getElementById('notional-sweep-panel');
+  if (!panel) {
+    const anchor = document.querySelector('.pair-performance-panel');
+    if (!anchor?.parentElement) return;
+    panel = document.createElement('div');
+    panel.id = 'notional-sweep-panel';
+    panel.className = 'pair-performance-panel';
+    anchor.parentElement.insertBefore(panel, anchor.nextSibling);
+  }
+  const items = Array.isArray(payload.items) ? payload.items : [];
+  const notionals = payload.notionals_krw || [10000, 50000, 100000];
+  const rows = [];
+  for (const item of items.slice(0, 8)) {
+    for (const row of (item.rows || [])) {
+      if (!notionals.map(Number).includes(Number(row.notional_krw))) continue;
+      rows.push({ item, row });
+    }
+  }
+  const summary = payload.summary || {};
+  const summaryText = notionals
+    .map(n => `${fmt(n)} KRW best ${summary[`best_symbol_${Math.trunc(Number(n))}`] || '--'} profitable ${fmt(summary[`profitable_count_${Math.trunc(Number(n))}`])}`)
+    .join(' | ');
+  panel.innerHTML = `
+    <div class="section-label">Notional Sweep</div>
+    <div class="decision-note">Read-only sizing analysis. No order is placed. ${esc(summaryText)}</div>
+    <div class="table-wrapper">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Symbol</th><th>Pair</th><th>Direction</th><th>Notional</th>
+            <th>Expected Net</th><th>Net bp</th><th>Total Fee</th><th>Slippage bp</th>
+            <th>Fill Buy/Sell</th><th>Depth</th><th>Blocker</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows.length ? rows.map(({item,row}) => `
+            <tr>
+              <td>${esc(item.symbol)}</td>
+              <td>${esc(item.pair_id)}</td>
+              <td>${esc(item.direction)}</td>
+              <td>${fmt(row.notional_krw)} KRW</td>
+              <td style="color:${pnlC(Number(row.expected_net_profit_krw||0))}">${fmt(row.expected_net_profit_krw,0)} KRW</td>
+              <td>${fmt(row.expected_net_bp,2)}</td>
+              <td>${fmt(row.total_fee_krw,0)} KRW</td>
+              <td>${fmt(row.total_slippage_bp,2)}</td>
+              <td>${fmt(Number(row.expected_fill_ratio_buy||0)*100,1)}% / ${fmt(Number(row.expected_fill_ratio_sell||0)*100,1)}%</td>
+              <td>${row.depth_ok ? 'OK' : 'NO'}</td>
+              <td>${esc(row.blocker || 'none')}</td>
+            </tr>`).join('') : '<tr><td colspan="11" class="empty-row">No notional sweep rows yet</td></tr>'}
+        </tbody>
+      </table>
+    </div>`;
 }
 
 // ── Performance ─────────────────────────────────────────────────────────
@@ -1280,6 +1347,7 @@ on('btn-save-keys', 'click', async () => {
 fetchData();
 fetchTelemetry();
 fetchRuntimeServices();
+fetchNotionalSweep();
 fetchIcebergStatus();
 fetchDecisions();
 fetchPerf();
@@ -1290,6 +1358,7 @@ setInterval(fetchPerf,   POLL_MS*2);
 setInterval(fetchTrades, POLL_MS*2);
 setInterval(fetchTelemetry, POLL_MS);
 setInterval(fetchRuntimeServices, POLL_MS);
+setInterval(fetchNotionalSweep, POLL_MS*2);
 setInterval(fetchIcebergStatus, POLL_MS*2);
 setInterval(fetchDecisions, POLL_MS*2);
 setInterval(() => renderTelemetry(latestState, latestEngine, latestControl), 1000);

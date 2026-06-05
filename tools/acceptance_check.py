@@ -67,6 +67,7 @@ class AcceptanceCheck:
             self._check_live_readiness()
             self._check_tiny_live()
             self._check_execution_calibration()
+            self._check_notional_sweep()
         self._build_summary()
         self._print()
         return 1 if self.failures else 0
@@ -79,6 +80,7 @@ class AcceptanceCheck:
             "performance": "/api/performance/pairs",
             "stale_recheck": "/api/stale-recheck/status",
             "execution_calibration": "/api/execution-calibration/status",
+            "notional_sweep": "/api/notional-sweep",
             "data": "/api/data",
         }
         optional = {
@@ -529,6 +531,50 @@ class AcceptanceCheck:
             if payload.get("avg_pnl_diff_krw") is None:
                 self._warn("CALIBRATION_AVG_PNL_DIFF_MISSING", details=payload)
         self._pass("CALIBRATION_STATUS_CHECKED", details=details)
+
+    def _check_notional_sweep(self) -> None:
+        payload = self.api.get("notional_sweep", {})
+        if not isinstance(payload, dict) or not payload.get("ok", False):
+            self._fail("NOTIONAL_SWEEP_API_FAIL", details={"payload": payload})
+            return
+        if payload.get("enabled") is False:
+            self._info("NOTIONAL_SWEEP_DISABLED")
+            return
+        items = payload.get("items") or []
+        if not isinstance(items, list) or not items:
+            self._pass("NOTIONAL_SWEEP_EMPTY_OK")
+            return
+        missing_metrics = []
+        zero_fee = []
+        missing_slippage_source = []
+        depth_limited = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            for row in item.get("rows", []) or []:
+                if not isinstance(row, dict):
+                    continue
+                symbol = item.get("symbol")
+                notional = row.get("notional_krw")
+                if _to_number(row.get("total_fee_krw"), 0) <= 0:
+                    zero_fee.append({"symbol": symbol, "notional_krw": notional})
+                if row.get("slippage_source") != "ORDERBOOK_VWAP":
+                    missing_slippage_source.append({"symbol": symbol, "notional_krw": notional})
+                for field in ("expected_net_profit_krw", "total_fee_krw", "total_slippage_bp"):
+                    if row.get(field) is None:
+                        missing_metrics.append({"symbol": symbol, "notional_krw": notional, "field": field})
+                if _to_number(notional, 0) >= 50000 and row.get("depth_ok") is False:
+                    depth_limited.append({"symbol": symbol, "notional_krw": notional, "blocker": row.get("blocker")})
+        if zero_fee:
+            self._fail("NOTIONAL_SWEEP_FEE_ZERO", details={"rows": zero_fee[:5]})
+        if missing_slippage_source:
+            self._warn("NOTIONAL_SWEEP_SLIPPAGE_SOURCE_MISSING", details={"rows": missing_slippage_source[:5]})
+        if missing_metrics:
+            self._warn("NOTIONAL_SWEEP_METRIC_MISSING", details={"rows": missing_metrics[:5]})
+        if depth_limited:
+            self._warn("NOTIONAL_SWEEP_DEPTH_LIMITED", details={"rows": depth_limited[:5]})
+        if not zero_fee:
+            self._pass("NOTIONAL_SWEEP_OK", f"items={len(items)}", {"item_count": len(items)})
 
     def _build_summary(self) -> None:
         telemetry = self._telemetry()

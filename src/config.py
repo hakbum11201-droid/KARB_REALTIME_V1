@@ -102,6 +102,18 @@ class Config:
     @property
     def quote_freshness(self): return self.get('quote_freshness', {})
     @property
+    def notional_sweep(self): return self.get('notional_sweep', {})
+    @property
+    def notional_sweep_enabled(self): return self.notional_sweep.get('enabled', True)
+    @property
+    def notional_sweep_notionals_krw(self): return self.notional_sweep.get('notionals_krw', [10000, 50000, 100000])
+    @property
+    def notional_sweep_max_symbols(self): return self.notional_sweep.get('max_symbols', 20)
+    @property
+    def notional_sweep_cache_ttl_sec(self): return self.notional_sweep.get('cache_ttl_sec', 3)
+    @property
+    def notional_sweep_include_only_actionable(self): return self.notional_sweep.get('include_only_actionable', False)
+    @property
     def paper_max_leg_quote_age_ms(self): return self.quote_freshness.get('paper_max_leg_quote_age_ms', 1200)
     @property
     def tiny_live_max_leg_quote_age_ms(self): return self.quote_freshness.get('tiny_live_max_leg_quote_age_ms', 700)

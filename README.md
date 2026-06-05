@@ -457,3 +457,12 @@ For long paper smoke tests, the recommended checks are:
   `entry_quote_age_ms` is within cap if either leg is stale. Stale-leg recovery
   uses the existing priority refresh queues only, so the main loop still avoids
   direct REST calls and heavy sleeps.
+- Notional Sweep is a read-only sizing analysis exposed by
+  `/api/notional-sweep`. It reuses the existing `FeeModel`,
+  `estimate_market_fill`, and ORDERBOOK_VWAP execution-plan logic to compare
+  10,000 / 50,000 / 100,000 KRW notionals from the latest opportunity snapshot.
+  A 10,000 KRW order can fit inside the top level with near-zero VWAP slippage,
+  while 50,000 or 100,000 KRW may consume deeper levels and show different
+  `depth_ok`, `fill_ratio`, and `expected_net_profit_krw`. This feature never
+  places orders, never calls exchange order functions, and does not add direct
+  REST work to the main loop.

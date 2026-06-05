@@ -36,8 +36,14 @@ from bithumb_private import BithumbPrivateClient
 from iceberg_planner import IcebergPlanner
 from rate_limiter import rate_limiter
 from risk_guard import RiskGuard
+from execution_plan import build_notional_sweep
 
 tiny_live_executor = TinyLiveExecutor()
+_NOTIONAL_SWEEP_CACHE = {
+    'updated_at': 0.0,
+    'source_updated_at': 0.0,
+    'payload': None,
+}
 
 
 def _read_json(path, default=None):
@@ -208,6 +214,114 @@ def _pair_performance_payload():
     }
 
 
+def _is_actionable_signal(row):
+    return (
+        row.get('go_no_go') == 'GO'
+        or row.get('reason_no_trade') == 'OK'
+        or row.get('stale_recheck_status') in {
+            'RECHECK_ACTIONABLE_FAST_PASS',
+            'WIDE_SPREAD_RECHECK_ACTIONABLE',
+        }
+        or row.get('entry_reason') in {
+            'NORMAL_GO',
+            'RECHECK_ACTIONABLE',
+            'WIDE_SPREAD_RECHECK_ACTIONABLE',
+        }
+    )
+
+
+def _notional_sweep_summary(items, notionals):
+    summary = {'item_count': len(items)}
+    for notional in notionals:
+        key = str(int(float(notional or 0)))
+        best_symbol = ''
+        best_net = None
+        profitable = 0
+        for item in items:
+            for row in item.get('rows', []):
+                if int(float(row.get('notional_krw', 0) or 0)) != int(float(notional or 0)):
+                    continue
+                net = float(row.get('expected_net_profit_krw', 0) or 0)
+                if net > 0:
+                    profitable += 1
+                if best_net is None or net > best_net:
+                    best_net = net
+                    best_symbol = item.get('symbol', '')
+        summary[f'best_symbol_{key}'] = best_symbol
+        summary[f'profitable_count_{key}'] = profitable
+    return summary
+
+
+def _notional_sweep_payload(summary_only=False):
+    now = time.time()
+    notionals = [float(x) for x in (cfg.notional_sweep_notionals_krw or [10000, 50000, 100000])]
+    opportunities = _read_json(os.path.join(RUNTIME_DIR, 'latest_opportunities.json'))
+    source_updated_at = float(opportunities.get('updated_at', 0) or 0)
+    cached = _NOTIONAL_SWEEP_CACHE.get('payload')
+    cache_ttl = max(0.0, float(cfg.notional_sweep_cache_ttl_sec or 0))
+    if (
+        cached
+        and _NOTIONAL_SWEEP_CACHE.get('source_updated_at') == source_updated_at
+        and now - float(_NOTIONAL_SWEEP_CACHE.get('updated_at', 0) or 0) <= cache_ttl
+    ):
+        return {
+            **cached,
+            'cache_hit': True,
+            'items': [] if summary_only else cached.get('items', []),
+        }
+    if not cfg.notional_sweep_enabled:
+        payload = {
+            'ok': True, 'error': '', 'blockers': [], 'updated_at': now,
+            'enabled': False, 'notionals_krw': notionals, 'items': [],
+            'summary': _notional_sweep_summary([], notionals),
+        }
+        _NOTIONAL_SWEEP_CACHE.update({'updated_at': now, 'source_updated_at': source_updated_at, 'payload': payload})
+        return payload
+    try:
+        rows = opportunities.get('all_opportunities', [])
+        if not isinstance(rows, list):
+            rows = []
+        if cfg.notional_sweep_include_only_actionable:
+            rows = [row for row in rows if isinstance(row, dict) and _is_actionable_signal(row)]
+        else:
+            rows = [row for row in rows if isinstance(row, dict)]
+        rows = sorted(
+            rows,
+            key=lambda row: float(row.get('best_net_surplus_bp', -999999) or -999999),
+            reverse=True,
+        )[:int(cfg.notional_sweep_max_symbols or 20)]
+        items = [build_notional_sweep(row, notionals, cfg.mode, cfg) for row in rows]
+        summary = _notional_sweep_summary(items, notionals)
+        payload = {
+            'ok': True,
+            'error': '',
+            'blockers': [],
+            'enabled': True,
+            'updated_at': now,
+            'source_updated_at': source_updated_at,
+            'cache_hit': False,
+            'notionals_krw': notionals,
+            'items': items,
+            'summary': summary,
+        }
+    except Exception as exc:
+        payload = {
+            'ok': False,
+            'error': f'{type(exc).__name__}: {exc}',
+            'blockers': ['NOTIONAL_SWEEP_ERROR'],
+            'enabled': cfg.notional_sweep_enabled,
+            'updated_at': now,
+            'source_updated_at': source_updated_at,
+            'notionals_krw': notionals,
+            'items': [],
+            'summary': _notional_sweep_summary([], notionals),
+        }
+    _NOTIONAL_SWEEP_CACHE.update({'updated_at': now, 'source_updated_at': source_updated_at, 'payload': payload})
+    if summary_only:
+        return {**payload, 'items': []}
+    return payload
+
+
 def _tiny_live_status_payload():
     status = tiny_live_executor.status()
     if status.get('last_preflight'):
@@ -219,6 +333,19 @@ def _telemetry_payload():
     telemetry = _read_json(os.path.join(RUNTIME_DIR, 'telemetry.json'))
     if not cfg.runtime_store_enabled:
         telemetry['runtime_store_warning'] = 'RUNTIME_STORE_DISABLED_WARNING'
+    sweep = _notional_sweep_payload(summary_only=True)
+    summary = sweep.get('summary', {})
+    notionals = sweep.get('notionals_krw', cfg.notional_sweep_notionals_krw)
+    telemetry.update({
+        'notional_sweep_enabled': cfg.notional_sweep_enabled,
+        'notional_sweep_last_updated_at': sweep.get('updated_at', 0),
+        'notional_sweep_item_count': summary.get('item_count', 0),
+        'notional_sweep_last_error': sweep.get('error', ''),
+        'notional_sweep_best_10000': summary.get('best_symbol_10000', ''),
+        'notional_sweep_best_50000': summary.get('best_symbol_50000', ''),
+        'notional_sweep_best_100000': summary.get('best_symbol_100000', ''),
+        'notional_sweep_notionals_krw': notionals,
+    })
     return {'ok': True, 'error': '', 'blockers': [], 'telemetry': telemetry}
 
 
@@ -709,6 +836,9 @@ class KarbHandler(SimpleHTTPRequestHandler):
 
         elif self.path == '/api/telemetry':
             self._send_guarded_json(_telemetry_payload)
+
+        elif path == '/api/notional-sweep':
+            self._send_guarded_json(_notional_sweep_payload)
 
         elif self.path == '/api/execution-calibration/status':
             self._send_guarded_json(_execution_calibration_status_payload)

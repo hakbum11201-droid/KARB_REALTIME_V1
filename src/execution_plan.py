@@ -326,6 +326,116 @@ def build_execution_plan(signal: dict, mode: str, config=cfg) -> dict:
     return planned
 
 
+def _fee_source(buy_fee: dict, sell_fee: dict) -> str:
+    if buy_fee.get('fee_source') == sell_fee.get('fee_source') == 'CONFIG':
+        return 'CONFIG'
+    if 'FALLBACK' in (buy_fee.get('fee_source'), sell_fee.get('fee_source')):
+        return 'FALLBACK'
+    return buy_fee.get('fee_source') or sell_fee.get('fee_source') or ''
+
+
+def build_notional_sweep(signal: dict, notionals_krw, mode: str = 'paper', config=cfg) -> dict:
+    """Estimate fee/slippage/PnL at multiple notionals without placing orders."""
+    pair_id = signal.get('pair_id', 'UPBIT_BINANCE')
+    direction = signal.get('best_direction') or signal.get('direction', '')
+    entry_reason = signal.get('entry_reason') or signal.get('reason_no_trade') or 'UNKNOWN'
+    buy_venue, sell_venue = _direction_venues(signal)
+    buy_book = _venue_book(signal, buy_venue)
+    sell_book = _venue_book(signal, sell_venue)
+    min_fill_ratio = float(signal.get('min_fill_ratio', config.min_fill_ratio) or config.min_fill_ratio)
+    fee_model = FeeModel(config)
+    rows = []
+
+    for notional in notionals_krw or []:
+        try:
+            notional_krw = max(0.0, float(notional or 0))
+        except (TypeError, ValueError):
+            continue
+        qty_probe = float(signal.get('selected_qty', signal.get('effective_qty', 0)) or 0)
+        buy_top_probe = _krw_price(_levels(buy_book, 'BUY')[0][0], buy_venue, signal) if _levels(buy_book, 'BUY') else 0.0
+        if buy_top_probe > 0:
+            qty = notional_krw / buy_top_probe
+        else:
+            qty = qty_probe if qty_probe > 0 else 0.0
+
+        buy_fill = estimate_market_fill('BUY', qty, buy_book)
+        sell_fill = estimate_market_fill('SELL', qty, sell_book)
+        buy_top = _krw_price(buy_fill['top_price'], buy_venue, signal)
+        sell_top = _krw_price(sell_fill['top_price'], sell_venue, signal)
+        buy_vwap = _krw_price(buy_fill['vwap_price'], buy_venue, signal)
+        sell_vwap = _krw_price(sell_fill['vwap_price'], sell_venue, signal)
+        buy_notional = buy_vwap * qty if buy_vwap > 0 else notional_krw
+        sell_notional = sell_vwap * qty if sell_vwap > 0 else notional_krw
+        fee_notional = notional_krw if notional_krw > 0 else buy_notional
+        buy_fee = fee_model.leg_fee(buy_venue, buy_notional or fee_notional)
+        sell_fee = fee_model.leg_fee(sell_venue, sell_notional or fee_notional)
+        total_fee = buy_fee['fee_krw'] + sell_fee['fee_krw']
+        total_slip_bp = max(0.0, buy_fill['slippage_bp']) + max(0.0, sell_fill['slippage_bp'])
+        slippage_cost = fee_notional * total_slip_bp / 10000
+        gross_edge = (sell_vwap - buy_vwap) * qty if qty > 0 else 0.0
+        expected_net = gross_edge - total_fee - slippage_cost
+        expected_net_bp = expected_net / fee_notional * 10000 if fee_notional > 0 else 0.0
+        depth_ok = (
+            buy_fill['fill_ratio'] >= min_fill_ratio
+            and sell_fill['fill_ratio'] >= min_fill_ratio
+        )
+        blockers = []
+        if qty <= 0:
+            blockers.append('PLAN_QTY_INVALID')
+        if buy_vwap <= 0 or sell_vwap <= 0:
+            blockers.append('PLAN_PRICE_INVALID')
+        if not depth_ok:
+            blockers.append('DEPTH_INSUFFICIENT')
+        if expected_net <= 0:
+            blockers.append('PLAN_NET_NOT_POSITIVE')
+        rows.append({
+            'notional_krw': notional_krw,
+            'selected_qty': qty,
+            'buy_venue': buy_venue,
+            'sell_venue': sell_venue,
+            'buy_top_price': buy_top,
+            'sell_top_price': sell_top,
+            'buy_vwap_price': buy_vwap,
+            'sell_vwap_price': sell_vwap,
+            'buy_slippage_bp': buy_fill['slippage_bp'],
+            'sell_slippage_bp': sell_fill['slippage_bp'],
+            'total_slippage_bp': total_slip_bp,
+            'slippage_cost_krw': slippage_cost,
+            'buy_fee_krw': buy_fee['fee_krw'],
+            'sell_fee_krw': sell_fee['fee_krw'],
+            'total_fee_krw': total_fee,
+            'buy_fee_bp': buy_fee['fee_bp'],
+            'sell_fee_bp': sell_fee['fee_bp'],
+            'fee_source': _fee_source(buy_fee, sell_fee),
+            'gross_edge_krw': gross_edge,
+            'expected_net_profit_krw': expected_net,
+            'net_expected_profit_krw': expected_net,
+            'expected_net_bp': expected_net_bp,
+            'best_net_surplus_bp': expected_net_bp,
+            'expected_fill_ratio_buy': buy_fill['fill_ratio'],
+            'expected_fill_ratio_sell': sell_fill['fill_ratio'],
+            'fill_ratio_buy': buy_fill['fill_ratio'],
+            'fill_ratio_sell': sell_fill['fill_ratio'],
+            'depth_levels_used_buy': buy_fill['depth_levels_used'],
+            'depth_levels_used_sell': sell_fill['depth_levels_used'],
+            'depth_ok': depth_ok,
+            'plan_ok': not blockers,
+            'blocker': blockers[0] if blockers else '',
+            'execution_plan_blockers': blockers,
+            'slippage_source': 'ORDERBOOK_VWAP',
+            'mode': mode,
+        })
+
+    return {
+        'pair_id': pair_id,
+        'symbol': signal.get('symbol', ''),
+        'direction': direction,
+        'entry_reason': entry_reason,
+        'quote_source': signal.get('quote_source', ''),
+        'rows': rows,
+    }
+
+
 @dataclass
 class ExecutionPlan:
     symbol: str

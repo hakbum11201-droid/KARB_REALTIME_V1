@@ -240,6 +240,15 @@ quote_freshness:
   entry_decision_wait_warn_ms: 700
   tiny_live_entry_decision_wait_max_ms: 500
   live_entry_decision_wait_max_ms: 400
+notional_sweep:
+  enabled: true
+  notionals_krw:
+    - 10000
+    - 50000
+    - 100000
+  max_symbols: 20
+  cache_ttl_sec: 3
+  include_only_actionable: false
 wide_spread_entry_min_net_profit_krw: 30
 wide_spread_entry_min_surplus_bp: 40
 wide_spread_entry_max_dynamic_slippage_bp: 20
