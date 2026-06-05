@@ -67,6 +67,7 @@ class AcceptanceCheck:
             self._check_live_readiness()
             self._check_tiny_live()
             self._check_execution_calibration()
+            self._check_tiny_live_preflight()
             self._check_notional_sweep()
         self._build_summary()
         self._print()
@@ -81,6 +82,7 @@ class AcceptanceCheck:
             "stale_recheck": "/api/stale-recheck/status",
             "execution_calibration": "/api/execution-calibration/status",
             "notional_sweep": "/api/notional-sweep",
+            "tiny_live_preflight": "/api/tiny-live/preflight",
             "data": "/api/data",
         }
         optional = {
@@ -531,6 +533,54 @@ class AcceptanceCheck:
             if payload.get("avg_pnl_diff_krw") is None:
                 self._warn("CALIBRATION_AVG_PNL_DIFF_MISSING", details=payload)
         self._pass("CALIBRATION_STATUS_CHECKED", details=details)
+
+    def _check_tiny_live_preflight(self) -> None:
+        payload = self.api.get("tiny_live_preflight", {})
+        if not isinstance(payload, dict):
+            self._fail("TINY_LIVE_PREFLIGHT_API_FAIL")
+            return
+        config = payload.get("config") if isinstance(payload.get("config"), dict) else {}
+        enabled = bool(config.get("tiny_live_enabled"))
+        calibration_enabled = bool(config.get("calibration_enabled"))
+        blockers = _collect_strings(payload.get("blockers"))
+        candidate = payload.get("candidate") if isinstance(payload.get("candidate"), dict) else {}
+        executor = payload.get("executor") if isinstance(payload.get("executor"), dict) else {}
+        can_submit = bool(payload.get("can_submit"))
+        details = {
+            "enabled": enabled,
+            "calibration_enabled": calibration_enabled,
+            "can_submit": can_submit,
+            "blockers": blockers,
+            "candidate": candidate,
+        }
+        if not enabled:
+            self._info("TINY_LIVE_PREFLIGHT_DISABLED", "tiny_live_enabled=false", details)
+            return
+        if not calibration_enabled:
+            self._info("TINY_LIVE_PREFLIGHT_CALIBRATION_DISABLED", "calibration disabled", details)
+            return
+        if any("KEY_MISSING" in item for item in blockers):
+            self._fail("TINY_LIVE_KEY_MISSING", details=details)
+        if _to_number(config.get("max_order_krw"), 0) > 10000:
+            self._fail("TINY_LIVE_PREFLIGHT_MAX_ORDER_TOO_HIGH", details=details)
+        if can_submit and not bool(executor.get("submit_ready")):
+            self._fail("TINY_LIVE_PREFLIGHT_EXECUTOR_NOT_READY", details=details)
+        if can_submit and not bool(payload.get("balance_ok")):
+            self._fail("TINY_LIVE_PREFLIGHT_BALANCE_NOT_OK", details=details)
+        if can_submit and _to_number(candidate.get("expected_net_profit_krw"), 0) <= 0:
+            self._fail("TINY_LIVE_PREFLIGHT_NET_NOT_POSITIVE", details=details)
+        if (
+            can_submit
+            and candidate.get("max_leg_quote_age_ms") is not None
+            and _to_number(candidate.get("max_leg_quote_age_ms"), 0) > _to_number(candidate.get("leg_quote_age_cap_ms"), 0)
+        ):
+            self._fail("TINY_LIVE_PREFLIGHT_STALE_LEG", details=details)
+        if bool(config.get("one_shot_first", True)) and _to_number(payload.get("session_submit_count"), 0) > 1:
+            self._fail("TINY_LIVE_PREFLIGHT_ONE_SHOT_EXCEEDED", details=details)
+        if not can_submit and not blockers:
+            self._fail("PREFLIGHT_INCONSISTENT_STATE", details=details)
+        if not self.failures:
+            self._pass("TINY_LIVE_PREFLIGHT_CHECKED", details=details)
 
     def _check_notional_sweep(self) -> None:
         payload = self.api.get("notional_sweep", {})

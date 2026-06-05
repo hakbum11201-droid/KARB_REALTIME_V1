@@ -31,7 +31,7 @@ from paper_fill_simulator import simulate_paper_fill
 from rate_limiter import rate_limiter
 from bithumb_quote_cache import BithumbQuoteCache
 from rest_fallback_cache import RestFallbackQuoteCache
-from executors import TinyLiveExecutor
+from executors import TinyLiveExecutor, build_tiny_live_preflight
 from execution_plan import build_execution_plan
 
 
@@ -1108,6 +1108,20 @@ def _calibration_status():
         'submit_success_count': 0,
         'submit_fail_count': 0,
         'blocked_count': 0,
+        'preflight_count': 0,
+        'preflight_pass_count': 0,
+        'preflight_fail_count': 0,
+        'preflight_last_symbol': '',
+        'preflight_last_blocker': '',
+        'preflight_can_submit': False,
+        'preflight_balance_ok': False,
+        'preflight_executor_ok': False,
+        'preflight_expected_net_krw': 0.0,
+        'preflight_total_fee_krw': 0.0,
+        'preflight_total_slippage_bp': 0.0,
+        'session_submit_count': 0,
+        'session_success_count': 0,
+        'session_fail_count': 0,
         '_pnl_diff_sum': 0.0,
         '_pnl_diff_count': 0,
         '_slippage_sum': 0.0,
@@ -1174,6 +1188,30 @@ def _calibration_guard_blockers(prepared):
         blockers.append('CALIBRATION_MAX_TRADES_PER_SESSION')
     if abs(float(status.get('daily_loss_krw', 0) or 0)) >= float(cal.get('max_daily_loss_krw', 3000) or 3000):
         blockers.append('CALIBRATION_DAILY_LOSS_LIMIT')
+    if bool(cal.get('one_shot_first', True)) and int(status.get('session_submit_count', 0) or 0) >= 1:
+        blockers.append('ONE_SHOT_LIMIT_REACHED')
+    if bool(cal.get('require_preflight_pass', True)):
+        preflight = build_tiny_live_preflight(
+            prepared.get('pair_id', 'UPBIT_BITHUMB'), candidate=prepared,
+            check_balances=bool(cal.get('require_balance_check', True)),
+        )
+        candidate = preflight.get('candidate', {})
+        executor = preflight.get('executor', {})
+        _write_calibration_status(
+            preflight_count=int(status.get('preflight_count', 0) or 0) + 1,
+            preflight_pass_count=int(status.get('preflight_pass_count', 0) or 0) + int(bool(preflight.get('can_submit'))),
+            preflight_fail_count=int(status.get('preflight_fail_count', 0) or 0) + int(not bool(preflight.get('can_submit'))),
+            preflight_last_symbol=candidate.get('symbol', ''),
+            preflight_last_blocker=next(iter(preflight.get('blockers', [])), ''),
+            preflight_can_submit=bool(preflight.get('can_submit')),
+            preflight_balance_ok=bool(preflight.get('balance_ok')),
+            preflight_executor_ok=bool(executor.get('submit_ready')),
+            preflight_expected_net_krw=candidate.get('expected_net_profit_krw', 0),
+            preflight_total_fee_krw=candidate.get('total_fee_krw', 0),
+            preflight_total_slippage_bp=candidate.get('total_slippage_bp', 0),
+        )
+        if not preflight.get('can_submit'):
+            blockers.extend(preflight.get('blockers') or ['PREFLIGHT_BLOCKED'])
     return list(dict.fromkeys(blockers))
 
 
@@ -1343,8 +1381,10 @@ def _update_calibration_from_record(record):
         if actual_pnl is not None and actual_pnl < 0:
             updates['daily_loss_krw'] = float(status.get('daily_loss_krw', 0) or 0) + abs(float(actual_pnl))
         updates['submit_success_count'] = int(status.get('submit_success_count', 0) or 0) + 1
+        updates['session_success_count'] = int(status.get('session_success_count', 0) or 0) + 1
     else:
         updates['submit_fail_count'] = int(status.get('submit_fail_count', 0) or 0) + 1
+        updates['session_fail_count'] = int(status.get('session_fail_count', 0) or 0) + 1
     for source_key, sum_key, count_key, avg_key in (
         ('pnl_diff_krw', '_pnl_diff_sum', '_pnl_diff_count', 'avg_pnl_diff_krw'),
         ('actual_total_slippage_bp', '_slippage_sum', '_slippage_count', 'avg_actual_slippage_bp'),
@@ -1378,6 +1418,7 @@ def _execute_tiny_live_calibration_route(prepared):
         }
     _write_calibration_status(
         submit_attempt_count=int(status.get('submit_attempt_count', 0) or 0) + 1,
+        session_submit_count=int(status.get('session_submit_count', 0) or 0) + 1,
         last_blocker='',
     )
     started_at = time.time()
@@ -2762,6 +2803,20 @@ def main():
             'tiny_live_calibration_submit_attempt_count': calibration_status.get('submit_attempt_count', 0),
             'tiny_live_calibration_submit_success_count': calibration_status.get('submit_success_count', 0),
             'tiny_live_calibration_submit_fail_count': calibration_status.get('submit_fail_count', 0),
+            'tiny_live_preflight_count': calibration_status.get('preflight_count', 0),
+            'tiny_live_preflight_pass_count': calibration_status.get('preflight_pass_count', 0),
+            'tiny_live_preflight_fail_count': calibration_status.get('preflight_fail_count', 0),
+            'tiny_live_preflight_last_symbol': calibration_status.get('preflight_last_symbol', ''),
+            'tiny_live_preflight_last_blocker': calibration_status.get('preflight_last_blocker', ''),
+            'tiny_live_preflight_can_submit': calibration_status.get('preflight_can_submit', False),
+            'tiny_live_preflight_balance_ok': calibration_status.get('preflight_balance_ok', False),
+            'tiny_live_preflight_executor_ok': calibration_status.get('preflight_executor_ok', False),
+            'tiny_live_preflight_expected_net_krw': calibration_status.get('preflight_expected_net_krw', 0),
+            'tiny_live_preflight_total_fee_krw': calibration_status.get('preflight_total_fee_krw', 0),
+            'tiny_live_preflight_total_slippage_bp': calibration_status.get('preflight_total_slippage_bp', 0),
+            'tiny_live_calibration_session_submit_count': calibration_status.get('session_submit_count', 0),
+            'tiny_live_calibration_session_success_count': calibration_status.get('session_success_count', 0),
+            'tiny_live_calibration_session_fail_count': calibration_status.get('session_fail_count', 0),
             'live_fresh_candidate_count': live_fresh_candidate_count,
             'tiny_live_fresh_candidate_count': tiny_live_fresh_candidate_count,
             'live_blocked_quote_age_count': live_blocked_quote_age_count,

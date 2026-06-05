@@ -35,6 +35,7 @@ let latestRuntimeStore = {};
 let latestRateLimit = {};
 let latestCalibration = {};
 let latestNotionalSweep = {};
+let latestTinyLivePreflight = {};
 let lastSummaryFetchAt = 0;
 
 const durationText = seconds => {
@@ -1026,22 +1027,44 @@ function renderRestFallbackCacheStatus(t={}) {
 
 async function fetchRuntimeServices() {
   try {
-    const [scannerRes, storeRes, rateLimitRes, calibrationRes] = await Promise.all([
+    const [scannerRes, storeRes, rateLimitRes, calibrationRes, preflightRes] = await Promise.all([
       fetch('/api/market/scanner'),
       fetch('/api/runtime-store/status'),
       fetch('/api/rate-limit/status'),
       fetch('/api/execution-calibration/status'),
+      fetch('/api/tiny-live/preflight'),
     ]);
-    if (!scannerRes.ok || !storeRes.ok || !rateLimitRes.ok || !calibrationRes.ok) return;
+    if (!scannerRes.ok || !storeRes.ok || !rateLimitRes.ok || !calibrationRes.ok || !preflightRes.ok) return;
     latestScanner = await scannerRes.json();
     latestRuntimeStore = await storeRes.json();
     latestRateLimit = await rateLimitRes.json();
     latestCalibration = await calibrationRes.json();
+    latestTinyLivePreflight = await preflightRes.json();
     renderRuntimeServices(latestScanner, latestRuntimeStore, latestRateLimit);
     renderExecutionCalibration(latestTelemetry, latestCalibration);
+    renderTinyLivePreflight(latestTinyLivePreflight, latestTelemetry);
   } catch (error) {
     console.error('[runtime services] failed', error);
   }
+}
+
+function renderTinyLivePreflight(p={}, t={}) {
+  let el=document.getElementById('tiny-live-preflight-status');
+  if (!el) {
+    const anchor=document.getElementById('execution-calibration-status')||document.getElementById('entry-route-telemetry')||document.getElementById('no-go-top3');
+    if (anchor?.parentElement) {
+      el=document.createElement('div');
+      el.id='tiny-live-preflight-status';
+      el.className='active-symbol-list';
+      anchor.parentElement.append(el);
+    }
+  }
+  if (!el) return;
+  const c=p.candidate||{};
+  const exec=p.executor||{};
+  const required=Object.entries(p.required_assets||{}).map(([k,v])=>`${k} ${fmt(v,6)}`).join(' / ')||'--';
+  const missing=(p.missing_assets||[]).map(row=>`${row.asset} need ${fmt(row.required,6)} have ${fmt(row.available,6)}`).join(' / ')||'none';
+  el.textContent=`Tiny-live Preflight | can submit ${String(Boolean(p.can_submit))} | last blocker ${(p.blockers||[])[0]||t.tiny_live_preflight_last_blocker||'--'} | ${c.symbol||'--'} ${c.direction||'--'} | expected net ${fmt(c.expected_net_profit_krw??t.tiny_live_preflight_expected_net_krw,0)} KRW | required assets ${required} | missing ${missing} | balance ok ${String(Boolean(p.balance_ok))} | quote age max/cap ${fmt(c.max_leg_quote_age_ms,1)} / ${fmt(c.leg_quote_age_cap_ms,1)} ms | fee ${fmt(c.total_fee_krw,0)} KRW | slippage ${fmt(c.total_slippage_bp,2)} bp | executor ready ${String(Boolean(exec.submit_ready))} | session submits ${fmt(p.session_submit_count??t.tiny_live_calibration_session_submit_count)}`;
 }
 
 function renderExecutionCalibration(t={}, c={}) {

@@ -19,6 +19,9 @@ tiny_live_calibration:
   max_trades_per_session: 3
   max_daily_loss_krw: 3000
   require_manual_enable: true
+  require_preflight_pass: true
+  require_balance_check: true
+  one_shot_first: true
   allowed_pairs:
     - UPBIT_BITHUMB
   allowed_symbols:

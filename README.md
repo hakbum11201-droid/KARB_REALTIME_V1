@@ -466,3 +466,13 @@ For long paper smoke tests, the recommended checks are:
   `depth_ok`, `fill_ratio`, and `expected_net_profit_krw`. This feature never
   places orders, never calls exchange order functions, and does not add direct
   REST work to the main loop.
+- Before any tiny-live calibration order, check `/api/tiny-live/preflight`.
+  It is a read-only readiness gate that reports the candidate, expected fee and
+  ORDERBOOK_VWAP slippage, per-leg quote freshness, depth/fill ratio, required
+  assets, available assets, risk status, and executor readiness. For
+  `UPBIT_BITHUMB_A`, the required assets are UPBIT coin plus BITHUMB KRW for
+  the buy leg fee; for `UPBIT_BITHUMB_B`, they are BITHUMB coin plus UPBIT KRW
+  for the buy leg fee. Actual submit remains blocked unless both
+  `tiny_live_enabled: true` and `tiny_live_calibration.enabled: true` are set
+  and the preflight returns `can_submit=true`. With `one_shot_first: true`, the
+  first calibration session allows only one submit; defaults remain off.

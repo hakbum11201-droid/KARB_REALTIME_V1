@@ -49,6 +49,13 @@ def _unique(values):
     return list(dict.fromkeys(values))
 
 
+def _num(value, default=0.0):
+    try:
+        return float(value if value is not None else default)
+    except (TypeError, ValueError):
+        return default
+
+
 def _status() -> dict:
     stored = _read_json(STATUS_FILE)
     today = date.today().isoformat()
@@ -63,6 +70,9 @@ def _status() -> dict:
         'trade_date': today,
         'trade_count': 0,
         'daily_loss_krw': 0,
+        'calibration_session_submit_count': 0,
+        'calibration_session_success_count': 0,
+        'calibration_session_fail_count': 0,
         'last_error': '',
         'blockers': [],
         'warnings': [],
@@ -186,6 +196,294 @@ def get_tiny_live_readiness(pair_id='UPBIT_BINANCE') -> dict:
             'upbit_bithumb_max_order_krw': cfg.upbit_bithumb_max_order_krw,
         },
     }
+
+
+def _calibration_cfg() -> dict:
+    row = cfg.tiny_live_calibration
+    return row if isinstance(row, dict) else {}
+
+
+def _candidate_rows(pair_id='UPBIT_BITHUMB') -> list[dict]:
+    snapshot = _read_json('latest_opportunities.json')
+    rows = [
+        row for row in snapshot.get('all_opportunities', [])
+        if isinstance(row, dict) and row.get('pair_id', 'UPBIT_BINANCE') == pair_id
+    ]
+    rows.sort(key=lambda row: _num(row.get('best_net_surplus_bp'), -999999), reverse=True)
+    return rows
+
+
+def _select_preflight_candidate(pair_id='UPBIT_BITHUMB', candidate=None) -> dict:
+    if isinstance(candidate, dict) and candidate.get('symbol'):
+        return dict(candidate)
+    cal = _calibration_cfg()
+    allowed_symbols = {str(item).upper() for item in (cal.get('allowed_symbols') or [])}
+    rows = _candidate_rows(pair_id)
+    if allowed_symbols:
+        allowed = [row for row in rows if str(row.get('symbol', '')).upper() in allowed_symbols]
+        if allowed:
+            rows = allowed
+    actionable = [
+        row for row in rows
+        if row.get('reason_no_trade') == 'OK'
+        or row.get('go_no_go') == 'GO'
+        or row.get('stale_recheck_status') == 'RECHECK_ACTIONABLE_FAST_PASS'
+        or row.get('wide_spread_recheck_status') == 'WIDE_SPREAD_RECHECK_ACTIONABLE'
+        or row.get('entry_reason') in ('NORMAL_GO', 'RECHECK_ACTIONABLE', 'WIDE_SPREAD_RECHECK_ACTIONABLE')
+    ]
+    return dict((actionable or rows or [{}])[0])
+
+
+def _balance_sources(pair_id: str, should_check: bool):
+    if not should_check:
+        return {}, {}, []
+    keys = get_key_status()
+    blockers = []
+    if keys['UPBIT_ACCESS_KEY'] != 'Set' or keys['UPBIT_SECRET_KEY'] != 'Set':
+        blockers.append('UPBIT_KEY_MISSING')
+    if pair_id == 'UPBIT_BITHUMB':
+        if keys['BITHUMB_ACCESS_KEY'] != 'Set' or keys['BITHUMB_SECRET_KEY'] != 'Set':
+            blockers.append('BITHUMB_KEY_MISSING')
+    elif keys['BINANCE_API_KEY'] != 'Set' or keys['BINANCE_API_SECRET'] != 'Set':
+        blockers.append('BINANCE_KEY_MISSING')
+    if blockers:
+        return {}, {}, [*blockers, 'LIVE_API_KEY_MISSING']
+    try:
+        upbit = UpbitPrivateClient().get_balances()
+        right = BithumbPrivateClient().get_balances() if pair_id == 'UPBIT_BITHUMB' else BinanceSpotPrivateClient().get_balances()
+    except Exception:
+        return {}, {}, ['BALANCE_CHECK_FAILED']
+    blockers = list(upbit.get('blockers', [])) + list(right.get('blockers', []))
+    if blockers:
+        blockers.append('BALANCE_CHECK_FAILED')
+    return upbit.get('balances', {}), right.get('balances', {}), blockers
+
+
+def _required_assets_for_plan(plan: dict, candidate: dict, pair_id: str, direction: str) -> tuple[dict, dict]:
+    symbol = plan.get('symbol') or candidate.get('symbol', '')
+    qty = _num(plan.get('selected_qty', plan.get('normalized_qty', plan.get('qty'))))
+    notional = _num(plan.get('selected_notional_krw', plan.get('order_krw', plan.get('order_krw_used'))))
+    buy_fee = _num(plan.get('buy_fee_krw'))
+    fx = _num(plan.get('krw_usdt', candidate.get('krw_usdt')), 1.0) or 1.0
+    required = {}
+    labels = {}
+    if pair_id == 'UPBIT_BITHUMB':
+        if direction == 'UPBIT_BITHUMB_A':
+            required = {
+                'BITHUMB.KRW': notional + buy_fee,
+                f'UPBIT.{symbol}': qty,
+            }
+        else:
+            required = {
+                'UPBIT.KRW': notional + buy_fee,
+                f'BITHUMB.{symbol}': qty,
+            }
+    elif direction == 'A':
+        required = {
+            f'UPBIT.{symbol}': qty,
+            'BINANCE.USDT': (notional + buy_fee) / fx,
+        }
+    else:
+        required = {
+            'UPBIT.KRW': notional + buy_fee,
+            f'BINANCE.{symbol}': qty,
+        }
+    for key, value in required.items():
+        labels[key] = round(value, 10)
+    return required, labels
+
+
+def _available_assets(pair_id: str, symbol: str, upbit_balances: dict, right_balances: dict) -> dict:
+    if pair_id == 'UPBIT_BITHUMB':
+        return {
+            'UPBIT.KRW': _num(upbit_balances.get('KRW')),
+            f'UPBIT.{symbol}': _num(upbit_balances.get(symbol)),
+            'BITHUMB.KRW': _num(right_balances.get('KRW')),
+            f'BITHUMB.{symbol}': _num(right_balances.get(symbol)),
+        }
+    return {
+        'UPBIT.KRW': _num(upbit_balances.get('KRW')),
+        f'UPBIT.{symbol}': _num(upbit_balances.get(symbol)),
+        'BINANCE.USDT': _num(right_balances.get('USDT')),
+        f'BINANCE.{symbol}': _num(right_balances.get(symbol)),
+    }
+
+
+def _balance_result(required: dict, available: dict) -> tuple[bool, list[dict]]:
+    missing = []
+    for key, need in required.items():
+        have = _num(available.get(key))
+        if have + 1e-12 < _num(need):
+            missing.append({'asset': key, 'required': round(_num(need), 10), 'available': round(have, 10)})
+    return not missing, missing
+
+
+def build_tiny_live_preflight(pair_id='UPBIT_BITHUMB', candidate=None, check_balances=True) -> dict:
+    cal = _calibration_cfg()
+    pair_id = pair_id or 'UPBIT_BITHUMB'
+    blockers = []
+    warnings = ['READ_ONLY_PREFLIGHT', 'NO_ORDER_PLACED']
+    selected = _select_preflight_candidate(pair_id, candidate)
+    if not selected:
+        blockers.append('NO_CANDIDATE')
+    symbol = str(selected.get('symbol', '')).upper()
+    direction = selected.get('best_direction') or selected.get('direction', '')
+    entry_reason = selected.get('entry_reason') or (
+        'RECHECK_ACTIONABLE' if selected.get('stale_recheck_status') == 'RECHECK_ACTIONABLE_FAST_PASS'
+        else 'WIDE_SPREAD_RECHECK_ACTIONABLE' if selected.get('wide_spread_recheck_status') == 'WIDE_SPREAD_RECHECK_ACTIONABLE'
+        else 'NORMAL_GO' if selected.get('reason_no_trade') == 'OK'
+        else 'UNKNOWN'
+    )
+    allowed_pairs = set(cal.get('allowed_pairs') or [])
+    allowed_symbols = {str(item).upper() for item in (cal.get('allowed_symbols') or [])}
+    if not cfg.tiny_live_enabled:
+        blockers.append('TINY_LIVE_DISABLED')
+    if not cal.get('enabled', False):
+        blockers.append('CALIBRATION_DISABLED')
+    if not cfg.enable_live_trading:
+        blockers.append('CONFIG_LIVE_DISABLED')
+    if not cfg.live_order_enabled:
+        blockers.append('LIVE_ORDER_ENABLED_FALSE')
+    if pair_id == 'UPBIT_BITHUMB':
+        if not cfg.bithumb_private_enabled:
+            blockers.append('BITHUMB_PRIVATE_DISABLED')
+        if not cfg.upbit_bithumb_live_enabled:
+            blockers.append('UPBIT_BITHUMB_LIVE_DISABLED')
+    if allowed_pairs and pair_id not in allowed_pairs:
+        blockers.append('PAIR_NOT_ALLOWED')
+    if allowed_symbols and symbol and symbol not in allowed_symbols:
+        blockers.append('SYMBOL_NOT_ALLOWED')
+    if not symbol:
+        blockers.append('SYMBOL_UNAVAILABLE')
+    if pair_id == 'UPBIT_BITHUMB' and direction not in ('UPBIT_BITHUMB_A', 'UPBIT_BITHUMB_B'):
+        blockers.append('DIRECTION_UNAVAILABLE')
+    if pair_id == 'UPBIT_BINANCE' and direction not in ('A', 'B'):
+        blockers.append('DIRECTION_UNAVAILABLE')
+    max_order = _num(cal.get('max_order_krw'), 10000)
+    raw_notional = _num(selected.get('selected_notional_krw', selected.get('order_krw_used')), max_order)
+    planned_notional = min(raw_notional or max_order, max_order)
+    buy_price = _num(selected.get('selected_buy_price_krw'))
+    if buy_price <= 0:
+        if pair_id == 'UPBIT_BITHUMB':
+            buy_price = _num(selected.get('bithumb_ask' if direction == 'UPBIT_BITHUMB_A' else 'upbit_ask'))
+        elif direction == 'A':
+            buy_price = _num(selected.get('binance_ask')) * (_num(selected.get('krw_usdt'), 1.0) or 1.0)
+        else:
+            buy_price = _num(selected.get('upbit_ask'))
+    selected_qty = planned_notional / buy_price if buy_price > 0 else _num(selected.get('selected_qty'))
+    plan_signal = {
+        **selected,
+        'entry_reason': entry_reason,
+        'selected_notional_krw': planned_notional,
+        'order_krw_used': planned_notional,
+        'selected_qty': selected_qty,
+        'effective_qty': selected_qty,
+    }
+    plan = build_execution_plan(plan_signal, 'tiny_live', cfg) if selected else {}
+    if plan:
+        plan['entry_reason'] = entry_reason
+    order_krw = _num(plan.get('selected_notional_krw'), planned_notional)
+    if order_krw <= 0:
+        blockers.append('ORDER_KRW_INVALID')
+    if order_krw > max_order:
+        blockers.append('MAX_ORDER_EXCEEDED')
+    if not plan.get('leg_freshness_ok', True):
+        blockers.append('LEG_QUOTE_TOO_OLD')
+        if plan.get('leg_freshness_blocker'):
+            blockers.append(plan['leg_freshness_blocker'])
+    if not plan.get('depth_ok', False):
+        blockers.append('DEPTH_INSUFFICIENT')
+    if _num(plan.get('expected_net_profit_krw')) <= 0:
+        blockers.append('EXPECTED_NET_NOT_POSITIVE')
+    if not plan.get('plan_ok', False):
+        blockers.extend(plan.get('execution_plan_blockers') or [])
+    risk = {
+        'risk_ok': bool(selected.get('reason_no_trade') == 'OK' or entry_reason in ('RECHECK_ACTIONABLE', 'WIDE_SPREAD_RECHECK_ACTIONABLE')),
+        'reason_no_trade': selected.get('reason_no_trade', ''),
+    }
+    if not risk['risk_ok']:
+        blockers.append('RISK_GUARD_BLOCKED')
+    should_check_balances = bool(cal.get('require_balance_check', True) and check_balances)
+    upbit_balances, right_balances, balance_blockers = _balance_sources(pair_id, should_check_balances)
+    blockers.extend(balance_blockers)
+    available = _available_assets(pair_id, symbol, upbit_balances, right_balances)
+    required_raw, required = _required_assets_for_plan(plan, selected, pair_id, direction)
+    balance_ok, missing = (
+        _balance_result(required_raw, available)
+        if should_check_balances else (True, [])
+    )
+    if balance_blockers:
+        balance_ok = False
+    if not balance_ok and not balance_blockers:
+        blockers.append('BALANCE_INSUFFICIENT')
+    executor = {
+        'exists': True,
+        'name': 'TinyLiveExecutor',
+        'submit_ready': cfg.tiny_live_enabled and cal.get('enabled', False),
+    }
+    if not executor['exists']:
+        blockers.append('EXECUTOR_NOT_FOUND')
+    if not executor['submit_ready']:
+        blockers.append('EXECUTOR_NOT_READY')
+    status = _status()
+    session_submit_count = int(status.get('calibration_session_submit_count', 0) or 0)
+    if bool(cal.get('one_shot_first', True)) and session_submit_count >= 1:
+        blockers.append('ONE_SHOT_LIMIT_REACHED')
+    if session_submit_count >= int(cal.get('max_trades_per_session', 3) or 3):
+        blockers.append('SESSION_TRADE_LIMIT_REACHED')
+    if abs(_num(status.get('daily_loss_krw'))) >= _num(cal.get('max_daily_loss_krw'), 3000):
+        blockers.append('DAILY_LOSS_LIMIT_REACHED')
+    blockers = _unique(blockers)
+    can_submit = not blockers
+    candidate_payload = {
+        'pair_id': pair_id,
+        'symbol': symbol,
+        'direction': direction,
+        'entry_reason': entry_reason,
+        'selected_notional_krw': order_krw,
+        'selected_qty': plan.get('selected_qty'),
+        'buy_venue': plan.get('buy_venue'),
+        'sell_venue': plan.get('sell_venue'),
+        'expected_net_profit_krw': plan.get('expected_net_profit_krw'),
+        'expected_net_bp': plan.get('expected_net_bp'),
+        'total_fee_krw': plan.get('total_fee_krw'),
+        'total_slippage_bp': plan.get('total_slippage_bp'),
+        'buy_leg_quote_age_ms': plan.get('buy_leg_quote_age_ms'),
+        'sell_leg_quote_age_ms': plan.get('sell_leg_quote_age_ms'),
+        'max_leg_quote_age_ms': plan.get('max_leg_quote_age_ms'),
+        'leg_quote_age_cap_ms': plan.get('leg_quote_age_cap_ms'),
+        'depth_ok': plan.get('depth_ok'),
+        'expected_fill_ratio_buy': plan.get('expected_fill_ratio_buy'),
+        'expected_fill_ratio_sell': plan.get('expected_fill_ratio_sell'),
+    }
+    result = {
+        'ok': can_submit,
+        'ready': can_submit,
+        'can_submit': can_submit,
+        'blockers': blockers,
+        'warnings': warnings,
+        'candidate': candidate_payload,
+        'required_assets': required,
+        'available_assets': {key: round(_num(value), 10) for key, value in available.items()},
+        'balance_ok': balance_ok,
+        'balance_blocker': 'BALANCE_INSUFFICIENT' if missing else next((b for b in balance_blockers if 'BALANCE' in b or 'KEY' in b), ''),
+        'missing_assets': missing,
+        'risk': risk,
+        'executor': executor,
+        'plan': {**plan, 'blockers': blockers, 'executable': can_submit, 'preflight_status': 'PASS' if can_submit else 'BLOCKED'},
+        'config': {
+            'tiny_live_enabled': cfg.tiny_live_enabled,
+            'calibration_enabled': bool(cal.get('enabled', False)),
+            'require_preflight_pass': bool(cal.get('require_preflight_pass', True)),
+            'require_balance_check': bool(cal.get('require_balance_check', True)),
+            'one_shot_first': bool(cal.get('one_shot_first', True)),
+            'max_order_krw': max_order,
+        },
+        'session_submit_count': session_submit_count,
+        'updated_at': time.time(),
+    }
+    _write_json('tiny_live_preflight.json', result)
+    return result
 
 
 def _add_quote_and_risk_checks(blockers: list[str], quote: dict):
@@ -370,6 +668,12 @@ class TinyLiveExecutor:
         self.emergency = EmergencyLiquidator()
 
     def preflight(self, pair_id=None, plan=None) -> dict:
+        if plan:
+            return build_tiny_live_preflight(
+                pair_id or plan.get('pair_id') or _status().get('pair_id') or 'UPBIT_BITHUMB',
+                candidate=plan,
+                check_balances=True,
+            )
         return create_preflight_plan(pair_id or _status().get('pair_id') or 'UPBIT_BINANCE')
 
     def arm(self, pair_id=None) -> dict:
@@ -421,7 +725,7 @@ class TinyLiveExecutor:
         if not status.get('armed'):
             return {'ok': False, 'status': 'DISARMED', 'blockers': ['TINY_LIVE_DISARMED']}
         pair_id = pair_id or status.get('pair_id') or 'UPBIT_BINANCE'
-        preflight = self.preflight(pair_id)
+        preflight = self.preflight(pair_id, plan=plan) if plan else self.preflight(pair_id)
         plan = preflight.get('plan') or {}
         if not preflight['ready'] or not plan.get('executable'):
             _write_status(status='BLOCKED', blockers=preflight['blockers'], last_error='PREFLIGHT_BLOCKED')
@@ -449,7 +753,10 @@ class TinyLiveExecutor:
             return {'ok': False, 'status': 'BLOCKED', 'blockers': blockers, 'plan': plan}
         if cfg.order_tracker_enabled:
             self.tracker.start_plan(plan)
-        status = _write_status(status='EXECUTING', blockers=[], last_error='')
+        status = _write_status(
+            status='EXECUTING', blockers=[], last_error='',
+            calibration_session_submit_count=int(current.get('calibration_session_submit_count', 0) or 0) + 1,
+        )
         symbol, direction = plan['symbol'], plan['direction']
         upbit = UpbitPrivateClient()
         if pair_id == 'UPBIT_BITHUMB':
@@ -539,6 +846,7 @@ class TinyLiveExecutor:
         if filled:
             next_status = _write_status(
                 status='FILLED', trade_count=int(status.get('trade_count', 0)) + 1,
+                calibration_session_success_count=int(status.get('calibration_session_success_count', 0) or 0) + 1,
                 blockers=[], last_error='',
             )
         elif partial:
@@ -563,10 +871,14 @@ class TinyLiveExecutor:
                     self.tracker.mark_emergency_result(emergency_result.get('ok', False), emergency_result)
             next_status = _write_status(
                 armed=False, status='PARTIAL_RISK', partial_risk=True,
+                calibration_session_fail_count=int(status.get('calibration_session_fail_count', 0) or 0) + 1,
                 blockers=['PARTIAL_RISK_ACTIVE'], last_error='PARTIAL_RISK',
             )
         else:
-            next_status = _write_status(status='BLOCKED', blockers=['ORDER_FAILED'], last_error='ORDER_FAILED')
+            next_status = _write_status(
+                status='BLOCKED', blockers=['ORDER_FAILED'], last_error='ORDER_FAILED',
+                calibration_session_fail_count=int(status.get('calibration_session_fail_count', 0) or 0) + 1,
+            )
         output = {
             'ok': filled, 'status': next_status['status'], 'plan': plan, 'results': results,
             'fills': fills, 'errors': errors, 'partial_risk': bool(next_status.get('partial_risk')),

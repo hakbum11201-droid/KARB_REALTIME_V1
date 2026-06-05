@@ -30,7 +30,10 @@ import secrets_manager
 import control as ctrl_module
 import process_manager
 from config import cfg
-from executors import TinyLiveExecutor, create_preflight_plan, get_inventory_summary, get_tiny_live_readiness
+from executors import (
+    TinyLiveExecutor, build_tiny_live_preflight, create_preflight_plan,
+    get_inventory_summary, get_tiny_live_readiness,
+)
 from venue_pair import venue_pair_payload
 from bithumb_private import BithumbPrivateClient
 from iceberg_planner import IcebergPlanner
@@ -329,6 +332,10 @@ def _tiny_live_status_payload():
     return status
 
 
+def _tiny_live_preflight_payload(pair_id='UPBIT_BITHUMB'):
+    return build_tiny_live_preflight(pair_id=pair_id or 'UPBIT_BITHUMB', check_balances=True)
+
+
 def _telemetry_payload():
     telemetry = _read_json(os.path.join(RUNTIME_DIR, 'telemetry.json'))
     if not cfg.runtime_store_enabled:
@@ -378,6 +385,9 @@ def _execution_calibration_status_payload():
         'live_max_leg_quote_age_ms': cfg.live_max_leg_quote_age_ms,
         'allowed_pairs': cal_cfg.get('allowed_pairs', []),
         'allowed_symbols': cal_cfg.get('allowed_symbols', []),
+        'require_preflight_pass': cal_cfg.get('require_preflight_pass', True),
+        'require_balance_check': cal_cfg.get('require_balance_check', True),
+        'one_shot_first': cal_cfg.get('one_shot_first', True),
         'trade_count': status.get('trade_count', 0),
         'last_symbol': status.get('last_symbol', ''),
         'last_entry_reason': status.get('last_entry_reason', ''),
@@ -394,6 +404,20 @@ def _execution_calibration_status_payload():
         'submit_success_count': status.get('submit_success_count', 0),
         'submit_fail_count': status.get('submit_fail_count', 0),
         'blocked_count': status.get('blocked_count', 0),
+        'preflight_count': status.get('preflight_count', 0),
+        'preflight_pass_count': status.get('preflight_pass_count', 0),
+        'preflight_fail_count': status.get('preflight_fail_count', 0),
+        'preflight_last_symbol': status.get('preflight_last_symbol', ''),
+        'preflight_last_blocker': status.get('preflight_last_blocker', ''),
+        'preflight_can_submit': status.get('preflight_can_submit', False),
+        'preflight_balance_ok': status.get('preflight_balance_ok', False),
+        'preflight_executor_ok': status.get('preflight_executor_ok', False),
+        'preflight_expected_net_krw': status.get('preflight_expected_net_krw', 0),
+        'preflight_total_fee_krw': status.get('preflight_total_fee_krw', 0),
+        'preflight_total_slippage_bp': status.get('preflight_total_slippage_bp', 0),
+        'session_submit_count': status.get('session_submit_count', 0),
+        'session_success_count': status.get('session_success_count', 0),
+        'session_fail_count': status.get('session_fail_count', 0),
         'updated_at': status.get('updated_at'),
     }
 
@@ -868,6 +892,10 @@ class KarbHandler(SimpleHTTPRequestHandler):
 
         elif self.path == '/api/tiny-live/status':
             self._send_guarded_json(_tiny_live_status_payload)
+
+        elif path == '/api/tiny-live/preflight':
+            pair_id = query.get('pair', ['UPBIT_BITHUMB'])[0]
+            self._send_guarded_json(lambda: _tiny_live_preflight_payload(pair_id))
 
         elif self.path == '/api/order-tracker/status':
             self._send_guarded_json(_order_tracker_status_payload)
