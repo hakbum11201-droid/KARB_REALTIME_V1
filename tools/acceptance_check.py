@@ -76,6 +76,7 @@ class AcceptanceCheck:
             "trades": "/api/trades/recent",
             "performance": "/api/performance/pairs",
             "stale_recheck": "/api/stale-recheck/status",
+            "data": "/api/data",
         }
         optional = {
             "live_readiness": "/api/live/readiness",
@@ -170,12 +171,14 @@ class AcceptanceCheck:
         attempts = int(_to_number(telemetry.get("paper_entry_attempt_count"), 0))
         success = int(_to_number(telemetry.get("paper_entry_success_count"), 0))
         blocked = int(_to_number(telemetry.get("paper_entry_blocked_count"), 0))
+        arb_fill_count = int(_to_number(telemetry.get("paper_arb_fill_count"), 0))
         blocker = str(telemetry.get("paper_entry_last_blocker") or "")
         quote_age = _to_optional_number(telemetry.get("paper_entry_last_quote_age_ms"))
         details = {
             "attempts": attempts,
             "success": success,
             "blocked": blocked,
+            "paper_arb_fill_count": arb_fill_count,
             "last_blocker": blocker,
             "last_quote_age_ms": quote_age,
             "last_quote_age_source": telemetry.get("paper_entry_last_quote_age_source"),
@@ -187,6 +190,13 @@ class AcceptanceCheck:
                 "PAPER_ENTRY_ATTEMPT_BUT_NO_SUCCESS",
                 f"attempts={attempts} success={success} blocker={blocker} "
                 f"reason={details['paper_engine_reject_last_reason']}",
+                details,
+            )
+            return
+        if success > 0 and arb_fill_count == 0:
+            self._fail(
+                "PAPER_ENTRY_SUCCESS_WITHOUT_ARB_FILL",
+                f"success={success} paper_arb_fill_count={arb_fill_count}",
                 details,
             )
             return
@@ -235,6 +245,23 @@ class AcceptanceCheck:
             self._fail("NO_REAL_RECENT_TRADES", "require-paper-trade is set", {"count": 0})
         else:
             self._warn("NO_REAL_RECENT_TRADES", "count=0", {"count": 0})
+        bad_arb_sl = [
+            {
+                "trade_id": trade.get("trade_id"),
+                "symbol": trade.get("symbol"),
+                "pair_id": trade.get("pair_id"),
+                "exit_reason": trade.get("exit_reason"),
+            }
+            for trade in real_trades
+            if str(trade.get("pair_id") or "") in {"UPBIT_BINANCE", "UPBIT_BITHUMB"}
+            and trade.get("execution_model") == "INVENTORY_ARBITRAGE_FILL"
+            and trade.get("exit_reason") == "SL"
+        ]
+        if bad_arb_sl:
+            self._fail("ARB_FILL_MARKED_AS_SL", "inventory arbitrage fill closed as SL", {"trades": bad_arb_sl[:5]})
+        else:
+            self._pass("ARB_FILL_NOT_MARKED_AS_SL")
+        self._check_old_open_trades()
 
     def _extract_trades(self, payload: Any) -> list[dict[str, Any]]:
         if isinstance(payload, dict):
@@ -256,6 +283,43 @@ class AcceptanceCheck:
             self._fail("ENTRY_REASON_KEY_MISSING", ",".join(missing), {"missing": missing})
         else:
             self._pass("ENTRY_REASON_SUMMARY_OK")
+
+    def _check_old_open_trades(self) -> None:
+        payload = self.api.get("data", {})
+        state = payload.get("state") if isinstance(payload, dict) else {}
+        if not isinstance(state, dict):
+            return
+        open_trades = state.get("open_trades_detail") or state.get("open_trade_details") or []
+        if not isinstance(open_trades, list):
+            return
+        now = _to_number(state.get("updated_at"), 0)
+        old = []
+        for trade in open_trades:
+            if not isinstance(trade, dict):
+                continue
+            entered_at = _to_optional_number(trade.get("entered_at") or trade.get("entry_time"))
+            holding = _to_optional_number(trade.get("holding_sec"))
+            if holding is None and entered_at and now:
+                holding = max(0.0, now - entered_at)
+            if holding is not None and holding > 60:
+                old.append({
+                    "trade_id": trade.get("trade_id"),
+                    "symbol": trade.get("symbol"),
+                    "pair_id": trade.get("pair_id"),
+                    "holding_sec": holding,
+                })
+        if old:
+            self._warn("PAPER_OPEN_TRADE_TOO_OLD", f"count={len(old)}", {"trades": old[:5]})
+
+        telemetry = self._telemetry()
+        sl_count = int(_to_number(telemetry.get("paper_exit_sl_count"), 0))
+        arb_fill_count = int(_to_number(telemetry.get("paper_arb_fill_count"), 0))
+        if sl_count > 0 and arb_fill_count > 0:
+            self._warn(
+                "PAPER_SL_PRESENT_CHECK_REQUIRED",
+                f"paper_exit_sl_count={sl_count} paper_arb_fill_count={arb_fill_count}",
+                {"paper_exit_sl_count": sl_count, "paper_arb_fill_count": arb_fill_count},
+            )
 
     def _check_recheck_health(self) -> None:
         payload = self.api.get("stale_recheck", {})

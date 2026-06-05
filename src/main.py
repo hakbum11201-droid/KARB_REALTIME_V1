@@ -940,7 +940,10 @@ def route_signal_to_execution(signal, entry_reason, paper_eng=None):
             if isinstance(paper_result, dict) else 'PAPER_UNKNOWN_REJECT'
         )
         detail = paper_result.get('detail', {}) if isinstance(paper_result, dict) else {}
-        result.update({'ok': ok, 'status': 'ENTERED' if ok else 'BLOCKED', 'trade': trade})
+        status = 'BLOCKED'
+        if ok:
+            status = reason if isinstance(trade, dict) and trade.get('status') == 'CLOSED' else 'ENTERED'
+        result.update({'ok': ok, 'status': status, 'trade': trade})
         if not ok:
             result['blockers'] = [reason]
             result['paper_engine_reject_reason'] = reason
@@ -1033,6 +1036,18 @@ def _try_recheck_paper_entry(opportunity, paper_eng):
         return None
     route = route_signal_to_execution({**opportunity, 'net_expected_profit_krw': net}, entry_reason, paper_eng)
     return route.get('trade') if route.get('ok') else None
+
+
+def _record_immediate_paper_fill(trade: dict | None, perf_tracker, risk_guard) -> bool:
+    if not isinstance(trade, dict):
+        return False
+    if trade.get('status') != 'CLOSED':
+        return False
+    if trade.get('execution_model') != 'INVENTORY_ARBITRAGE_FILL':
+        return False
+    perf_tracker.record_exit(trade)
+    risk_guard.record_trade_result(float(trade.get('realized_pnl_krw', 0) or 0))
+    return True
 
 
 def main():
@@ -1553,6 +1568,8 @@ def main():
                         trade = route.get('trade')
                         paper_entry_success_count += 1
                         paper_entry_count += 1
+                        if _record_immediate_paper_fill(trade, perf_tracker, risk_guard):
+                            paper_exit_count += 1
                         paper_entry_last_blocker = ''
                         if entry_reason == 'WIDE_SPREAD_RECHECK_ACTIONABLE':
                             paper_wide_spread_recheck_entry_count += 1
@@ -1740,6 +1757,8 @@ def main():
                         trade = route.get('trade')
                         paper_entry_success_count += 1
                         paper_entry_count += 1
+                        if _record_immediate_paper_fill(trade, perf_tracker, risk_guard):
+                            paper_exit_count += 1
                         paper_entry_last_blocker = ''
                         if not args.once:
                             print(
@@ -1899,6 +1918,8 @@ def main():
                         recheck_trade = recheck_route.get('trade')
                         paper_entry_success_count += int(cfg.mode == 'paper')
                         paper_entry_count += int(cfg.mode == 'paper')
+                        if _record_immediate_paper_fill(recheck_trade, perf_tracker, risk_guard):
+                            paper_exit_count += 1
                         paper_entry_last_blocker = ''
                         entry_reason = recheck_trade.get('entry_reason', '')
                         if entry_reason == 'WIDE_SPREAD_RECHECK_ACTIONABLE':
@@ -1964,6 +1985,8 @@ def main():
                             trade = route.get('trade')
                             paper_entry_success_count += 1
                             paper_entry_count += 1
+                            if _record_immediate_paper_fill(trade, perf_tracker, risk_guard):
+                                paper_exit_count += 1
                             paper_entry_last_blocker = ''
                             if not args.once:
                                 print(
@@ -2165,6 +2188,12 @@ def main():
             api_429_delta,
         )
         paper_exit_stats = paper_eng.exit_stats() if cfg.mode == 'paper' else {}
+        paper_exit_stats.setdefault('paper_arb_fill_count', 0)
+        paper_exit_stats.setdefault('paper_arb_fill_win_count', 0)
+        paper_exit_stats.setdefault('paper_arb_fill_loss_count', 0)
+        paper_exit_stats.setdefault('paper_arb_fill_net_pnl_krw', 0.0)
+        paper_exit_stats.setdefault('paper_arb_partial_unwind_count', 0)
+        paper_exit_stats.setdefault('paper_arb_unwind_cost_krw', 0.0)
         runtime_metrics = {
             'started_at':           started_at,
             'loop_count':           total_loops,

@@ -387,6 +387,13 @@ For long paper smoke tests, the recommended checks are:
   `WIDE_SPREAD_RECHECK_ACTIONABLE` separately because they represent different
   entry paths. This summary is for paper analysis only and remains disconnected
   from live and tiny-live order execution.
+- Paper arbitrage now uses an immediate inventory fill model. When both legs
+  satisfy `min_fill_ratio`, the paper trade is recorded as
+  `execution_model=INVENTORY_ARBITRAGE_FILL` and `exit_reason=ARB_FILLED`
+  using the entry cashflow, fees, and slippage estimate. Inventory imbalance
+  and later rebalance remain separate concerns. Partial or missed fills are
+  marked as `PARTIAL_FILL_UNWIND` or `LEG_MISS_UNWIND`; none of these paper
+  fill records call live or tiny-live order functions.
 - Entry signals now pass through a common `route_signal_to_execution` gate.
   In `paper` mode, eligible `NORMAL_GO`, `RECHECK_ACTIONABLE`, and
   `WIDE_SPREAD_RECHECK_ACTIONABLE` signals enter `PaperEngine` only after

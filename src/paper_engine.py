@@ -35,6 +35,15 @@ class PaperEngine:
             'paper_exit_last_holding_sec': None,
             'paper_exit_last_symbol': '',
             'paper_exit_last_pnl_krw': None,
+            'paper_arb_fill_count': 0,
+            'paper_arb_fill_win_count': 0,
+            'paper_arb_fill_loss_count': 0,
+            'paper_arb_fill_net_pnl_krw': 0.0,
+            'paper_arb_fill_last_symbol': '',
+            'paper_arb_fill_last_reason': '',
+            'paper_arb_fill_last_pnl_krw': None,
+            'paper_arb_partial_unwind_count': 0,
+            'paper_arb_unwind_cost_krw': 0.0,
         }
 
         base_dir  = os.path.dirname(os.path.abspath(__file__))
@@ -285,9 +294,142 @@ class PaperEngine:
             'fx_error_bp':           cfg.fx_error_bp,
             'risk_buffer_bp':        cfg.risk_buffer_bp,
         }
-        self._open_trades[trade_id] = trade
-        self._append_log({**trade})
-        return self._entry_result(True, 'ENTERED', trade=trade)
+        fill_ratio_buy = self._fill_ratio(calc_result, 'fill_ratio_buy', 'buy_fill_ratio')
+        fill_ratio_sell = self._fill_ratio(calc_result, 'fill_ratio_sell', 'sell_fill_ratio')
+        min_fill_ratio = float(calc_result.get('min_fill_ratio', cfg.min_fill_ratio) or cfg.min_fill_ratio)
+        partial_fill = (
+            bool(calc_result.get('partial_fill'))
+            or fill_ratio_buy < min_fill_ratio
+            or fill_ratio_sell < min_fill_ratio
+        )
+
+        if partial_fill:
+            closed_trade = self._close_partial_inventory_fill(
+                trade, calc_result, fill_ratio_buy, fill_ratio_sell, min_fill_ratio
+            )
+            self._closed_trades.append(closed_trade)
+            self._record_exit_stats(closed_trade)
+            self._append_log(closed_trade)
+            return self._entry_result(True, closed_trade['exit_reason'], trade=closed_trade)
+
+        closed_trade = self._close_inventory_fill(
+            trade, calc_result, fill_ratio_buy, fill_ratio_sell, min_fill_ratio
+        )
+        self._closed_trades.append(closed_trade)
+        self._record_exit_stats(closed_trade)
+        self._append_log(closed_trade)
+        return self._entry_result(True, 'ARB_FILLED', trade=closed_trade)
+
+    def _fill_ratio(self, calc_result: dict, primary: str, fallback: str) -> float:
+        value = calc_result.get(primary, calc_result.get(fallback, 1.0))
+        try:
+            ratio = float(1.0 if value is None else value)
+        except (TypeError, ValueError):
+            ratio = 1.0
+        return max(0.0, min(1.0, ratio))
+
+    def _fill_latency_sec(self, calc_result: dict) -> float:
+        value = calc_result.get('latency_used_ms')
+        if value is not None:
+            try:
+                return max(0.0, float(value) / 1000)
+            except (TypeError, ValueError):
+                pass
+        return 0.0
+
+    def _execution_costs(self, trade: dict, calc_result: dict, notional: float) -> tuple[float, float, float]:
+        fee_krw = float(calc_result.get('expected_fee_krw', trade.get('entry_fee_krw', 0)) or 0)
+        slippage_bp = float(
+            calc_result.get(
+                'expected_slippage_bp',
+                calc_result.get('dynamic_slippage_bp', trade.get('expected_slippage_bp', cfg.slippage_bp)),
+            ) or 0
+        )
+        slippage_cost_krw = float(calc_result.get('expected_slippage_krw', 0) or 0)
+        if slippage_cost_krw <= 0:
+            slippage_cost_krw = notional * slippage_bp / 10000
+        return fee_krw, slippage_bp, slippage_cost_krw
+
+    def _close_inventory_fill(
+        self, trade: dict, calc_result: dict, fill_ratio_buy: float, fill_ratio_sell: float,
+        min_fill_ratio: float,
+    ) -> dict:
+        qty = float(trade.get('selected_qty', trade.get('max_fillable_qty', 0)) or 0)
+        notional = float(trade.get('selected_notional_krw', 0) or 0)
+        buy_price = float(trade.get('entry_buy_price_krw', 0) or 0)
+        sell_price = float(trade.get('entry_sell_price_krw', 0) or 0)
+        fee_krw, slippage_bp, slippage_cost_krw = self._execution_costs(trade, calc_result, notional)
+        gross_pnl_krw = qty * (sell_price - buy_price)
+        realized_pnl_krw = gross_pnl_krw - fee_krw - slippage_cost_krw
+        realized_bp = realized_pnl_krw / notional * 10000 if notional else 0.0
+        win = realized_pnl_krw > 0
+        holding_sec = self._fill_latency_sec(calc_result)
+        return {
+            **trade,
+            'event': 'EXIT',
+            'status': 'CLOSED',
+            'execution_model': 'INVENTORY_ARBITRAGE_FILL',
+            'exit_time': trade.get('entered_at', time.time()) + holding_sec,
+            'exit_reason': 'ARB_FILLED',
+            'holding_sec': round(holding_sec, 3),
+            'fill_ratio_buy': fill_ratio_buy,
+            'fill_ratio_sell': fill_ratio_sell,
+            'min_fill_ratio': min_fill_ratio,
+            'partial_fill': False,
+            'unwind_required': False,
+            'unwind_cost_krw': 0.0,
+            'entry_fee_krw': round(fee_krw, 2),
+            'expected_slippage_bp': slippage_bp,
+            'dynamic_slippage_bp': calc_result.get('dynamic_slippage_bp', trade.get('dynamic_slippage_bp', slippage_bp)),
+            'slippage_cost_krw': round(slippage_cost_krw, 2),
+            'gross_pnl_krw': round(gross_pnl_krw, 2),
+            'realized_pnl_krw': round(realized_pnl_krw, 2),
+            'realized_bp': round(realized_bp, 4),
+            'win': win,
+            'clean_win': win,
+        }
+
+    def _close_partial_inventory_fill(
+        self, trade: dict, calc_result: dict, fill_ratio_buy: float, fill_ratio_sell: float,
+        min_fill_ratio: float,
+    ) -> dict:
+        fill_ratio = min(fill_ratio_buy, fill_ratio_sell)
+        qty = float(trade.get('selected_qty', trade.get('max_fillable_qty', 0)) or 0) * fill_ratio
+        notional = float(trade.get('selected_notional_krw', 0) or 0) * fill_ratio
+        buy_price = float(trade.get('entry_buy_price_krw', 0) or 0)
+        sell_price = float(trade.get('entry_sell_price_krw', 0) or 0)
+        fee_krw, slippage_bp, slippage_cost_krw = self._execution_costs(trade, calc_result, notional)
+        unwind_cost_krw = float(calc_result.get('unwind_cost_krw', 0) or 0)
+        gross_pnl_krw = qty * (sell_price - buy_price)
+        realized_pnl_krw = gross_pnl_krw - fee_krw - slippage_cost_krw - unwind_cost_krw
+        realized_bp = realized_pnl_krw / notional * 10000 if notional else 0.0
+        reason = 'LEG_MISS_UNWIND' if fill_ratio <= 0 else 'PARTIAL_FILL_UNWIND'
+        win = realized_pnl_krw > 0
+        holding_sec = self._fill_latency_sec(calc_result)
+        return {
+            **trade,
+            'event': 'EXIT',
+            'status': 'CLOSED',
+            'execution_model': 'INVENTORY_ARBITRAGE_FILL',
+            'exit_time': trade.get('entered_at', time.time()) + holding_sec,
+            'exit_reason': reason,
+            'holding_sec': round(holding_sec, 3),
+            'fill_ratio_buy': fill_ratio_buy,
+            'fill_ratio_sell': fill_ratio_sell,
+            'min_fill_ratio': min_fill_ratio,
+            'partial_fill': True,
+            'unwind_required': True,
+            'unwind_cost_krw': round(unwind_cost_krw, 2),
+            'entry_fee_krw': round(fee_krw, 2),
+            'expected_slippage_bp': slippage_bp,
+            'dynamic_slippage_bp': calc_result.get('dynamic_slippage_bp', trade.get('dynamic_slippage_bp', slippage_bp)),
+            'slippage_cost_krw': round(slippage_cost_krw, 2),
+            'gross_pnl_krw': round(gross_pnl_krw, 2),
+            'realized_pnl_krw': round(realized_pnl_krw, 2),
+            'realized_bp': round(realized_bp, 4),
+            'win': win,
+            'clean_win': False,
+        }
 
     # ──────────────────────────────────────────────────────────────────────
     # Exit check (매 루프마다 호출)
@@ -534,6 +676,28 @@ class PaperEngine:
 
     def _record_exit_stats(self, exit_trade: dict) -> None:
         reason = exit_trade.get('exit_reason', '')
+        if exit_trade.get('execution_model') == 'INVENTORY_ARBITRAGE_FILL':
+            pnl = float(exit_trade.get('realized_pnl_krw', 0) or 0)
+            if reason == 'ARB_FILLED':
+                self._exit_stats['paper_arb_fill_count'] += 1
+                if pnl > 0:
+                    self._exit_stats['paper_arb_fill_win_count'] += 1
+                else:
+                    self._exit_stats['paper_arb_fill_loss_count'] += 1
+                self._exit_stats['paper_arb_fill_net_pnl_krw'] = round(
+                    float(self._exit_stats.get('paper_arb_fill_net_pnl_krw', 0) or 0) + pnl,
+                    2,
+                )
+            elif reason in ('PARTIAL_FILL_UNWIND', 'LEG_MISS_UNWIND', 'PARTIAL_RISK'):
+                self._exit_stats['paper_arb_partial_unwind_count'] += 1
+                self._exit_stats['paper_arb_unwind_cost_krw'] = round(
+                    float(self._exit_stats.get('paper_arb_unwind_cost_krw', 0) or 0)
+                    + float(exit_trade.get('unwind_cost_krw', 0) or 0),
+                    2,
+                )
+            self._exit_stats['paper_arb_fill_last_symbol'] = exit_trade.get('symbol', '')
+            self._exit_stats['paper_arb_fill_last_reason'] = reason
+            self._exit_stats['paper_arb_fill_last_pnl_krw'] = pnl
         if reason == 'SL':
             self._exit_stats['paper_exit_sl_count'] += 1
         elif reason == 'TIMEOUT':

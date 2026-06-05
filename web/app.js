@@ -500,18 +500,19 @@ function renderTradeTable(trades) {
   if (!trades.length) { tb.innerHTML='<tr><td colspan="9" class="empty-row">없음</td></tr>'; return; }
   tb.innerHTML = trades.slice().reverse().map(t => {
     const pnl=Number(t.realized_pnl_krw||0);
-    const wc=t.exit_reason==='TP'?'win-cell':t.exit_reason==='SL'?'loss-cell':'timeout-cell';
+    const wc=t.exit_reason==='TP'||t.exit_reason==='ARB_FILLED'?'win-cell':t.exit_reason==='SL'?'loss-cell':'timeout-cell';
     const dc=t.best_direction==='A'?'dir-a':'dir-b';
     const et=t.entry_time?new Date(t.entry_time*1000).toLocaleTimeString('ko-KR'):'--';
     const xt=t.exit_time?new Date(t.exit_time*1000).toLocaleTimeString('ko-KR'):'--';
     const entryReason=t.entry_reason?`<div class="muted-mini">${esc(t.entry_reason)}</div>`:'';
-    const entryMeta=`<div class="muted-mini">notional ${fmt(t.selected_notional_krw)} KRW / quote ${fmt(t.entry_quote_age_ms,1)} ms ${t.entry_quote_age_source?`/ ${esc(t.entry_quote_age_source)}`:''}</div>`;
+    const executionModel=t.execution_model?`<div class="muted-mini">${esc(t.execution_model)}</div>`:'';
+    const entryMeta=`<div class="muted-mini">notional ${fmt(t.selected_notional_krw)} KRW / realized ${pnl>=0?'+':''}${fmt(pnl)} KRW / quote ${fmt(t.entry_quote_age_ms,1)} ms ${t.entry_quote_age_source?`/ ${esc(t.entry_quote_age_source)}`:''}</div>`;
     return `<tr>
       <td>${(t.trade_id||'').slice(0,8)}</td><td><span class="pair-badge ${pairMeta(t.pair_id||'UPBIT_BINANCE').badge}">${esc(t.pair_id||'UPBIT_BINANCE')}</span> ${t.symbol||'--'}</td>
       <td class="${dc}">${t.best_direction||'--'}</td><td>${et}</td><td>${xt}</td>
       <td>${t.holding_sec!=null?Number(t.holding_sec).toFixed(0)+'s':'--'}</td>
       <td style="color:${pnlC(pnl)}">${pnl>=0?'+':''}${fmt(pnl)} ₩</td>
-      <td class="${wc}">${t.exit_reason||'--'}${t.clean_win?' ★':''}${entryReason}${entryMeta}</td>
+      <td class="${wc}">${t.exit_reason||'--'}${t.clean_win?' ★':''}${entryReason}${executionModel}${entryMeta}</td>
       <td>${t.win?'✓':'✗'}</td>
     </tr>`;
   }).join('');
