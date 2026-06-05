@@ -352,6 +352,39 @@ class PaperEngine:
         self._append_log(closed_trade)
         return self._entry_result(True, 'ARB_FILLED', trade=closed_trade)
 
+    def try_entry_plan(self, plan: dict) -> dict:
+        """Execute a unified ExecutionPlan in paper mode.
+
+        The plan already contains VWAP, fee, slippage, quantity, depth, and
+        freshness decisions from build_execution_plan(). Paper keeps the same
+        guards as tiny/live and only records a simulated fill.
+        """
+        if not plan.get('plan_ok', False):
+            return self._entry_result(False, 'PAPER_PLAN_BLOCKED', detail={
+                'blockers': plan.get('execution_plan_blockers', []),
+            })
+        if not plan.get('executable', False):
+            return self._entry_result(False, 'PAPER_PLAN_NOT_EXECUTABLE', detail={
+                'preflight_status': plan.get('preflight_status'),
+                'blockers': plan.get('execution_plan_blockers', []),
+            })
+        if not plan.get('depth_ok', False):
+            return self._entry_result(False, 'PAPER_DEPTH_INSUFFICIENT', detail={
+                'fill_ratio_buy': plan.get('expected_fill_ratio_buy'),
+                'fill_ratio_sell': plan.get('expected_fill_ratio_sell'),
+            })
+        if not plan.get('leg_freshness_ok', True):
+            return self._entry_result(False, 'PAPER_LEG_QUOTE_TOO_OLD', detail={
+                'leg_freshness_blocker': plan.get('leg_freshness_blocker'),
+                'max_leg_quote_age_ms': plan.get('max_leg_quote_age_ms'),
+                'leg_quote_age_cap_ms': plan.get('leg_quote_age_cap_ms'),
+            })
+        if float(plan.get('net_expected_profit_krw', 0) or 0) <= 0:
+            return self._entry_result(False, 'PAPER_NET_NOT_POSITIVE', detail={
+                'net_expected_profit_krw': plan.get('net_expected_profit_krw'),
+            })
+        return self.try_entry({**plan, 'reason_no_trade': 'OK'})
+
     def _fill_ratio(self, calc_result: dict, primary: str, fallback: str) -> float:
         value = calc_result.get(primary, calc_result.get(fallback, 1.0))
         try:

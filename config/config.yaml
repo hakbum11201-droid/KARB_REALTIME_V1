@@ -83,7 +83,7 @@ wide_spread_recheck_min_surplus_bp_extra: 10
 wide_spread_recheck_min_net_profit_krw: 10
 wide_spread_recheck_allowed_liquidity: [GOOD, NORMAL]
 entry_recovery:
-  enabled: true
+  enabled: false
   paper_only: true
   max_retry_per_signal: 1
   retry_cooldown_sec: 2
@@ -94,7 +94,7 @@ entry_recovery:
     - SELL_LEG_QUOTE_TOO_OLD
     - MAX_LEG_QUOTE_TOO_OLD
 profitable_stale_recovery:
-  enabled: true
+  enabled: false
   paper_only: true
   min_expected_net_krw: 20
   min_expected_net_bp: 8
@@ -110,6 +110,11 @@ profitable_stale_recovery:
     - stale_recheck
   require_depth_ok: true
   require_positive_after_refresh: true
+execution:
+  unified_pipeline_enabled: true
+  max_refresh_once_for_stale: true
+  stale_refresh_cooldown_sec: 0.5
+  max_execution_candidates_per_loop: 5
 use_websocket_market_data: true
 rest_fallback_enabled: true
 rate_limiter_enabled: true

@@ -873,6 +873,10 @@ class TinyLiveExecutor:
             return {'ok': False, 'status': 'BLOCKED', 'blockers': ['STALE_QUOTE'], 'plan': plan}
         return self.execute_plan(plan)
 
+    def execute(self, plan: dict) -> dict:
+        """Execute the shared ExecutionPlan through the existing guarded path."""
+        return self.execute_once(pair_id=plan.get('pair_id', 'UPBIT_BINANCE'), plan=plan)
+
     def execute_plan(self, plan: dict) -> dict:
         current = _status()
         pair_id = plan.get('pair_id', 'UPBIT_BINANCE')
@@ -1026,3 +1030,21 @@ class TinyLiveExecutor:
         }
         _write_json(ORDER_FILE, output)
         return output
+
+
+class LiveExecutor:
+    """Placeholder live executor that preserves the unified interface.
+
+    A full live executor is intentionally not wired yet. Keeping this class
+    explicit lets the unified router select a live executor without adding any
+    new order path or relaxing the disabled-by-default live guards.
+    """
+
+    def execute(self, plan: dict) -> dict:
+        return {
+            'ok': False,
+            'status': 'BLOCKED',
+            'plan': plan,
+            'blockers': ['LIVE_EXECUTOR_NOT_CONFIGURED'],
+            'order_submit_attempted': False,
+        }

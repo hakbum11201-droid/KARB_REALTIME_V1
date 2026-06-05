@@ -372,7 +372,7 @@ def _entry_diagnostics_payload():
         'max_queue_size': telemetry.get('entry_recovery_queue_max_size', cfg.entry_recovery_max_queue_size),
     }
     profitable_stale_recovery = {
-        'enabled': telemetry.get('profitable_stale_recovery_enabled', cfg.profitable_stale_recovery_enabled),
+        'enabled': cfg.profitable_stale_recovery_enabled,
         'candidates': telemetry.get('profitable_stale_candidates', 0),
         'stale_quote_positive_count': telemetry.get('stale_quote_positive_count', 0),
         'stale_quote_positive_avg_net_krw': telemetry.get('stale_quote_positive_avg_net_krw', 0),

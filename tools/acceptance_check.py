@@ -636,7 +636,7 @@ class AcceptanceCheck:
             0,
         )
         paper_arb_fill_count = _to_number(telemetry.get("paper_arb_fill_count"), 0)
-        if stale_positive > 0 and stale_requests == 0:
+        if bool(stale_recovery.get("enabled")) and stale_positive > 0 and stale_requests == 0:
             self._warn("PROFITABLE_STALE_NOT_RECOVERED", details=details)
         if stale_success > 0 and paper_arb_fill_count == 0:
             self._warn("RECOVERY_SUCCESS_WITHOUT_FILL", details=details)

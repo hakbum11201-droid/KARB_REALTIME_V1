@@ -406,6 +406,14 @@ For long paper smoke tests, the recommended checks are:
   checks. In `tiny_live` or `live`, the same gate can only produce a guarded
   execution-plan candidate; it does not call exchange order functions or bypass
   the existing disabled-by-default live safety settings.
+- The execution path is intentionally unified: candidates are converted once
+  with `build_execution_plan()`, then `route_signal_to_execution()` applies the
+  shared freshness, VWAP, fee, slippage, depth, fill-ratio, notional, duplicate,
+  and positive-net guards before selecting only the final executor
+  (`PaperEngine`, `TinyLiveExecutor`, or the blocked live executor stub).
+  `entry_recovery` and `profitable_stale_recovery` default to disabled; stale
+  candidates can request the existing priority refresh once and must be judged
+  again from a fresh snapshot before any mode can proceed.
 - For recheck-based paper entries, entry freshness is measured from the
   completed handoff `refreshed_at` timestamp first. The original stale quote age
   is used only as a fallback, and the telemetry records

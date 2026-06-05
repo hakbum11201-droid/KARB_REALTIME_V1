@@ -31,7 +31,7 @@ from paper_fill_simulator import simulate_paper_fill
 from rate_limiter import rate_limiter
 from bithumb_quote_cache import BithumbQuoteCache
 from rest_fallback_cache import RestFallbackQuoteCache
-from executors import TinyLiveExecutor, build_tiny_live_preflight
+from executors import LiveExecutor, TinyLiveExecutor, build_tiny_live_preflight
 from execution_plan import build_execution_plan
 
 
@@ -1037,11 +1037,12 @@ def _entry_quote_age_limit(signal, mode):
     )
 
 
-def _execution_fields(signal, entry_reason):
+def _execution_fields(signal, entry_reason, mode=None):
+    mode = mode or cfg.mode
     pair_id = signal.get('pair_id', 'UPBIT_BINANCE')
     direction = signal.get('best_direction') or signal.get('direction', '')
     entry_quote_age = _entry_quote_age_details(signal)
-    entry_quote_age_cap_ms = _entry_quote_age_limit({**signal, 'entry_reason': entry_reason}, cfg.mode)
+    entry_quote_age_cap_ms = _entry_quote_age_limit({**signal, 'entry_reason': entry_reason}, mode)
     entry_refreshed_at = entry_quote_age.get('refreshed_at')
     entry_refresh_started_at = (
         signal.get('stale_recheck_refresh_started_at')
@@ -1076,7 +1077,7 @@ def _execution_fields(signal, entry_reason):
             if entry_reason == 'WIDE_SPREAD_RECHECK_ACTIONABLE' else ''
         ),
     }
-    plan = build_execution_plan(base, cfg.mode, cfg)
+    plan = build_execution_plan(base, mode, cfg)
     return plan
 
 
@@ -1271,9 +1272,15 @@ def _entry_blockers(signal, mode, entry_reason, paper_eng=None):
     return list(dict.fromkeys(blockers))
 
 
-def route_signal_to_execution(signal, entry_reason, paper_eng=None, rest_cache=None, bithumb_cache=None):
-    prepared = _execution_fields(signal, entry_reason)
-    mode = cfg.mode
+def route_signal_to_execution(signal, entry_reason=None, paper_eng=None, rest_cache=None, bithumb_cache=None, mode=None):
+    mode = mode or cfg.mode
+    entry_reason = entry_reason or signal.get('entry_reason') or 'NORMAL_GO'
+    prepared = (
+        signal
+        if signal.get('plan_id') and signal.get('plan_ok') is not None
+        else _execution_fields(signal, entry_reason, mode)
+    )
+    prepared = {**prepared, 'entry_reason': entry_reason, 'mode': mode}
     blockers = _entry_blockers(prepared, mode, entry_reason, paper_eng)
     result = {
         'ok': False,
@@ -1317,14 +1324,15 @@ def route_signal_to_execution(signal, entry_reason, paper_eng=None, rest_cache=N
             'MAX_LEG_QUOTE_TOO_OLD', 'UNKNOWN_LEG_QUOTE_AGE',
         )):
             _record_leg_quote_block(prepared)
-            if mode == 'paper':
-                recovery_result = _request_entry_recovery(prepared, blockers, rest_cache, bithumb_cache)
-                result['entry_recovery'] = recovery_result
+            if cfg.max_refresh_once_for_stale:
+                result['priority_refresh'] = _request_stale_leg_priority_refresh(
+                    prepared, rest_cache, bithumb_cache
+                )
         result['status'] = 'BLOCKED'
         return result
     if mode == 'paper':
         paper_result = (
-            paper_eng.try_entry({**prepared, 'reason_no_trade': 'OK'})
+            paper_eng.try_entry_plan(prepared)
             if paper_eng else {'ok': False, 'trade': None, 'reason': 'PAPER_UNKNOWN_REJECT', 'detail': {}}
         )
         trade = paper_result.get('trade') if isinstance(paper_result, dict) else paper_result
@@ -1343,11 +1351,7 @@ def route_signal_to_execution(signal, entry_reason, paper_eng=None, rest_cache=N
             result['paper_engine_reject_reason'] = reason
             result['paper_engine_reject_detail'] = detail
         return result
-    execution_route = (
-        _execute_tiny_live_calibration_route(prepared)
-        if mode == 'tiny_live' and bool(_calibration_cfg().get('enabled', False))
-        else _execute_existing_live_route(prepared)
-    )
+    execution_route = _execute_existing_live_route(prepared, mode=mode)
     result.update({
         'ok': bool(execution_route.get('ok')),
         'status': execution_route.get('status', 'BLOCKED'),
@@ -1372,6 +1376,7 @@ def _paper_engine_reject_bucket(reason: str) -> str:
 
 
 _TINY_LIVE_EXECUTOR = None
+_LIVE_EXECUTOR = None
 
 
 def _get_tiny_live_executor():
@@ -1379,6 +1384,13 @@ def _get_tiny_live_executor():
     if _TINY_LIVE_EXECUTOR is None:
         _TINY_LIVE_EXECUTOR = TinyLiveExecutor()
     return _TINY_LIVE_EXECUTOR
+
+
+def _get_live_executor():
+    global _LIVE_EXECUTOR
+    if _LIVE_EXECUTOR is None:
+        _LIVE_EXECUTOR = LiveExecutor()
+    return _LIVE_EXECUTOR
 
 
 def _read_json_file(path, default=None):
@@ -1740,16 +1752,25 @@ def _execute_tiny_live_calibration_route(prepared):
     return route
 
 
-def _execute_existing_live_route(prepared: dict) -> dict:
-    mode = cfg.mode
+def _execute_existing_live_route(prepared: dict, mode=None) -> dict:
+    mode = mode or cfg.mode
     if mode == 'tiny_live':
         executor = _get_tiny_live_executor()
-        execution = executor.execute_once(pair_id=prepared.get('pair_id', 'UPBIT_BINANCE'), plan=prepared)
+        execution = executor.execute(prepared)
         submitted = bool(execution.get('results') or execution.get('errors'))
         return {
             'ok': bool(execution.get('ok')),
             'status': execution.get('status', 'SUBMITTED' if execution.get('ok') else 'BLOCKED'),
             'order_submit_attempted': submitted,
+            'execution_result': execution,
+            'blockers': execution.get('blockers', []),
+        }
+    if mode == 'live':
+        execution = _get_live_executor().execute(prepared)
+        return {
+            'ok': bool(execution.get('ok')),
+            'status': execution.get('status', 'BLOCKED'),
+            'order_submit_attempted': bool(execution.get('order_submit_attempted')),
             'execution_result': execution,
             'blockers': execution.get('blockers', []),
         }
@@ -2207,6 +2228,7 @@ def main():
         loop_opportunities = []
         skipped_bithumb_symbol_count_last_loop = 0
         skipped_bithumb_quote_reasons_last_loop: dict[str, int] = {}
+        execution_candidates_this_loop = 0
 
         completed_handoffs = _consume_completed_recheck_handoffs(
             stale_recheck_pending,
@@ -2316,6 +2338,10 @@ def main():
                         wide_spread_entry_last_net_krw = signal.get('net_expected_profit_krw')
                     stale_recheck_pending.pop((pair_id, sym), None)
                     continue
+                if execution_candidates_this_loop >= int(cfg.max_execution_candidates_per_loop):
+                    completed_handoff_entry_last_reason = 'EXECUTION_CANDIDATE_LOOP_LIMIT'
+                    continue
+                execution_candidates_this_loop += 1
                 route = route_signal_to_execution(
                     signal, entry_reason, paper_eng, rest_fallback_cache, bithumb_quote_cache
                 )
@@ -2536,6 +2562,10 @@ def main():
 
             # ── Paper 진입 ────────────────────────────────────────────────
             if is_safe:
+                if execution_candidates_this_loop >= int(cfg.max_execution_candidates_per_loop):
+                    paper_entry_last_blocker = 'EXECUTION_CANDIDATE_LOOP_LIMIT'
+                    continue
+                execution_candidates_this_loop += 1
                 route = route_signal_to_execution(
                     calc_res, 'NORMAL_GO', paper_eng, rest_fallback_cache, bithumb_quote_cache
                 )
@@ -2698,6 +2728,10 @@ def main():
                 })
                 recheck_reason = _entry_reason_from_recheck_status(domestic.get('stale_recheck_status'))
                 if recheck_reason:
+                    if execution_candidates_this_loop >= int(cfg.max_execution_candidates_per_loop):
+                        paper_entry_last_blocker = 'EXECUTION_CANDIDATE_LOOP_LIMIT'
+                        continue
+                    execution_candidates_this_loop += 1
                     net = float(
                         domestic.get('stale_recheck_new_net_krw', domestic.get('net_expected_profit_krw', 0)) or 0
                     )
@@ -2787,6 +2821,10 @@ def main():
                         paper_entry_blocked_stale_count += int('ENTRY_STALE_QUOTE' in blockers)
                         paper_entry_blocked_liquidity_count += int('ENTRY_LIQUIDITY_BLOCKED' in blockers)
                 if domestic_safe:
+                    if execution_candidates_this_loop >= int(cfg.max_execution_candidates_per_loop):
+                        paper_entry_last_blocker = 'EXECUTION_CANDIDATE_LOOP_LIMIT'
+                        continue
+                    execution_candidates_this_loop += 1
                     route = route_signal_to_execution(
                         domestic, 'NORMAL_GO', paper_eng, rest_fallback_cache, bithumb_quote_cache
                     )
@@ -3111,6 +3149,8 @@ def main():
             'paper_recheck_entry_count': paper_recheck_entry_count,
             'paper_recheck_entry_last_symbol': paper_recheck_entry_last_symbol,
             'paper_recheck_entry_last_reason': paper_recheck_entry_last_reason,
+            'execution_candidates_this_loop': execution_candidates_this_loop,
+            'max_execution_candidates_per_loop': cfg.max_execution_candidates_per_loop,
             'paper_wide_spread_recheck_request_count': stale_recheck_counters['wide_request'],
             'paper_wide_spread_recheck_actionable_count': stale_recheck_counters['wide_actionable'],
             'profitable_stale_recheck_request_count': stale_recheck_counters['profitable_request'],

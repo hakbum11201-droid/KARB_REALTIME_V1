@@ -1,6 +1,7 @@
 """Safe execution plan model. Plans are inspectable but never executed here."""
 from dataclasses import asdict, dataclass, field
 import time
+import uuid
 
 from config import cfg
 
@@ -244,8 +245,20 @@ def build_execution_plan(signal: dict, mode: str, config=cfg) -> dict:
     plan_ok = not blockers
     entry_reason = signal.get('entry_reason', '')
     leg_freshness = _leg_freshness(signal, mode, entry_reason, buy_venue, sell_venue, config)
+    quote_timestamp = float(
+        signal.get('quote_timestamp')
+        or signal.get('entry_refreshed_at')
+        or signal.get('refreshed_at')
+        or signal.get('bithumb_ts')
+        or signal.get('binance_ts')
+        or signal.get('upbit_ts')
+        or 0
+    )
+    if not quote_timestamp and leg_freshness.get('max_leg_quote_age_ms') is not None:
+        quote_timestamp = time.time() - float(leg_freshness.get('max_leg_quote_age_ms') or 0) / 1000
     planned = {
         **signal,
+        'plan_id': signal.get('plan_id') or str(uuid.uuid4()),
         'pair_id': pair_id,
         'symbol': signal.get('symbol', ''),
         'direction': direction,
@@ -304,11 +317,14 @@ def build_execution_plan(signal: dict, mode: str, config=cfg) -> dict:
         'depth_levels_used_sell': sell_fill['depth_levels_used'],
         'slippage_source': 'ORDERBOOK_VWAP',
         'quote_age_ms': signal.get('entry_quote_age_ms', signal.get('max_leg_quote_age_ms')),
+        'quote_timestamp': quote_timestamp,
         'quote_age_cap_ms': signal.get('entry_quote_age_cap_ms'),
         **leg_freshness,
         'plan_ok': plan_ok,
         'blocker': blockers[0] if blockers else '',
         'execution_plan_blockers': blockers,
+        'preflight_status': 'PASS' if plan_ok and leg_freshness.get('leg_freshness_ok', True) else 'BLOCKED',
+        'executable': bool(plan_ok and leg_freshness.get('leg_freshness_ok', True)),
         'planned_buy_vwap_price': buy_vwap,
         'planned_sell_vwap_price': sell_vwap,
         'planned_total_fee_krw': total_fee,

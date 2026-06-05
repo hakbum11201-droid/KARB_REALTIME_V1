@@ -198,7 +198,7 @@ class Config:
     @property
     def entry_recovery(self): return self.get('entry_recovery', {})
     @property
-    def entry_recovery_enabled(self): return self.entry_recovery.get('enabled', True)
+    def entry_recovery_enabled(self): return self.entry_recovery.get('enabled', False)
     @property
     def entry_recovery_paper_only(self): return self.entry_recovery.get('paper_only', True)
     @property
@@ -214,7 +214,7 @@ class Config:
     @property
     def profitable_stale_recovery(self): return self.get('profitable_stale_recovery', {})
     @property
-    def profitable_stale_recovery_enabled(self): return self.profitable_stale_recovery.get('enabled', True)
+    def profitable_stale_recovery_enabled(self): return self.profitable_stale_recovery.get('enabled', False)
     @property
     def profitable_stale_recovery_paper_only(self): return self.profitable_stale_recovery.get('paper_only', True)
     @property
@@ -237,6 +237,16 @@ class Config:
     def profitable_stale_recovery_require_depth_ok(self): return self.profitable_stale_recovery.get('require_depth_ok', True)
     @property
     def profitable_stale_recovery_require_positive_after_refresh(self): return self.profitable_stale_recovery.get('require_positive_after_refresh', True)
+    @property
+    def execution(self): return self.get('execution', {})
+    @property
+    def unified_pipeline_enabled(self): return self.execution.get('unified_pipeline_enabled', True)
+    @property
+    def max_refresh_once_for_stale(self): return self.execution.get('max_refresh_once_for_stale', True)
+    @property
+    def stale_refresh_cooldown_sec(self): return self.execution.get('stale_refresh_cooldown_sec', 0.5)
+    @property
+    def max_execution_candidates_per_loop(self): return self.execution.get('max_execution_candidates_per_loop', 5)
     @property
     def use_websocket_market_data(self): return self.get('use_websocket_market_data', True)
     @property
