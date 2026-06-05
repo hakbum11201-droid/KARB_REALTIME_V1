@@ -19,12 +19,17 @@ import sys
 import argparse
 import time
 import yaml
+import subprocess
+import threading
 from urllib.parse import parse_qs, urlparse
 
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
 WEB_DIR     = os.path.normpath(os.path.join(BASE_DIR, '..', 'web'))
 RUNTIME_DIR = os.path.normpath(os.path.join(BASE_DIR, '..', 'runtime'))
 LOGS_DIR    = os.path.normpath(os.path.join(BASE_DIR, '..', 'logs'))
+SERVER_PID_FILE = os.path.join(RUNTIME_DIR, 'server.pid')
+SERVER_STARTED_AT = time.time()
+APP_VERSION = 'KARB_REALTIME_V1'
 
 sys.path.insert(0, BASE_DIR)
 import secrets_manager
@@ -75,6 +80,82 @@ def _read_jsonl_tail(path, n=50):
         return out
     except Exception:
         return []
+
+
+def _git_value(args):
+    try:
+        out = subprocess.check_output(
+            ['git', *args],
+            cwd=os.path.normpath(os.path.join(BASE_DIR, '..')),
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=2,
+        )
+        return out.strip()
+    except Exception:
+        return ''
+
+
+def _system_status_payload():
+    engine = process_manager.get_engine_status()
+    control = ctrl_module.get_control_state()
+    state = _read_json(os.path.join(RUNTIME_DIR, 'state.json'))
+    return {
+        'ok': True,
+        'server_running': True,
+        'engine_running': bool(engine.get('running')),
+        'mode': state.get('mode') or control.get('mode') or engine.get('mode') or cfg.mode,
+        'session_id': engine.get('run_id') or control.get('run_id', '') or state.get('run_id', ''),
+        'git_commit': _git_value(['rev-parse', '--short', 'HEAD']),
+        'git_branch': _git_value(['rev-parse', '--abbrev-ref', 'HEAD']),
+        'started_at': SERVER_STARTED_AT,
+        'process_id': os.getpid(),
+        'app_version': APP_VERSION,
+        'engine': engine,
+    }
+
+
+def _restart_engine_worker(mode):
+    if process_manager.is_engine_running():
+        process_manager.stop_engine()
+        deadline = time.time() + 30
+        while process_manager.is_engine_running() and time.time() < deadline:
+            time.sleep(0.5)
+    if not process_manager.is_engine_running():
+        process_manager.start_engine(mode)
+
+
+def _engine_restart_payload(body):
+    engine = process_manager.get_engine_status()
+    mode = body.get('mode') or engine.get('mode') or cfg.mode or 'paper'
+    if mode not in ('paper', 'tiny_live', 'live'):
+        mode = 'paper'
+    confirm = bool(body.get('confirm_restart') or body.get('confirmed'))
+    if mode in ('tiny_live', 'live') and not confirm:
+        return {
+            'ok': False,
+            'confirm_required': True,
+            'mode': mode,
+            'message': f'{mode} restart requires explicit confirmation. Server remains running.',
+            'blockers': ['CONFIRM_REQUIRED'],
+        }
+    if mode == 'live':
+        return {
+            'ok': False,
+            'confirm_required': False,
+            'mode': mode,
+            'message': 'Full live mode restart is disabled from the dashboard.',
+            'blockers': ['LIVE_RESTART_DISABLED'],
+        }
+    thread = threading.Thread(target=_restart_engine_worker, args=(mode,), daemon=True)
+    thread.start()
+    return {
+        'ok': True,
+        'confirm_required': False,
+        'mode': mode,
+        'message': f'Engine restart requested in {mode} mode. Server remains running.',
+        'blockers': [],
+    }
 
 
 def _is_mock_trade(trade: dict) -> bool:
@@ -997,6 +1078,9 @@ class KarbHandler(SimpleHTTPRequestHandler):
         if path == '/api/engine/status':
             self._send_json(process_manager.get_engine_status())
 
+        elif path == '/api/system/status':
+            self._send_guarded_json(_system_status_payload)
+
         elif self.path == '/api/state':
             self._send_json(_read_json(os.path.join(RUNTIME_DIR, 'state.json')))
 
@@ -1220,6 +1304,13 @@ class KarbHandler(SimpleHTTPRequestHandler):
             result = process_manager.stop_engine()
             self._send_json(result)
 
+        elif self.path == '/api/engine/restart':
+            if not self._is_localhost():
+                self._send_403()
+                return
+            body = self._request_json()
+            self._send_guarded_json(lambda: _engine_restart_payload(body))
+
         elif self.path == '/api/stop':
             if not self._is_localhost():
                 self._send_403()
@@ -1256,6 +1347,12 @@ class KarbHandler(SimpleHTTPRequestHandler):
 
 
 def run(port=8000, once=False):
+    os.makedirs(RUNTIME_DIR, exist_ok=True)
+    try:
+        with open(SERVER_PID_FILE, 'w', encoding='utf-8') as f:
+            f.write(str(os.getpid()))
+    except Exception:
+        pass
     httpd = ThreadingHTTPServer(('', port), KarbHandler)
     print(f"[WebServer] http://localhost:{port}")
     if once:
@@ -1267,6 +1364,11 @@ def run(port=8000, once=False):
             pass
         finally:
             httpd.server_close()
+            try:
+                if os.path.exists(SERVER_PID_FILE):
+                    os.remove(SERVER_PID_FILE)
+            except Exception:
+                pass
 
 
 if __name__ == '__main__':

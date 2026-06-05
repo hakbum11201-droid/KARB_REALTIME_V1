@@ -511,3 +511,10 @@ For long paper smoke tests, the recommended checks are:
   disabled tiny/live gates and capital limits still block submission; do not
   grant withdrawal, deposit, address, futures, margin, P2P, or transfer
   permissions.
+- Windows operators can use `START_KARB.bat`, `STOP_KARB.bat`, and
+  `RESTART_KARB.bat` from the project root instead of manual PowerShell
+  process cleanup. The stop script targets only Python processes whose command
+  line includes `C:\KARB_REALTIME_V1`; it does not kill every `python.exe`.
+  The dashboard also exposes server status, current commit, Engine Stop, and
+  Engine Restart controls. Browser close does not guarantee server shutdown;
+  if the server itself is offline, use `RESTART_KARB.bat`.

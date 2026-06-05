@@ -122,6 +122,8 @@ body {
 .btn-live:not(:disabled):hover { background: rgba(72,187,120,.2); border-color: var(--accent-green); }
 .btn-stop { background: rgba(252,129,129,.1); color: var(--accent-red); border-color: rgba(252,129,129,.3); }
 .btn-stop:not(:disabled):hover { background: rgba(252,129,129,.2); border-color: var(--accent-red); }
+.btn-restart { background: rgba(246,173,85,.1); color: var(--accent-yellow); border-color: rgba(246,173,85,.3); }
+.btn-restart:not(:disabled):hover { background: rgba(246,173,85,.2); border-color: var(--accent-yellow); }
 
 .stat-pill {
   display: flex; flex-direction: column; align-items: center;
@@ -130,6 +132,8 @@ body {
 }
 .stat-pill.fx     { border-color: rgba(99,179,237,0.3); }
 .stat-pill.profit { border-color: rgba(72,187,120,0.3); }
+.stat-pill.system { border-color: rgba(159,122,234,0.3); }
+.stat-pill.commit { border-color: rgba(246,173,85,0.3); min-width: 96px; }
 .pill-label { font-size: 9px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); }
 .pill-value { font-size: 13px; font-weight: 600; font-family: var(--font-mono); color: var(--text-primary); }
 

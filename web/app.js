@@ -38,6 +38,7 @@ let latestNotionalSweep = {};
 let latestTinyLivePreflight = {};
 let latestEntryDiagnostics = {};
 let latestTradingCapital = {};
+let latestSystemStatus = {};
 let lastSummaryFetchAt = 0;
 
 const durationText = seconds => {
@@ -113,6 +114,7 @@ on('btn-stop-engine', 'click', async () => {
     const d = await res.json();
     alert(d.message || 'Stop requested');
     fetchData();
+    fetchSystemStatus();
   } catch { alert('연결 실패'); }
 });
 on('btn-stop', 'click', async () => {
@@ -122,8 +124,60 @@ on('btn-stop', 'click', async () => {
     const res = await fetch('/api/engine/stop', { method: 'POST' });
     const d = await res.json();
     alert(d.message || 'Stop requested');
+    fetchSystemStatus();
   } catch { alert('연결 실패'); }
 });
+
+async function restartEngine(confirmRestart=false) {
+  try {
+    const mode = latestSystemStatus.mode || latestEngine.mode || 'paper';
+    const res = await fetch('/api/engine/restart', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ mode, confirm_restart: confirmRestart })
+    });
+    const data = await res.json();
+    if (data.confirm_required && !confirmRestart) {
+      if (confirm(`${String(data.mode||mode).toUpperCase()} 엔진 재시작은 확인이 필요합니다. 계속할까요?`)) {
+        return restartEngine(true);
+      }
+      return;
+    }
+    alert(data.message || (data.ok ? 'Restart requested' : 'Restart blocked'));
+    fetchData();
+    fetchSystemStatus();
+  } catch (error) {
+    console.error('[engine restart] failed', error);
+    alert('서버 연결 실패. 서버가 종료된 경우 RESTART_KARB.bat를 실행하세요.');
+  }
+}
+on('btn-restart-engine', 'click', () => restartEngine(false));
+
+async function fetchSystemStatus() {
+  try {
+    const r = await fetch('/api/system/status');
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    latestSystemStatus = await r.json();
+    renderSystemStatus(latestSystemStatus);
+  } catch (error) {
+    console.error('[system status] failed', error);
+    setText('stat-server-status', 'OFFLINE');
+    setText('stat-current-commit', 'use BAT');
+    setText('conn-label', 'Server offline. Run RESTART_KARB.bat');
+  }
+}
+
+function renderSystemStatus(status={}) {
+  setText('stat-server-status', status.server_running ? `RUNNING #${status.process_id||'--'}` : 'OFFLINE');
+  setText('stat-current-commit', status.git_commit || '--');
+  const title = [
+    `branch=${status.git_branch||'--'}`,
+    `session=${status.session_id||'--'}`,
+    `version=${status.app_version||'--'}`,
+  ].join(' · ');
+  const commit = $('stat-current-commit');
+  if (commit) commit.title = title;
+}
 
 // ── Main Fetch ──────────────────────────────────────────────────────────
 async function fetchData() {
@@ -1483,10 +1537,12 @@ fetchPerf();
 fetchLastSession();
 fetchInventory();
 fetchTradingCapital();
+fetchSystemStatus();
 setInterval(fetchData,   POLL_MS);
 setInterval(fetchPerf,   POLL_MS*2);
 setInterval(fetchTrades, POLL_MS*2);
 setInterval(fetchTelemetry, POLL_MS);
+setInterval(fetchSystemStatus, POLL_MS*2);
 setInterval(fetchRuntimeServices, POLL_MS);
 setInterval(fetchNotionalSweep, POLL_MS*2);
 setInterval(fetchIcebergStatus, POLL_MS*2);
