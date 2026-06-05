@@ -13,6 +13,20 @@ min_paper_win_rate_for_tiny_live: 0.65
 min_paper_net_pnl_krw_for_tiny_live: 0
 tiny_live_order_krw: 10000
 tiny_live_max_order_krw: 20000
+tiny_live_calibration:
+  enabled: false
+  max_order_krw: 10000
+  max_trades_per_session: 3
+  max_daily_loss_krw: 3000
+  require_manual_enable: true
+  allowed_pairs:
+    - UPBIT_BITHUMB
+  allowed_symbols:
+    - JTO
+    - SAHARA
+  min_fill_ratio: 0.8
+  cancel_after_ms: 1500
+  record_only_after_fail: true
 tiny_live_daily_loss_limit_krw: 10000
 tiny_live_max_trades_per_day: 5
 tiny_live_require_preflight: true

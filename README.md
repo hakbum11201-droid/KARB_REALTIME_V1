@@ -441,3 +441,11 @@ For long paper smoke tests, the recommended checks are:
   percentiles. `WIDE_SPREAD_RECHECK_ACTIONABLE` uses the strictest paper cap and
   must also pass post-recheck edge, net-profit, liquidity, notional, and dynamic
   slippage gates before a paper entry is allowed.
+- Tiny-live execution calibration is a separate opt-in validation path for the
+  existing `ExecutionPlan`. It compares planned VWAP/fee/slippage/PnL against
+  tiny real fill data, writes one JSONL row per actual attempt to
+  `logs/execution_calibration.jsonl`, and only reports recommended buffer
+  values. It does not auto-edit config or improve Paper PnL. Orders remain off
+  unless both `tiny_live_enabled: true` and
+  `tiny_live_calibration.enabled: true` are set and all key, pair/symbol,
+  max-order, freshness, plan, risk, and existing tiny-live guards pass.

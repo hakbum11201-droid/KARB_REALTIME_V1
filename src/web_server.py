@@ -222,6 +222,53 @@ def _telemetry_payload():
     return {'ok': True, 'error': '', 'blockers': [], 'telemetry': telemetry}
 
 
+def _execution_calibration_status_payload():
+    cal_cfg = cfg.tiny_live_calibration if isinstance(cfg.tiny_live_calibration, dict) else {}
+    status = _read_json(os.path.join(RUNTIME_DIR, 'execution_calibration_status.json'))
+    keys = secrets_manager.get_key_status()
+    key_missing = (
+        keys.get('UPBIT_ACCESS_KEY') != 'Set'
+        or keys.get('UPBIT_SECRET_KEY') != 'Set'
+        or keys.get('BITHUMB_ACCESS_KEY') != 'Set'
+        or keys.get('BITHUMB_SECRET_KEY') != 'Set'
+    )
+    enabled = bool(cal_cfg.get('enabled', False))
+    blockers = []
+    if enabled and not cfg.tiny_live_enabled:
+        blockers.append('TINY_LIVE_DISABLED')
+    if enabled and key_missing:
+        blockers.append('LIVE_API_KEY_MISSING')
+    if enabled and float(cal_cfg.get('max_order_krw', 0) or 0) > 10000:
+        blockers.append('CALIBRATION_MAX_ORDER_TOO_HIGH')
+    return {
+        'ok': not blockers,
+        'error': '',
+        'blockers': blockers,
+        'enabled': enabled,
+        'tiny_live_enabled': cfg.tiny_live_enabled,
+        'max_order_krw': cal_cfg.get('max_order_krw', 10000),
+        'allowed_pairs': cal_cfg.get('allowed_pairs', []),
+        'allowed_symbols': cal_cfg.get('allowed_symbols', []),
+        'trade_count': status.get('trade_count', 0),
+        'last_symbol': status.get('last_symbol', ''),
+        'last_entry_reason': status.get('last_entry_reason', ''),
+        'last_pnl_diff_krw': status.get('last_pnl_diff_krw'),
+        'avg_pnl_diff_krw': status.get('avg_pnl_diff_krw'),
+        'avg_actual_slippage_bp': status.get('avg_actual_slippage_bp'),
+        'avg_ack_latency_ms': status.get('avg_ack_latency_ms'),
+        'avg_submit_latency_ms': status.get('avg_submit_latency_ms'),
+        'recommended_slippage_buffer_bp': status.get('recommended_slippage_buffer_bp'),
+        'recommended_min_surplus_bp': status.get('recommended_min_surplus_bp'),
+        'recommended_quote_age_cap_ms': status.get('recommended_quote_age_cap_ms'),
+        'last_blocker': status.get('last_blocker', ''),
+        'submit_attempt_count': status.get('submit_attempt_count', 0),
+        'submit_success_count': status.get('submit_success_count', 0),
+        'submit_fail_count': status.get('submit_fail_count', 0),
+        'blocked_count': status.get('blocked_count', 0),
+        'updated_at': status.get('updated_at'),
+    }
+
+
 def _stale_recheck_status_payload():
     telemetry = _read_json(os.path.join(RUNTIME_DIR, 'telemetry.json'))
     cache_statuses = [
@@ -660,6 +707,9 @@ class KarbHandler(SimpleHTTPRequestHandler):
 
         elif self.path == '/api/telemetry':
             self._send_guarded_json(_telemetry_payload)
+
+        elif self.path == '/api/execution-calibration/status':
+            self._send_guarded_json(_execution_calibration_status_payload)
 
         elif self.path == '/api/rate-limit/status':
             self._send_guarded_json(_rate_limit_status_payload)

@@ -66,6 +66,7 @@ class AcceptanceCheck:
             self._check_completed_handoff()
             self._check_live_readiness()
             self._check_tiny_live()
+            self._check_execution_calibration()
         self._build_summary()
         self._print()
         return 1 if self.failures else 0
@@ -77,6 +78,7 @@ class AcceptanceCheck:
             "trades": "/api/trades/recent",
             "performance": "/api/performance/pairs",
             "stale_recheck": "/api/stale-recheck/status",
+            "execution_calibration": "/api/execution-calibration/status",
             "data": "/api/data",
         }
         optional = {
@@ -452,6 +454,37 @@ class AcceptanceCheck:
             self._fail("TINY_LIVE_EXECUTOR_PROBLEM", ",".join(executor_problem), {"blockers": blockers})
         else:
             self._pass("TINY_LIVE_STATUS_CHECKED", details={"blockers": blockers, "enabled": enabled})
+
+    def _check_execution_calibration(self) -> None:
+        payload = self.api.get("execution_calibration")
+        if not isinstance(payload, dict):
+            return
+        enabled = bool(payload.get("enabled"))
+        details = {
+            "enabled": enabled,
+            "tiny_live_enabled": bool(payload.get("tiny_live_enabled")),
+            "trade_count": payload.get("trade_count", 0),
+            "max_order_krw": payload.get("max_order_krw"),
+            "blockers": payload.get("blockers", []),
+        }
+        if not enabled:
+            self._info("CALIBRATION_DISABLED", "tiny-live calibration is off by default", details)
+            return
+        if not payload.get("tiny_live_enabled"):
+            self._fail("CALIBRATION_ENABLED_BUT_TINY_LIVE_DISABLED", details=details)
+        blockers = _collect_strings(payload.get("blockers"))
+        if any("KEY_MISSING" in item for item in blockers):
+            self._fail("CALIBRATION_ENABLED_BUT_API_KEY_MISSING", details=details)
+        if _to_number(payload.get("max_order_krw"), 0) > 10000:
+            self._fail("CALIBRATION_MAX_ORDER_TOO_HIGH", details=details)
+        if _to_number(payload.get("trade_count"), 0) > 0:
+            if payload.get("last_pnl_diff_krw") is None:
+                self._fail("CALIBRATION_PNL_DIFF_MISSING", details=payload)
+            if payload.get("avg_actual_slippage_bp") is None:
+                self._warn("CALIBRATION_ACTUAL_SLIPPAGE_MISSING", details=payload)
+            if payload.get("avg_pnl_diff_krw") is None:
+                self._warn("CALIBRATION_AVG_PNL_DIFF_MISSING", details=payload)
+        self._pass("CALIBRATION_STATUS_CHECKED", details=details)
 
     def _build_summary(self) -> None:
         telemetry = self._telemetry()

@@ -48,6 +48,8 @@ class Config:
     @property
     def tiny_live_max_order_krw(self): return self.get('tiny_live_max_order_krw', 20000)
     @property
+    def tiny_live_calibration(self): return self.get('tiny_live_calibration', {})
+    @property
     def tiny_live_daily_loss_limit_krw(self): return self.get('tiny_live_daily_loss_limit_krw', 10000)
     @property
     def tiny_live_max_trades_per_day(self): return self.get('tiny_live_max_trades_per_day', 5)

@@ -36,6 +36,10 @@ from execution_plan import build_execution_plan
 
 
 ENTRY_REASONS = ('NORMAL_GO', 'RECHECK_ACTIONABLE', 'WIDE_SPREAD_RECHECK_ACTIONABLE')
+RUNTIME_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', 'runtime'))
+LOGS_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', 'logs'))
+EXECUTION_CALIBRATION_STATUS_PATH = os.path.join(RUNTIME_DIR, 'execution_calibration_status.json')
+EXECUTION_CALIBRATION_LOG_PATH = os.path.join(LOGS_DIR, 'execution_calibration.jsonl')
 
 
 def _decision_record(calc_res, reason, is_safe, quote_source, quote_age_ms):
@@ -935,7 +939,11 @@ def route_signal_to_execution(signal, entry_reason, paper_eng=None):
             result['paper_engine_reject_reason'] = reason
             result['paper_engine_reject_detail'] = detail
         return result
-    execution_route = _execute_existing_live_route(prepared)
+    execution_route = (
+        _execute_tiny_live_calibration_route(prepared)
+        if mode == 'tiny_live' and bool(_calibration_cfg().get('enabled', False))
+        else _execute_existing_live_route(prepared)
+    )
     result.update({
         'ok': bool(execution_route.get('ok')),
         'status': execution_route.get('status', 'BLOCKED'),
@@ -967,6 +975,321 @@ def _get_tiny_live_executor():
     if _TINY_LIVE_EXECUTOR is None:
         _TINY_LIVE_EXECUTOR = TinyLiveExecutor()
     return _TINY_LIVE_EXECUTOR
+
+
+def _read_json_file(path, default=None):
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return default if default is not None else {}
+
+
+def _calibration_cfg():
+    row = cfg.tiny_live_calibration
+    return row if isinstance(row, dict) else {}
+
+
+def _calibration_status():
+    data = _read_json_file(EXECUTION_CALIBRATION_STATUS_PATH, {})
+    cal = _calibration_cfg()
+    defaults = {
+        'enabled': bool(cal.get('enabled', False)),
+        'trade_count': 0,
+        'daily_loss_krw': 0.0,
+        'last_symbol': '',
+        'last_entry_reason': '',
+        'last_pnl_diff_krw': None,
+        'avg_pnl_diff_krw': None,
+        'avg_actual_slippage_bp': None,
+        'avg_ack_latency_ms': None,
+        'avg_submit_latency_ms': None,
+        'recommended_slippage_buffer_bp': None,
+        'recommended_min_surplus_bp': None,
+        'recommended_quote_age_cap_ms': None,
+        'last_blocker': '',
+        'submit_attempt_count': 0,
+        'submit_success_count': 0,
+        'submit_fail_count': 0,
+        'blocked_count': 0,
+        '_pnl_diff_sum': 0.0,
+        '_pnl_diff_count': 0,
+        '_slippage_sum': 0.0,
+        '_slippage_count': 0,
+        '_ack_latency_sum': 0.0,
+        '_ack_latency_count': 0,
+        '_submit_latency_sum': 0.0,
+        '_submit_latency_count': 0,
+        'updated_at': time.time(),
+    }
+    return {**defaults, **data, 'enabled': bool(cal.get('enabled', False))}
+
+
+def _write_calibration_status(**updates):
+    status = {**_calibration_status(), **updates, 'updated_at': time.time()}
+    os.makedirs(RUNTIME_DIR, exist_ok=True)
+    _write_json(EXECUTION_CALIBRATION_STATUS_PATH, status)
+    return status
+
+
+def _append_calibration_log(record):
+    try:
+        os.makedirs(LOGS_DIR, exist_ok=True)
+        with open(EXECUTION_CALIBRATION_LOG_PATH, 'a', encoding='utf-8') as f:
+            f.write(json.dumps(record, ensure_ascii=False) + '\n')
+    except Exception as exc:
+        _write_calibration_status(last_error=f'{type(exc).__name__}: {exc}')
+
+
+def _calibration_guard_blockers(prepared):
+    cal = _calibration_cfg()
+    blockers = []
+    if not cal.get('enabled', False):
+        blockers.append('CALIBRATION_DISABLED')
+    if cfg.mode != 'tiny_live':
+        blockers.append('MODE_GUARD')
+    if not cfg.tiny_live_enabled:
+        blockers.append('TINY_LIVE_DISABLED')
+    if not cfg.enable_live_trading or not cfg.live_order_enabled:
+        blockers.append('LIVE_ORDER_GUARD')
+    if cfg.withdrawals_enabled or cfg.futures_hedge_enabled:
+        blockers.append('LIVE_SAFETY_GUARD')
+    blockers.extend(_live_key_blockers(prepared.get('pair_id', 'UPBIT_BINANCE')))
+    allowed_pairs = set(cal.get('allowed_pairs') or [])
+    if allowed_pairs and prepared.get('pair_id') not in allowed_pairs:
+        blockers.append('CALIBRATION_PAIR_NOT_ALLOWED')
+    allowed_symbols = set(str(item).upper() for item in (cal.get('allowed_symbols') or []))
+    if allowed_symbols and str(prepared.get('symbol', '')).upper() not in allowed_symbols:
+        blockers.append('CALIBRATION_SYMBOL_NOT_ALLOWED')
+    order_krw = float(prepared.get('selected_notional_krw', prepared.get('order_krw_used', 0)) or 0)
+    if order_krw <= 0:
+        blockers.append('CALIBRATION_ORDER_KRW_INVALID')
+    if order_krw > float(cal.get('max_order_krw', 10000) or 10000):
+        blockers.append('CALIBRATION_MAX_ORDER_EXCEEDED')
+    if not prepared.get('plan_ok', False):
+        blockers.extend(prepared.get('execution_plan_blockers') or ['EXECUTION_PLAN_BLOCKED'])
+    if any(bool(prepared.get(name)) for name in ('stale', 'stale_grace', 'has_stale_quote')):
+        blockers.append('CALIBRATION_STALE_QUOTE')
+    status = _calibration_status()
+    if int(status.get('trade_count', 0) or 0) >= int(cal.get('max_trades_per_session', 3) or 3):
+        blockers.append('CALIBRATION_MAX_TRADES_PER_SESSION')
+    if abs(float(status.get('daily_loss_krw', 0) or 0)) >= float(cal.get('max_daily_loss_krw', 3000) or 3000):
+        blockers.append('CALIBRATION_DAILY_LOSS_LIMIT')
+    return list(dict.fromkeys(blockers))
+
+
+def _order_value(order, names, default=None):
+    for name in names:
+        if isinstance(order, dict) and order.get(name) not in (None, ''):
+            try:
+                return float(order.get(name))
+            except (TypeError, ValueError):
+                return default
+    return default
+
+
+def _filled_qty(fill):
+    order = fill.get('order', {}) if isinstance(fill, dict) else {}
+    return _order_value(order, ('filled_qty', 'executed_volume', 'executedQty'), 0.0)
+
+
+def _avg_fill_price(fill):
+    order = fill.get('order', {}) if isinstance(fill, dict) else {}
+    avg = _order_value(order, ('avg_price', 'price'), None)
+    if avg is not None and avg > 0:
+        return avg
+    qty = _filled_qty(fill)
+    quote = _order_value(order, ('executed_funds', 'cummulativeQuoteQty'), None)
+    return quote / qty if quote is not None and qty else None
+
+
+def _fee_krw(fill, venue, avg_price):
+    order = fill.get('order', {}) if isinstance(fill, dict) else {}
+    fee = _order_value(order, ('paid_fee', 'fee_krw', 'actual_fee_krw'), None)
+    if fee is None:
+        return None
+    if str(venue).upper() == 'BINANCE':
+        return None
+    return fee
+
+
+def _calibration_record(prepared, execution_route, submit_started_at, submit_finished_at):
+    execution = execution_route.get('execution_result', {}) or {}
+    fills = execution.get('fills', {}) or {}
+    results = execution.get('results', {}) or {}
+    errors = execution.get('errors', {}) or {}
+    buy_venue = str(prepared.get('buy_venue', '')).upper()
+    sell_venue = str(prepared.get('sell_venue', '')).upper()
+    buy_key, sell_key = buy_venue.lower(), sell_venue.lower()
+    buy_fill, sell_fill = fills.get(buy_key, {}) or {}, fills.get(sell_key, {}) or {}
+    buy_avg = _avg_fill_price(buy_fill)
+    sell_avg = _avg_fill_price(sell_fill)
+    if buy_venue == 'BINANCE' and buy_avg is not None:
+        buy_avg *= float(prepared.get('krw_usdt', 0) or 0)
+    if sell_venue == 'BINANCE' and sell_avg is not None:
+        sell_avg *= float(prepared.get('krw_usdt', 0) or 0)
+    buy_qty = _filled_qty(buy_fill)
+    sell_qty = _filled_qty(sell_fill)
+    buy_ratio = float(buy_fill.get('fill_ratio', 0) or 0) if isinstance(buy_fill, dict) else 0.0
+    sell_ratio = float(sell_fill.get('fill_ratio', 0) or 0) if isinstance(sell_fill, dict) else 0.0
+    buy_fee = _fee_krw(buy_fill, buy_venue, buy_avg)
+    sell_fee = _fee_krw(sell_fill, sell_venue, sell_avg)
+    actual_total_fee = buy_fee + sell_fee if buy_fee is not None and sell_fee is not None else None
+    actual_pnl = None
+    actual_buy_slip = None
+    actual_sell_slip = None
+    actual_total_slip = None
+    fill_qty = min(buy_qty or 0, sell_qty or 0)
+    if buy_avg and sell_avg and fill_qty:
+        actual_pnl = (sell_avg - buy_avg) * fill_qty
+        if actual_total_fee is not None:
+            actual_pnl -= actual_total_fee
+    planned_buy = float(prepared.get('planned_buy_vwap_price', prepared.get('buy_vwap_price', 0)) or 0)
+    planned_sell = float(prepared.get('planned_sell_vwap_price', prepared.get('sell_vwap_price', 0)) or 0)
+    if buy_avg and planned_buy:
+        actual_buy_slip = max(0.0, (buy_avg - planned_buy) / planned_buy * 10000)
+    if sell_avg and planned_sell:
+        actual_sell_slip = max(0.0, (planned_sell - sell_avg) / planned_sell * 10000)
+    if actual_buy_slip is not None and actual_sell_slip is not None:
+        actual_total_slip = actual_buy_slip + actual_sell_slip
+    planned_fee = prepared.get('planned_total_fee_krw')
+    planned_slip = prepared.get('planned_slippage_cost_krw')
+    planned_expected = prepared.get('planned_expected_net_profit_krw')
+    pnl_diff = actual_pnl - planned_expected if actual_pnl is not None and planned_expected is not None else None
+    fee_error = actual_total_fee - planned_fee if actual_total_fee is not None and planned_fee is not None else None
+    slip_error = (
+        actual_total_slip - float(prepared.get('total_slippage_bp', 0) or 0)
+        if actual_total_slip is not None else None
+    )
+    fill_ratio_min = min(buy_ratio, sell_ratio)
+    partial_fill = bool(fill_ratio_min and fill_ratio_min < float((_calibration_cfg().get('min_fill_ratio') or cfg.min_fill_ratio)))
+    record = {
+        'time': time.time(),
+        'ok': bool(execution_route.get('ok')),
+        'pair_id': prepared.get('pair_id'),
+        'symbol': prepared.get('symbol'),
+        'direction': prepared.get('direction'),
+        'entry_reason': prepared.get('entry_reason'),
+        'buy_venue': buy_venue,
+        'sell_venue': sell_venue,
+        'buy_order_id': (results.get(buy_key, {}) or {}).get('uuid') or (results.get(buy_key, {}) or {}).get('orderId'),
+        'sell_order_id': (results.get(sell_key, {}) or {}).get('uuid') or (results.get(sell_key, {}) or {}).get('orderId'),
+        'buy_submit_started_at': None,
+        'buy_submit_finished_at': None,
+        'sell_submit_started_at': None,
+        'sell_submit_finished_at': None,
+        'buy_ack_latency_ms': None,
+        'sell_ack_latency_ms': None,
+        'total_submit_latency_ms': round((submit_finished_at - submit_started_at) * 1000, 2),
+        'buy_requested_qty': prepared.get('buy_qty'),
+        'sell_requested_qty': prepared.get('sell_qty'),
+        'buy_filled_qty': buy_qty,
+        'sell_filled_qty': sell_qty,
+        'buy_fill_ratio': buy_ratio,
+        'sell_fill_ratio': sell_ratio,
+        'buy_avg_fill_price': buy_avg,
+        'sell_avg_fill_price': sell_avg,
+        'buy_fee_krw': buy_fee,
+        'sell_fee_krw': sell_fee,
+        'actual_total_fee_krw': actual_total_fee,
+        'planned_buy_vwap_price': planned_buy,
+        'planned_sell_vwap_price': planned_sell,
+        'planned_total_fee_krw': planned_fee,
+        'planned_slippage_cost_krw': planned_slip,
+        'planned_expected_net_profit_krw': planned_expected,
+        'actual_realized_pnl_krw': actual_pnl,
+        'pnl_diff_krw': pnl_diff,
+        'actual_buy_slippage_bp': actual_buy_slip,
+        'actual_sell_slippage_bp': actual_sell_slip,
+        'actual_total_slippage_bp': actual_total_slip,
+        'partial_fill': partial_fill,
+        'unwind_required': partial_fill,
+        'unwind_result': execution.get('emergency', {}),
+        'error': '; '.join(str(v) for v in errors.values()) if errors else '',
+        'reject_reason': next(iter(execution_route.get('blockers', [])), ''),
+    }
+    record.update({
+        'calibration_ok': bool(record['ok'] and not partial_fill and pnl_diff is not None),
+        'slippage_error_bp': slip_error,
+        'fee_error_krw': fee_error,
+        'pnl_error_krw': pnl_diff,
+        'latency_ms': record['total_submit_latency_ms'],
+        'fill_ratio_min': fill_ratio_min,
+        'recommended_slippage_buffer_bp': (
+            round(float(prepared.get('total_slippage_bp', 0) or 0) + max(0.0, slip_error or 0) + 2.0, 4)
+            if slip_error is not None else None
+        ),
+        'recommended_min_surplus_bp': (
+            round(float(prepared.get('best_net_surplus_bp', 0) or 0) + max(0.0, -(pnl_diff or 0)) / max(1.0, float(prepared.get('selected_notional_krw', 0) or 0)) * 10000, 4)
+            if pnl_diff is not None else None
+        ),
+        'recommended_quote_age_cap_ms': prepared.get('entry_quote_age_cap_ms'),
+    })
+    return record
+
+
+def _update_calibration_from_record(record):
+    status = _calibration_status()
+    updates = {
+        'trade_count': int(status.get('trade_count', 0) or 0) + int(bool(record.get('ok'))),
+        'last_symbol': record.get('symbol', ''),
+        'last_entry_reason': record.get('entry_reason', ''),
+        'last_pnl_diff_krw': record.get('pnl_diff_krw'),
+        'recommended_slippage_buffer_bp': record.get('recommended_slippage_buffer_bp'),
+        'recommended_min_surplus_bp': record.get('recommended_min_surplus_bp'),
+        'recommended_quote_age_cap_ms': record.get('recommended_quote_age_cap_ms'),
+    }
+    if record.get('ok'):
+        actual_pnl = record.get('actual_realized_pnl_krw')
+        if actual_pnl is not None and actual_pnl < 0:
+            updates['daily_loss_krw'] = float(status.get('daily_loss_krw', 0) or 0) + abs(float(actual_pnl))
+        updates['submit_success_count'] = int(status.get('submit_success_count', 0) or 0) + 1
+    else:
+        updates['submit_fail_count'] = int(status.get('submit_fail_count', 0) or 0) + 1
+    for source_key, sum_key, count_key, avg_key in (
+        ('pnl_diff_krw', '_pnl_diff_sum', '_pnl_diff_count', 'avg_pnl_diff_krw'),
+        ('actual_total_slippage_bp', '_slippage_sum', '_slippage_count', 'avg_actual_slippage_bp'),
+        ('total_submit_latency_ms', '_submit_latency_sum', '_submit_latency_count', 'avg_submit_latency_ms'),
+    ):
+        value = record.get(source_key)
+        if value is None:
+            continue
+        total = float(status.get(sum_key, 0) or 0) + float(value)
+        count = int(status.get(count_key, 0) or 0) + 1
+        updates[sum_key] = total
+        updates[count_key] = count
+        updates[avg_key] = round(total / count, 4)
+    _write_calibration_status(**updates)
+
+
+def _execute_tiny_live_calibration_route(prepared):
+    blockers = _calibration_guard_blockers(prepared)
+    status = _calibration_status()
+    if blockers:
+        _write_calibration_status(
+            blocked_count=int(status.get('blocked_count', 0) or 0) + 1,
+            last_blocker=blockers[0],
+        )
+        return {
+            'ok': False,
+            'status': 'BLOCKED',
+            'order_submit_attempted': False,
+            'execution_result': {},
+            'blockers': blockers,
+        }
+    _write_calibration_status(
+        submit_attempt_count=int(status.get('submit_attempt_count', 0) or 0) + 1,
+        last_blocker='',
+    )
+    started_at = time.time()
+    route = _execute_existing_live_route(prepared)
+    finished_at = time.time()
+    record = _calibration_record(prepared, route, started_at, finished_at)
+    _append_calibration_log(record)
+    _update_calibration_from_record(record)
+    route['calibration'] = record
+    route['execution_result'] = {**route.get('execution_result', {}), 'calibration': record}
+    return route
 
 
 def _execute_existing_live_route(prepared: dict) -> dict:
@@ -2184,6 +2507,7 @@ def main():
         paper_exit_stats.setdefault('paper_arb_fill_net_pnl_krw', 0.0)
         paper_exit_stats.setdefault('paper_arb_partial_unwind_count', 0)
         paper_exit_stats.setdefault('paper_arb_unwind_cost_krw', 0.0)
+        calibration_status = _calibration_status()
         runtime_metrics = {
             'started_at':           started_at,
             'loop_count':           total_loops,
@@ -2275,6 +2599,22 @@ def main():
             'tiny_live_order_submit_attempt_count': live_execution_counts.get('tiny_live_order_submit_attempt_count', 0),
             'tiny_live_order_submit_success_count': live_execution_counts.get('tiny_live_order_submit_success_count', 0),
             'tiny_live_order_submit_fail_count': live_execution_counts.get('tiny_live_order_submit_fail_count', 0),
+            'calibration_enabled': calibration_status.get('enabled', False),
+            'calibration_trade_count': calibration_status.get('trade_count', 0),
+            'calibration_last_symbol': calibration_status.get('last_symbol', ''),
+            'calibration_last_entry_reason': calibration_status.get('last_entry_reason', ''),
+            'calibration_last_pnl_diff_krw': calibration_status.get('last_pnl_diff_krw'),
+            'calibration_avg_pnl_diff_krw': calibration_status.get('avg_pnl_diff_krw'),
+            'calibration_avg_actual_slippage_bp': calibration_status.get('avg_actual_slippage_bp'),
+            'calibration_avg_ack_latency_ms': calibration_status.get('avg_ack_latency_ms'),
+            'calibration_avg_submit_latency_ms': calibration_status.get('avg_submit_latency_ms'),
+            'calibration_recommended_slippage_buffer_bp': calibration_status.get('recommended_slippage_buffer_bp'),
+            'calibration_recommended_min_surplus_bp': calibration_status.get('recommended_min_surplus_bp'),
+            'tiny_live_calibration_blocked_count': calibration_status.get('blocked_count', 0),
+            'tiny_live_calibration_last_blocker': calibration_status.get('last_blocker', ''),
+            'tiny_live_calibration_submit_attempt_count': calibration_status.get('submit_attempt_count', 0),
+            'tiny_live_calibration_submit_success_count': calibration_status.get('submit_success_count', 0),
+            'tiny_live_calibration_submit_fail_count': calibration_status.get('submit_fail_count', 0),
             'live_fresh_candidate_count': live_fresh_candidate_count,
             'tiny_live_fresh_candidate_count': tiny_live_fresh_candidate_count,
             'live_blocked_quote_age_count': live_blocked_quote_age_count,

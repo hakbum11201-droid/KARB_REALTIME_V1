@@ -33,6 +33,7 @@ let latestStrategyPairs = [];
 let latestScanner = {};
 let latestRuntimeStore = {};
 let latestRateLimit = {};
+let latestCalibration = {};
 let lastSummaryFetchAt = 0;
 
 const durationText = seconds => {
@@ -828,6 +829,7 @@ function renderLongRunTelemetry(t={}) {
   renderMemoryTelemetry(t);
   renderBithumbCacheStatus(t);
   renderRestFallbackCacheStatus(t);
+  renderExecutionCalibration(t, latestCalibration);
 }
 
 function renderLiveFreshnessTelemetry(t={}) {
@@ -957,19 +959,47 @@ function renderRestFallbackCacheStatus(t={}) {
 
 async function fetchRuntimeServices() {
   try {
-    const [scannerRes, storeRes, rateLimitRes] = await Promise.all([
+    const [scannerRes, storeRes, rateLimitRes, calibrationRes] = await Promise.all([
       fetch('/api/market/scanner'),
       fetch('/api/runtime-store/status'),
       fetch('/api/rate-limit/status'),
+      fetch('/api/execution-calibration/status'),
     ]);
-    if (!scannerRes.ok || !storeRes.ok || !rateLimitRes.ok) return;
+    if (!scannerRes.ok || !storeRes.ok || !rateLimitRes.ok || !calibrationRes.ok) return;
     latestScanner = await scannerRes.json();
     latestRuntimeStore = await storeRes.json();
     latestRateLimit = await rateLimitRes.json();
+    latestCalibration = await calibrationRes.json();
     renderRuntimeServices(latestScanner, latestRuntimeStore, latestRateLimit);
+    renderExecutionCalibration(latestTelemetry, latestCalibration);
   } catch (error) {
     console.error('[runtime services] failed', error);
   }
+}
+
+function renderExecutionCalibration(t={}, c={}) {
+  let el=document.getElementById('execution-calibration-status');
+  if (!el) {
+    const anchor=document.getElementById('rest-fallback-cache-status')||document.getElementById('entry-route-telemetry')||document.getElementById('no-go-top3');
+    if (anchor?.parentElement) {
+      el=document.createElement('div');
+      el.id='execution-calibration-status';
+      el.className='active-symbol-list';
+      anchor.parentElement.append(el);
+    }
+  }
+  if (!el) return;
+  const enabled = c.enabled ?? t.calibration_enabled;
+  const trades = c.trade_count ?? t.calibration_trade_count;
+  const lastPnl = c.last_pnl_diff_krw ?? t.calibration_last_pnl_diff_krw;
+  const avgPnl = c.avg_pnl_diff_krw ?? t.calibration_avg_pnl_diff_krw;
+  const avgSlip = c.avg_actual_slippage_bp ?? t.calibration_avg_actual_slippage_bp;
+  const avgAck = c.avg_ack_latency_ms ?? t.calibration_avg_ack_latency_ms;
+  const avgSubmit = c.avg_submit_latency_ms ?? t.calibration_avg_submit_latency_ms;
+  const recSlip = c.recommended_slippage_buffer_bp ?? t.calibration_recommended_slippage_buffer_bp;
+  const recSurplus = c.recommended_min_surplus_bp ?? t.calibration_recommended_min_surplus_bp;
+  const blocker = c.last_blocker || t.tiny_live_calibration_last_blocker || (c.blockers||[]).join(' / ') || '--';
+  el.textContent=`Execution Calibration | Enabled ${String(Boolean(enabled))} | Trades ${fmt(trades)} | Last ${c.last_symbol||t.calibration_last_symbol||'--'} ${c.last_entry_reason||t.calibration_last_entry_reason||'--'} | Last PnL Diff ${lastPnl==null?'--':fmt(lastPnl,0)} KRW | Avg PnL Diff ${avgPnl==null?'--':fmt(avgPnl,0)} KRW | Avg Actual Slippage ${avgSlip==null?'--':fmt(avgSlip,2)} bp | Avg ACK ${avgAck==null?'--':fmt(avgAck,1)} ms | Avg Submit ${avgSubmit==null?'--':fmt(avgSubmit,1)} ms | Recommended Slip Buffer ${recSlip==null?'--':fmt(recSlip,2)} bp | Recommended Min Surplus ${recSurplus==null?'--':fmt(recSurplus,2)} bp | Attempts/Succ/Fail ${fmt(c.submit_attempt_count??t.tiny_live_calibration_submit_attempt_count)} / ${fmt(c.submit_success_count??t.tiny_live_calibration_submit_success_count)} / ${fmt(c.submit_fail_count??t.tiny_live_calibration_submit_fail_count)} | Blocked ${fmt(c.blocked_count??t.tiny_live_calibration_blocked_count)} | Last Blocker ${blocker}`;
 }
 
 function renderRuntimeServices(scanner={}, store={}, rateLimit={}) {
