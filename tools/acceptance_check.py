@@ -168,6 +168,17 @@ class AcceptanceCheck:
             self._pass("LOOP_LATENCY_OK", f"p95={p95:.2f}ms", details)
         else:
             self._fail("LOOP_LATENCY_TOO_HIGH", f"p95={p95:.2f}ms", details)
+        decision_p95 = _to_number(self._telemetry().get("entry_decision_wait_p95_ms"), 0)
+        if decision_p95 > 700:
+            self._warn("ENTRY_DECISION_WAIT_HIGH", f"p95={decision_p95:.2f}ms", {"entry_decision_wait_p95_ms": decision_p95})
+        refresh_count = _to_number(self._telemetry().get("stale_leg_priority_refresh_request_count"), 0)
+        fast_routes = _to_number(self._telemetry().get("completed_handoff_fast_route_count"), 0)
+        if refresh_count > 0 and fast_routes == 0:
+            self._warn(
+                "STALE_LEG_REFRESH_NOT_HELPING",
+                f"requests={refresh_count} fast_routes=0",
+                {"stale_leg_priority_refresh_request_count": refresh_count},
+            )
 
     def _check_paper_entry_route(self) -> None:
         telemetry = self._telemetry()
@@ -297,6 +308,25 @@ class AcceptanceCheck:
         ]
         if missing_slip_source:
             self._warn("SLIPPAGE_SOURCE_MISSING", ",".join(map(str, missing_slip_source[:5])), {"trade_ids": missing_slip_source[:5]})
+        missing_leg_age = [
+            trade.get("trade_id") for trade in arb_fills
+            if trade.get("buy_leg_quote_age_ms") is None or trade.get("sell_leg_quote_age_ms") is None
+        ]
+        if missing_leg_age:
+            self._warn("LEG_AGE_FIELD_MISSING", ",".join(map(str, missing_leg_age[:5])), {"trade_ids": missing_leg_age[:5]})
+        too_old_leg = [
+            {
+                "trade_id": trade.get("trade_id"),
+                "symbol": trade.get("symbol"),
+                "max_leg_quote_age_ms": trade.get("max_leg_quote_age_ms"),
+                "cap_ms": trade.get("leg_quote_age_cap_ms", 1200),
+            }
+            for trade in arb_fills
+            if trade.get("max_leg_quote_age_ms") is not None
+            and _to_number(trade.get("max_leg_quote_age_ms"), 0) > _to_number(trade.get("leg_quote_age_cap_ms"), 1200)
+        ]
+        if too_old_leg:
+            self._fail("ARB_FILL_LEG_QUOTE_TOO_OLD", details={"trades": too_old_leg[:5]})
         non_vwap = [
             trade.get("trade_id") for trade in arb_fills
             if trade.get("slippage_source") and trade.get("slippage_source") != "ORDERBOOK_VWAP"
@@ -454,6 +484,18 @@ class AcceptanceCheck:
             self._fail("TINY_LIVE_EXECUTOR_PROBLEM", ",".join(executor_problem), {"blockers": blockers})
         else:
             self._pass("TINY_LIVE_STATUS_CHECKED", details={"blockers": blockers, "enabled": enabled})
+        telemetry = self._telemetry()
+        mode = (self.api.get("data", {}).get("state", {}) or {}).get("mode")
+        submit_attempts = (
+            _to_number(telemetry.get("tiny_live_order_submit_attempt_count"), 0)
+            + _to_number(telemetry.get("live_order_submit_attempt_count"), 0)
+        )
+        if mode in {"tiny_live", "live"} and submit_attempts > 0 and telemetry.get("leg_quote_last_blocker"):
+            self._fail("SUBMIT_WITH_STALE_LEG", details={
+                "mode": mode,
+                "submit_attempts": submit_attempts,
+                "leg_quote_last_blocker": telemetry.get("leg_quote_last_blocker"),
+            })
 
     def _check_execution_calibration(self) -> None:
         payload = self.api.get("execution_calibration")
@@ -477,6 +519,8 @@ class AcceptanceCheck:
             self._fail("CALIBRATION_ENABLED_BUT_API_KEY_MISSING", details=details)
         if _to_number(payload.get("max_order_krw"), 0) > 10000:
             self._fail("CALIBRATION_MAX_ORDER_TOO_HIGH", details=details)
+        if payload.get("tiny_live_max_leg_quote_age_ms") is None:
+            self._fail("CALIBRATION_LEG_QUOTE_CAP_MISSING", details=payload)
         if _to_number(payload.get("trade_count"), 0) > 0:
             if payload.get("last_pnl_diff_krw") is None:
                 self._fail("CALIBRATION_PNL_DIFF_MISSING", details=payload)

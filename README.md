@@ -449,3 +449,11 @@ For long paper smoke tests, the recommended checks are:
   unless both `tiny_live_enabled: true` and
   `tiny_live_calibration.enabled: true` are set and all key, pair/symbol,
   max-order, freshness, plan, risk, and existing tiny-live guards pass.
+- `entry_quote_age_ms` measures how old the routed entry decision is, while
+  `buy_leg_quote_age_ms`, `sell_leg_quote_age_ms`, and
+  `max_leg_quote_age_ms` measure the actual freshness of both execution legs.
+  Paper, tiny-live, and live now use separate per-leg caps, with tiny-live/live
+  intentionally stricter than paper. A signal can be blocked even when
+  `entry_quote_age_ms` is within cap if either leg is stale. Stale-leg recovery
+  uses the existing priority refresh queues only, so the main loop still avoids
+  direct REST calls and heavy sleeps.

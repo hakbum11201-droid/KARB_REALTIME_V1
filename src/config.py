@@ -100,6 +100,20 @@ class Config:
     @property
     def live_entry_max_quote_age_by_reason(self): return self.get('live_entry_max_quote_age_by_reason', {})
     @property
+    def quote_freshness(self): return self.get('quote_freshness', {})
+    @property
+    def paper_max_leg_quote_age_ms(self): return self.quote_freshness.get('paper_max_leg_quote_age_ms', 1200)
+    @property
+    def tiny_live_max_leg_quote_age_ms(self): return self.quote_freshness.get('tiny_live_max_leg_quote_age_ms', 700)
+    @property
+    def live_max_leg_quote_age_ms(self): return self.quote_freshness.get('live_max_leg_quote_age_ms', 500)
+    @property
+    def entry_decision_wait_warn_ms(self): return self.quote_freshness.get('entry_decision_wait_warn_ms', 700)
+    @property
+    def tiny_live_entry_decision_wait_max_ms(self): return self.quote_freshness.get('tiny_live_entry_decision_wait_max_ms', 500)
+    @property
+    def live_entry_decision_wait_max_ms(self): return self.quote_freshness.get('live_entry_decision_wait_max_ms', 400)
+    @property
     def paper_entry_domestic_max_quote_age_ms(self): return self.get('paper_entry_domestic_max_quote_age_ms', 3000)
     @property
     def paper_entry_cross_border_max_quote_age_ms(self): return self.get('paper_entry_cross_border_max_quote_age_ms', 2000)

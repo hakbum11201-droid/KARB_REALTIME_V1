@@ -221,6 +221,25 @@ live_entry_max_quote_age_by_reason:
   NORMAL_GO: 1000
   RECHECK_ACTIONABLE: 800
   WIDE_SPREAD_RECHECK_ACTIONABLE: 600
+quote_freshness:
+  paper_max_leg_quote_age_ms: 1200
+  tiny_live_max_leg_quote_age_ms: 700
+  live_max_leg_quote_age_ms: 500
+  paper_max_leg_quote_age_by_reason:
+    NORMAL_GO: 1200
+    RECHECK_ACTIONABLE: 1000
+    WIDE_SPREAD_RECHECK_ACTIONABLE: 800
+  tiny_live_max_leg_quote_age_by_reason:
+    NORMAL_GO: 700
+    RECHECK_ACTIONABLE: 600
+    WIDE_SPREAD_RECHECK_ACTIONABLE: 500
+  live_max_leg_quote_age_by_reason:
+    NORMAL_GO: 500
+    RECHECK_ACTIONABLE: 450
+    WIDE_SPREAD_RECHECK_ACTIONABLE: 400
+  entry_decision_wait_warn_ms: 700
+  tiny_live_entry_decision_wait_max_ms: 500
+  live_entry_decision_wait_max_ms: 400
 wide_spread_entry_min_net_profit_krw: 30
 wide_spread_entry_min_surplus_bp: 40
 wide_spread_entry_max_dynamic_slippage_bp: 20

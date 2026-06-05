@@ -247,6 +247,8 @@ def _execution_calibration_status_payload():
         'enabled': enabled,
         'tiny_live_enabled': cfg.tiny_live_enabled,
         'max_order_krw': cal_cfg.get('max_order_krw', 10000),
+        'tiny_live_max_leg_quote_age_ms': cfg.tiny_live_max_leg_quote_age_ms,
+        'live_max_leg_quote_age_ms': cfg.live_max_leg_quote_age_ms,
         'allowed_pairs': cal_cfg.get('allowed_pairs', []),
         'allowed_symbols': cal_cfg.get('allowed_symbols', []),
         'trade_count': status.get('trade_count', 0),

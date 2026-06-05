@@ -138,6 +138,69 @@ def _krw_price(price: float, venue: str, signal: dict) -> float:
     return price
 
 
+def _leg_quote_age_cap_ms(mode: str, entry_reason: str, config=cfg) -> float:
+    freshness = config.get('quote_freshness', {}) or {}
+    mode_key = 'tiny_live' if mode == 'tiny_live' else 'live' if mode == 'live' else 'paper'
+    by_reason = freshness.get(f'{mode_key}_max_leg_quote_age_by_reason', {}) or {}
+    if entry_reason in by_reason:
+        return float(by_reason.get(entry_reason) or 0)
+    defaults = {
+        'paper': freshness.get('paper_max_leg_quote_age_ms', 1200),
+        'tiny_live': freshness.get('tiny_live_max_leg_quote_age_ms', 700),
+        'live': freshness.get('live_max_leg_quote_age_ms', 500),
+    }
+    return float(defaults.get(mode_key, 1200) or 1200)
+
+
+def _leg_freshness(signal: dict, mode: str, entry_reason: str, buy_venue: str, sell_venue: str, config=cfg) -> dict:
+    cap = _leg_quote_age_cap_ms(mode, entry_reason, config)
+    buy_age = signal.get('buy_leg_quote_age_ms')
+    sell_age = signal.get('sell_leg_quote_age_ms')
+    max_age = signal.get('max_leg_quote_age_ms')
+    if max_age is None:
+        ages = [value for value in (buy_age, sell_age) if value is not None]
+        max_age = max(ages) if ages else None
+    blockers = []
+    warnings = []
+    if buy_age is None or sell_age is None or max_age is None:
+        if mode in ('tiny_live', 'live'):
+            blockers.append('UNKNOWN_LEG_QUOTE_AGE')
+        else:
+            warnings.append('UNKNOWN_LEG_QUOTE_AGE')
+    if buy_age is not None and float(buy_age) > cap:
+        blockers.append('BUY_LEG_QUOTE_TOO_OLD')
+    if sell_age is not None and float(sell_age) > cap:
+        blockers.append('SELL_LEG_QUOTE_TOO_OLD')
+    if max_age is not None and float(max_age) > cap:
+        blockers.append('MAX_LEG_QUOTE_TOO_OLD')
+    blocker = blockers[0] if blockers else ''
+    stale_venue = ''
+    if blocker == 'BUY_LEG_QUOTE_TOO_OLD':
+        stale_venue = buy_venue
+    elif blocker == 'SELL_LEG_QUOTE_TOO_OLD':
+        stale_venue = sell_venue
+    elif blocker == 'MAX_LEG_QUOTE_TOO_OLD':
+        stale_venue = buy_venue if float(buy_age or 0) >= float(sell_age or 0) else sell_venue
+    wait = signal.get('entry_decision_wait_ms')
+    warn_ms = float(config.entry_decision_wait_warn_ms)
+    decision_wait_warn = bool(wait is not None and float(wait or 0) > warn_ms)
+    if decision_wait_warn:
+        warnings.append('ENTRY_DECISION_WAIT_HIGH')
+    return {
+        'buy_leg_quote_age_ms': buy_age,
+        'sell_leg_quote_age_ms': sell_age,
+        'max_leg_quote_age_ms': max_age,
+        'leg_quote_age_cap_ms': cap,
+        'leg_freshness_ok': not blockers,
+        'leg_freshness_blocker': blocker,
+        'leg_freshness_warnings': list(dict.fromkeys(warnings)),
+        'stale_leg_venue': stale_venue,
+        'stale_leg_symbol': signal.get('symbol', ''),
+        'entry_decision_wait_ms': wait,
+        'decision_wait_warn': decision_wait_warn,
+    }
+
+
 def build_execution_plan(signal: dict, mode: str, config=cfg) -> dict:
     pair_id = signal.get('pair_id', 'UPBIT_BINANCE')
     direction = signal.get('best_direction') or signal.get('direction', '')
@@ -179,6 +242,8 @@ def build_execution_plan(signal: dict, mode: str, config=cfg) -> dict:
     if expected_net <= 0:
         blockers.append('PLAN_NET_NOT_POSITIVE')
     plan_ok = not blockers
+    entry_reason = signal.get('entry_reason', '')
+    leg_freshness = _leg_freshness(signal, mode, entry_reason, buy_venue, sell_venue, config)
     planned = {
         **signal,
         'pair_id': pair_id,
@@ -240,6 +305,7 @@ def build_execution_plan(signal: dict, mode: str, config=cfg) -> dict:
         'slippage_source': 'ORDERBOOK_VWAP',
         'quote_age_ms': signal.get('entry_quote_age_ms', signal.get('max_leg_quote_age_ms')),
         'quote_age_cap_ms': signal.get('entry_quote_age_cap_ms'),
+        **leg_freshness,
         'plan_ok': plan_ok,
         'blocker': blockers[0] if blockers else '',
         'execution_plan_blockers': blockers,
@@ -310,6 +376,13 @@ class ExecutionPlan:
     entry_fetch_ms: float | None = None
     entry_decision_wait_ms: float | None = None
     max_leg_quote_age_ms: float | None = None
+    leg_quote_age_cap_ms: float | None = None
+    leg_freshness_ok: bool = True
+    leg_freshness_blocker: str = ''
+    leg_freshness_warnings: list[str] = field(default_factory=list)
+    stale_leg_venue: str = ''
+    stale_leg_symbol: str = ''
+    decision_wait_warn: bool = False
     uses_stale_grace_quote: bool = False
     has_stale_quote: bool = False
     live_freshness_ok: bool = False

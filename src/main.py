@@ -40,6 +40,22 @@ RUNTIME_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', 'ru
 LOGS_DIR = os.path.normpath(os.path.join(os.path.dirname(__file__), '..', 'logs'))
 EXECUTION_CALIBRATION_STATUS_PATH = os.path.join(RUNTIME_DIR, 'execution_calibration_status.json')
 EXECUTION_CALIBRATION_LOG_PATH = os.path.join(LOGS_DIR, 'execution_calibration.jsonl')
+LEG_QUOTE_STATS = {
+    'leg_quote_blocked_count': 0,
+    'leg_quote_blocked_buy_count': 0,
+    'leg_quote_blocked_sell_count': 0,
+    'leg_quote_blocked_max_count': 0,
+    'leg_quote_last_blocker': '',
+    'leg_quote_last_symbol': '',
+    'leg_quote_last_buy_age_ms': None,
+    'leg_quote_last_sell_age_ms': None,
+    'leg_quote_last_max_age_ms': None,
+    'leg_quote_last_cap_ms': None,
+    'stale_leg_priority_refresh_request_count': 0,
+    'stale_leg_priority_refresh_last_venue': '',
+    'stale_leg_priority_refresh_last_symbol': '',
+    'stale_leg_priority_refresh_fallback_count': 0,
+}
 
 
 def _decision_record(calc_res, reason, is_safe, quote_source, quote_age_ms):
@@ -802,7 +818,11 @@ def _execution_fields(signal, entry_reason):
         'entry_refreshed_at': entry_refreshed_at,
         'entry_refresh_started_at': entry_refresh_started_at,
         'entry_fetch_ms': signal.get('stale_recheck_fetch_ms') or signal.get('fetch_ms'),
-        'entry_decision_wait_ms': signal.get('stale_recheck_elapsed_decision_wait_ms'),
+        'entry_decision_wait_ms': (
+            signal.get('entry_decision_wait_ms')
+            if signal.get('entry_decision_wait_ms') is not None
+            else signal.get('stale_recheck_elapsed_decision_wait_ms')
+        ),
         'quote_source': signal.get('quote_source', signal.get('source', '')),
         'entry_surplus_bp': signal.get('best_net_surplus_bp', 0),
         'entry_net_expected_profit_krw': signal.get('net_expected_profit_krw', 0),
@@ -826,6 +846,56 @@ def _live_key_blockers(pair_id):
     return ['LIVE_API_KEY_MISSING'] if any(status.get(key) != 'Set' for key in required) else []
 
 
+def _record_leg_quote_block(signal):
+    blocker = signal.get('leg_freshness_blocker') or 'LEG_QUOTE_TOO_OLD'
+    LEG_QUOTE_STATS['leg_quote_blocked_count'] += 1
+    if blocker == 'BUY_LEG_QUOTE_TOO_OLD':
+        LEG_QUOTE_STATS['leg_quote_blocked_buy_count'] += 1
+    elif blocker == 'SELL_LEG_QUOTE_TOO_OLD':
+        LEG_QUOTE_STATS['leg_quote_blocked_sell_count'] += 1
+    elif blocker == 'MAX_LEG_QUOTE_TOO_OLD':
+        LEG_QUOTE_STATS['leg_quote_blocked_max_count'] += 1
+    LEG_QUOTE_STATS['leg_quote_last_blocker'] = blocker
+    LEG_QUOTE_STATS['leg_quote_last_symbol'] = signal.get('symbol', '')
+    LEG_QUOTE_STATS['leg_quote_last_buy_age_ms'] = signal.get('buy_leg_quote_age_ms')
+    LEG_QUOTE_STATS['leg_quote_last_sell_age_ms'] = signal.get('sell_leg_quote_age_ms')
+    LEG_QUOTE_STATS['leg_quote_last_max_age_ms'] = signal.get('max_leg_quote_age_ms')
+    LEG_QUOTE_STATS['leg_quote_last_cap_ms'] = signal.get('leg_quote_age_cap_ms')
+
+
+def _request_stale_leg_priority_refresh(signal, rest_cache=None, bithumb_cache=None):
+    venue = str(signal.get('stale_leg_venue') or '').upper()
+    symbol = signal.get('stale_leg_symbol') or signal.get('symbol', '')
+    pair_id = signal.get('pair_id', 'UPBIT_BINANCE')
+    if not venue or not symbol:
+        return
+    result = {'queued': False}
+    if venue == 'BITHUMB' and bithumb_cache is not None:
+        result = bithumb_cache.request_priority_refresh(
+            symbol,
+            pair_id=pair_id,
+            reason='STALE_LEG_QUOTE',
+            original_surplus_bp=signal.get('best_net_surplus_bp'),
+            original_net_krw=signal.get('net_expected_profit_krw'),
+        )
+    elif rest_cache is not None:
+        result = rest_cache.request_priority_refresh(
+            pair_id,
+            symbol,
+            reason=f'STALE_{venue or "LEG"}_QUOTE',
+            original_surplus_bp=signal.get('best_net_surplus_bp'),
+            original_net_krw=signal.get('net_expected_profit_krw'),
+        )
+        if venue not in ('UPBIT', 'BINANCE'):
+            LEG_QUOTE_STATS['stale_leg_priority_refresh_fallback_count'] += 1
+    else:
+        return
+    if result.get('queued'):
+        LEG_QUOTE_STATS['stale_leg_priority_refresh_request_count'] += 1
+        LEG_QUOTE_STATS['stale_leg_priority_refresh_last_venue'] = venue
+        LEG_QUOTE_STATS['stale_leg_priority_refresh_last_symbol'] = symbol
+
+
 def _entry_blockers(signal, mode, entry_reason, paper_eng=None):
     blockers = []
     pair_id = signal.get('pair_id', 'UPBIT_BINANCE')
@@ -839,6 +909,14 @@ def _entry_blockers(signal, mode, entry_reason, paper_eng=None):
         blockers.append('ENTRY_NET_NOT_POSITIVE')
     if not signal.get('plan_ok', True):
         blockers.extend(signal.get('execution_plan_blockers') or [signal.get('blocker') or 'EXECUTION_PLAN_BLOCKED'])
+    if not signal.get('leg_freshness_ok', True):
+        leg_blocker = signal.get('leg_freshness_blocker') or 'LEG_QUOTE_TOO_OLD'
+        blockers.append(leg_blocker)
+        blockers.append('LEG_QUOTE_TOO_OLD')
+        if mode == 'tiny_live':
+            blockers.append('TINY_LIVE_LEG_QUOTE_TOO_OLD')
+        elif mode == 'live':
+            blockers.append('LIVE_LEG_QUOTE_TOO_OLD')
     if signal.get('liquidity_class', 'NORMAL') not in ('GOOD', 'NORMAL'):
         blockers.append('ENTRY_LIQUIDITY_BLOCKED')
     if any(bool(signal.get(name)) for name in ('stale', 'stale_grace', 'has_stale_quote')):
@@ -888,7 +966,7 @@ def _entry_blockers(signal, mode, entry_reason, paper_eng=None):
     return list(dict.fromkeys(blockers))
 
 
-def route_signal_to_execution(signal, entry_reason, paper_eng=None):
+def route_signal_to_execution(signal, entry_reason, paper_eng=None, rest_cache=None, bithumb_cache=None):
     prepared = _execution_fields(signal, entry_reason)
     mode = cfg.mode
     blockers = _entry_blockers(prepared, mode, entry_reason, paper_eng)
@@ -903,11 +981,23 @@ def route_signal_to_execution(signal, entry_reason, paper_eng=None):
         'entry_quote_age_source': prepared.get('entry_quote_age_source', 'UNKNOWN'),
         'entry_refreshed_at': prepared.get('entry_refreshed_at'),
         'entry_fetch_ms': prepared.get('entry_fetch_ms'),
+        'entry_decision_wait_ms': prepared.get('entry_decision_wait_ms'),
+        'buy_leg_quote_age_ms': prepared.get('buy_leg_quote_age_ms'),
+        'sell_leg_quote_age_ms': prepared.get('sell_leg_quote_age_ms'),
+        'max_leg_quote_age_ms': prepared.get('max_leg_quote_age_ms'),
+        'leg_quote_age_cap_ms': prepared.get('leg_quote_age_cap_ms'),
+        'leg_freshness_ok': prepared.get('leg_freshness_ok', True),
+        'leg_freshness_blocker': prepared.get('leg_freshness_blocker', ''),
         'blockers': blockers,
         'blocker_detail': {
             'entry_reason': entry_reason,
             'actual_age_ms': prepared.get('entry_quote_age_ms'),
             'cap_ms': prepared.get('entry_quote_age_cap_ms'),
+            'buy_leg_age_ms': prepared.get('buy_leg_quote_age_ms'),
+            'sell_leg_age_ms': prepared.get('sell_leg_quote_age_ms'),
+            'max_leg_age_ms': prepared.get('max_leg_quote_age_ms'),
+            'leg_cap_ms': prepared.get('leg_quote_age_cap_ms'),
+            'leg_freshness_blocker': prepared.get('leg_freshness_blocker', ''),
             'source': prepared.get('entry_quote_age_source', 'UNKNOWN'),
             'best_net_surplus_bp': prepared.get('best_net_surplus_bp'),
             'net_expected_profit_krw': prepared.get('net_expected_profit_krw'),
@@ -916,6 +1006,12 @@ def route_signal_to_execution(signal, entry_reason, paper_eng=None):
         'signal': prepared,
     }
     if blockers:
+        if any(item in blockers for item in (
+            'LEG_QUOTE_TOO_OLD', 'BUY_LEG_QUOTE_TOO_OLD', 'SELL_LEG_QUOTE_TOO_OLD',
+            'MAX_LEG_QUOTE_TOO_OLD', 'UNKNOWN_LEG_QUOTE_AGE',
+        )):
+            _record_leg_quote_block(prepared)
+            _request_stale_leg_priority_refresh(prepared, rest_cache, bithumb_cache)
         result['status'] = 'BLOCKED'
         return result
     if mode == 'paper':
@@ -1068,6 +1164,9 @@ def _calibration_guard_blockers(prepared):
         blockers.append('CALIBRATION_MAX_ORDER_EXCEEDED')
     if not prepared.get('plan_ok', False):
         blockers.extend(prepared.get('execution_plan_blockers') or ['EXECUTION_PLAN_BLOCKED'])
+    if not prepared.get('leg_freshness_ok', True):
+        blockers.append('TINY_LIVE_LEG_QUOTE_TOO_OLD')
+        blockers.append(prepared.get('leg_freshness_blocker') or 'LEG_QUOTE_TOO_OLD')
     if any(bool(prepared.get(name)) for name in ('stale', 'stale_grace', 'has_stale_quote')):
         blockers.append('CALIBRATION_STALE_QUOTE')
     status = _calibration_status()
@@ -1542,6 +1641,11 @@ def main():
     wide_spread_entry_last_surplus_bp = None
     wide_spread_entry_last_net_krw = None
     paper_entry_quote_age_list: deque[float] = deque(maxlen=500)
+    entry_decision_wait_list: deque[float] = deque(maxlen=500)
+    completed_handoff_to_plan_list: deque[float] = deque(maxlen=500)
+    completed_handoff_to_route_list: deque[float] = deque(maxlen=500)
+    entry_decision_wait_warn_count = 0
+    completed_handoff_fast_route_count = 0
     paper_engine_reject_last_reason = ''
     paper_engine_reject_last_detail = {}
     paper_engine_reject_counts = {
@@ -1826,6 +1930,9 @@ def main():
                     if cfg.paper_latency_sim_enabled:
                         signal.update(simulate_paper_fill(signal, history, cfg))
                 signal = _completed_handoff_entry_fields(signal, handoff, time.time())
+                to_plan_ms = _completed_handoff_age_ms(handoff)
+                if to_plan_ms is not None:
+                    completed_handoff_to_plan_list.append(float(to_plan_ms))
                 recheck_update = _resolve_stale_recheck(
                     signal, stale_recheck_pending, stale_recheck_counters, stale_recheck_recent
                 )
@@ -1859,7 +1966,17 @@ def main():
                         wide_spread_entry_last_net_krw = signal.get('net_expected_profit_krw')
                     stale_recheck_pending.pop((pair_id, sym), None)
                     continue
-                route = route_signal_to_execution(signal, entry_reason, paper_eng)
+                route = route_signal_to_execution(
+                    signal, entry_reason, paper_eng, rest_fallback_cache, bithumb_quote_cache
+                )
+                to_route_ms = _completed_handoff_age_ms(handoff)
+                if to_route_ms is not None:
+                    completed_handoff_to_route_list.append(float(to_route_ms))
+                    if to_route_ms <= cfg.entry_decision_wait_warn_ms:
+                        completed_handoff_fast_route_count += 1
+                if route.get('entry_decision_wait_ms') is not None:
+                    entry_decision_wait_list.append(float(route.get('entry_decision_wait_ms') or 0))
+                entry_decision_wait_warn_count += int(bool(route.get('signal', {}).get('decision_wait_warn')))
                 completed_handoff_entry_route_count += 1
                 completed_handoff_entry_last_reason = entry_reason
                 if cfg.mode == 'paper':
@@ -2052,7 +2169,12 @@ def main():
 
             # ── Paper 진입 ────────────────────────────────────────────────
             if is_safe:
-                route = route_signal_to_execution(calc_res, 'NORMAL_GO', paper_eng)
+                route = route_signal_to_execution(
+                    calc_res, 'NORMAL_GO', paper_eng, rest_fallback_cache, bithumb_quote_cache
+                )
+                if route.get('entry_decision_wait_ms') is not None:
+                    entry_decision_wait_list.append(float(route.get('entry_decision_wait_ms') or 0))
+                entry_decision_wait_warn_count += int(bool(route.get('signal', {}).get('decision_wait_warn')))
                 if cfg.mode == 'paper':
                     paper_entry_attempt_count += 1
                     paper_entry_last_symbol = route.get('symbol', '')
@@ -2215,7 +2337,12 @@ def main():
                         {**domestic, 'net_expected_profit_krw': net},
                         recheck_reason,
                         paper_eng,
+                        rest_fallback_cache,
+                        bithumb_quote_cache,
                     )
+                    if recheck_route.get('entry_decision_wait_ms') is not None:
+                        entry_decision_wait_list.append(float(recheck_route.get('entry_decision_wait_ms') or 0))
+                    entry_decision_wait_warn_count += int(bool(recheck_route.get('signal', {}).get('decision_wait_warn')))
                     if cfg.mode == 'paper':
                         paper_entry_attempt_count += 1
                         paper_entry_last_symbol = recheck_route.get('symbol', '')
@@ -2282,7 +2409,12 @@ def main():
                         paper_entry_blocked_stale_count += int('ENTRY_STALE_QUOTE' in blockers)
                         paper_entry_blocked_liquidity_count += int('ENTRY_LIQUIDITY_BLOCKED' in blockers)
                 if domestic_safe:
-                    route = route_signal_to_execution(domestic, 'NORMAL_GO', paper_eng)
+                    route = route_signal_to_execution(
+                        domestic, 'NORMAL_GO', paper_eng, rest_fallback_cache, bithumb_quote_cache
+                    )
+                    if route.get('entry_decision_wait_ms') is not None:
+                        entry_decision_wait_list.append(float(route.get('entry_decision_wait_ms') or 0))
+                    entry_decision_wait_warn_count += int(bool(route.get('signal', {}).get('decision_wait_warn')))
                     if cfg.mode == 'paper':
                         paper_entry_attempt_count += 1
                         paper_entry_last_symbol = route.get('symbol', '')
@@ -2560,6 +2692,21 @@ def main():
             'paper_entry_last_refreshed_at': paper_entry_last_refreshed_at,
             'paper_entry_last_fetch_ms': paper_entry_last_fetch_ms,
             'paper_entry_p95_quote_age_ms': _percentile(list(paper_entry_quote_age_list), 95),
+            'entry_decision_wait_ms': (
+                round(entry_decision_wait_list[-1], 2) if entry_decision_wait_list else None
+            ),
+            'entry_decision_wait_p95_ms': _percentile(list(entry_decision_wait_list), 95),
+            'entry_decision_wait_warn_count': entry_decision_wait_warn_count,
+            'completed_handoff_to_plan_ms': (
+                round(completed_handoff_to_plan_list[-1], 2) if completed_handoff_to_plan_list else None
+            ),
+            'completed_handoff_to_route_ms': (
+                round(completed_handoff_to_route_list[-1], 2) if completed_handoff_to_route_list else None
+            ),
+            'completed_handoff_to_plan_p95_ms': _percentile(list(completed_handoff_to_plan_list), 95),
+            'completed_handoff_to_route_p95_ms': _percentile(list(completed_handoff_to_route_list), 95),
+            'completed_handoff_fast_route_count': completed_handoff_fast_route_count,
+            **LEG_QUOTE_STATS,
             'paper_entry_blocked_reason_quote_age_count': paper_entry_blocked_reason_quote_age_count,
             'paper_entry_blocked_wide_spread_quote_age_count': paper_entry_blocked_wide_spread_quote_age_count,
             'wide_spread_entry_blocked_count': wide_spread_entry_blocked_count,
