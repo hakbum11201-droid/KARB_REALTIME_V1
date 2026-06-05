@@ -167,6 +167,17 @@ binance_fee_bp: 10
 slippage_bp: 5
 fx_error_bp: 5
 risk_buffer_bp: 10
+fees:
+  UPBIT:
+    taker_fee_bp: 5.0
+    maker_fee_bp: 5.0
+  BITHUMB:
+    taker_fee_bp: 4.0
+    maker_fee_bp: 4.0
+  BINANCE:
+    taker_fee_bp: 10.0
+    maker_fee_bp: 10.0
+    bnb_discount_enabled: false
 
 min_net_surplus_bp: 35
 min_expected_profit_krw: 1000

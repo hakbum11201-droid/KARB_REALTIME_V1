@@ -188,7 +188,9 @@ class PaperEngine:
                 'buy_price': buy_price,
                 'sell_price': sell_price,
             })
-        entry_fee_krw = selected_notional_krw * fees_bp / 10000
+        entry_fee_krw = float(calc_result.get('total_fee_krw', calc_result.get('expected_fee_krw', 0)) or 0)
+        if entry_fee_krw <= 0:
+            entry_fee_krw = selected_notional_krw * fees_bp / 10000
         entry_reason = calc_result.get('entry_reason') or 'NORMAL_GO'
         entered_at = time.time()
 
@@ -274,6 +276,36 @@ class PaperEngine:
             'expected_slippage_bp':  calc_result.get('expected_slippage_bp', calc_result.get('dynamic_slippage_bp', cfg.slippage_bp)),
             'dynamic_slippage_bp':   calc_result.get('dynamic_slippage_bp', calc_result.get('expected_slippage_bp', cfg.slippage_bp)),
             'expected_fee_krw':      calc_result.get('expected_fee_krw', entry_fee_krw),
+            'buy_vwap_price':        calc_result.get('buy_vwap_price', buy_price),
+            'sell_vwap_price':       calc_result.get('sell_vwap_price', sell_price),
+            'buy_slippage_bp':       calc_result.get('buy_slippage_bp', 0),
+            'sell_slippage_bp':      calc_result.get('sell_slippage_bp', 0),
+            'total_slippage_bp':     calc_result.get('total_slippage_bp', calc_result.get('dynamic_slippage_bp', 0)),
+            'slippage_source':       calc_result.get('slippage_source', ''),
+            'fee_source':            calc_result.get('fee_source', ''),
+            'buy_fee_krw':           calc_result.get('buy_fee_krw', 0),
+            'sell_fee_krw':          calc_result.get('sell_fee_krw', 0),
+            'total_fee_krw':         calc_result.get('total_fee_krw', entry_fee_krw),
+            'buy_fee_bp':            calc_result.get('buy_fee_bp', 0),
+            'sell_fee_bp':           calc_result.get('sell_fee_bp', 0),
+            'depth_levels_used_buy': calc_result.get('depth_levels_used_buy', 0),
+            'depth_levels_used_sell': calc_result.get('depth_levels_used_sell', 0),
+            'expected_fill_ratio_buy': calc_result.get('expected_fill_ratio_buy', calc_result.get('fill_ratio_buy', 1.0)),
+            'expected_fill_ratio_sell': calc_result.get('expected_fill_ratio_sell', calc_result.get('fill_ratio_sell', 1.0)),
+            'depth_ok':              calc_result.get('depth_ok', True),
+            'planned_buy_vwap_price': calc_result.get('planned_buy_vwap_price', calc_result.get('buy_vwap_price', buy_price)),
+            'planned_sell_vwap_price': calc_result.get('planned_sell_vwap_price', calc_result.get('sell_vwap_price', sell_price)),
+            'planned_total_fee_krw': calc_result.get('planned_total_fee_krw', calc_result.get('total_fee_krw', entry_fee_krw)),
+            'planned_slippage_cost_krw': calc_result.get('planned_slippage_cost_krw', calc_result.get('slippage_cost_krw', 0)),
+            'planned_expected_net_profit_krw': calc_result.get('planned_expected_net_profit_krw', calc_result.get('net_expected_profit_krw', 0)),
+            'actual_buy_avg_price':  calc_result.get('actual_buy_avg_price'),
+            'actual_sell_avg_price': calc_result.get('actual_sell_avg_price'),
+            'actual_fee_krw':        calc_result.get('actual_fee_krw'),
+            'actual_realized_pnl_krw': calc_result.get('actual_realized_pnl_krw'),
+            'pnl_diff_krw':          calc_result.get('pnl_diff_krw'),
+            'execution_latency_ms':  calc_result.get('execution_latency_ms'),
+            'submit_started_at':     calc_result.get('submit_started_at'),
+            'submit_finished_at':    calc_result.get('submit_finished_at'),
             'wide_spread_recheck_status': calc_result.get('wide_spread_recheck_status', ''),
             # 진입 호가 스냅샷
             'entry_upbit_bid':       calc_result['upbit_bid'],
@@ -338,14 +370,17 @@ class PaperEngine:
         return 0.0
 
     def _execution_costs(self, trade: dict, calc_result: dict, notional: float) -> tuple[float, float, float]:
-        fee_krw = float(calc_result.get('expected_fee_krw', trade.get('entry_fee_krw', 0)) or 0)
+        fee_krw = float(calc_result.get('total_fee_krw', calc_result.get('expected_fee_krw', trade.get('entry_fee_krw', 0))) or 0)
         slippage_bp = float(
             calc_result.get(
+                'total_slippage_bp',
+                calc_result.get(
                 'expected_slippage_bp',
                 calc_result.get('dynamic_slippage_bp', trade.get('expected_slippage_bp', cfg.slippage_bp)),
+                ),
             ) or 0
         )
-        slippage_cost_krw = float(calc_result.get('expected_slippage_krw', 0) or 0)
+        slippage_cost_krw = float(calc_result.get('slippage_cost_krw', calc_result.get('expected_slippage_krw', 0)) or 0)
         if slippage_cost_krw <= 0:
             slippage_cost_krw = notional * slippage_bp / 10000
         return fee_krw, slippage_bp, slippage_cost_krw
@@ -359,7 +394,7 @@ class PaperEngine:
         buy_price = float(trade.get('entry_buy_price_krw', 0) or 0)
         sell_price = float(trade.get('entry_sell_price_krw', 0) or 0)
         fee_krw, slippage_bp, slippage_cost_krw = self._execution_costs(trade, calc_result, notional)
-        gross_pnl_krw = qty * (sell_price - buy_price)
+        gross_pnl_krw = float(calc_result.get('gross_edge_krw', qty * (sell_price - buy_price)) or 0)
         realized_pnl_krw = gross_pnl_krw - fee_krw - slippage_cost_krw
         realized_bp = realized_pnl_krw / notional * 10000 if notional else 0.0
         win = realized_pnl_krw > 0
@@ -382,6 +417,19 @@ class PaperEngine:
             'expected_slippage_bp': slippage_bp,
             'dynamic_slippage_bp': calc_result.get('dynamic_slippage_bp', trade.get('dynamic_slippage_bp', slippage_bp)),
             'slippage_cost_krw': round(slippage_cost_krw, 2),
+            'total_fee_krw': round(fee_krw, 2),
+            'fee_source': calc_result.get('fee_source', trade.get('fee_source', '')),
+            'slippage_source': calc_result.get('slippage_source', trade.get('slippage_source', '')),
+            'planned_buy_vwap_price': calc_result.get('planned_buy_vwap_price', buy_price),
+            'planned_sell_vwap_price': calc_result.get('planned_sell_vwap_price', sell_price),
+            'planned_total_fee_krw': round(fee_krw, 2),
+            'planned_slippage_cost_krw': round(slippage_cost_krw, 2),
+            'planned_expected_net_profit_krw': round(realized_pnl_krw, 2),
+            'actual_buy_avg_price': buy_price,
+            'actual_sell_avg_price': sell_price,
+            'actual_fee_krw': round(fee_krw, 2),
+            'actual_realized_pnl_krw': round(realized_pnl_krw, 2),
+            'pnl_diff_krw': round(realized_pnl_krw - float(calc_result.get('planned_expected_net_profit_krw', realized_pnl_krw) or 0), 2),
             'gross_pnl_krw': round(gross_pnl_krw, 2),
             'realized_pnl_krw': round(realized_pnl_krw, 2),
             'realized_bp': round(realized_bp, 4),

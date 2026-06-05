@@ -506,13 +506,15 @@ function renderTradeTable(trades) {
     const xt=t.exit_time?new Date(t.exit_time*1000).toLocaleTimeString('ko-KR'):'--';
     const entryReason=t.entry_reason?`<div class="muted-mini">${esc(t.entry_reason)}</div>`:'';
     const executionModel=t.execution_model?`<div class="muted-mini">${esc(t.execution_model)}</div>`:'';
+    const planMeta=`<div class="muted-mini">fee ${fmt(t.total_fee_krw||t.entry_fee_krw,1)} KRW (${esc(t.fee_source||'')}) / slip ${fmt(t.total_slippage_bp||t.dynamic_slippage_bp,2)} bp ${t.slippage_source?`/ ${esc(t.slippage_source)}`:''}</div>`;
+    const depthMeta=`<div class="muted-mini">fill ${fmt((t.expected_fill_ratio_buy??t.fill_ratio_buy??0)*100,1)}%/${fmt((t.expected_fill_ratio_sell??t.fill_ratio_sell??0)*100,1)}% / depth ${fmt(t.depth_levels_used_buy||0)}/${fmt(t.depth_levels_used_sell||0)} / expected ${fmt(t.planned_expected_net_profit_krw||t.expected_net_profit_krw,1)} KRW</div>`;
     const entryMeta=`<div class="muted-mini">notional ${fmt(t.selected_notional_krw)} KRW / realized ${pnl>=0?'+':''}${fmt(pnl)} KRW / quote ${fmt(t.entry_quote_age_ms,1)} ms ${t.entry_quote_age_source?`/ ${esc(t.entry_quote_age_source)}`:''}</div>`;
     return `<tr>
       <td>${(t.trade_id||'').slice(0,8)}</td><td><span class="pair-badge ${pairMeta(t.pair_id||'UPBIT_BINANCE').badge}">${esc(t.pair_id||'UPBIT_BINANCE')}</span> ${t.symbol||'--'}</td>
       <td class="${dc}">${t.best_direction||'--'}</td><td>${et}</td><td>${xt}</td>
       <td>${t.holding_sec!=null?Number(t.holding_sec).toFixed(0)+'s':'--'}</td>
       <td style="color:${pnlC(pnl)}">${pnl>=0?'+':''}${fmt(pnl)} ₩</td>
-      <td class="${wc}">${t.exit_reason||'--'}${t.clean_win?' ★':''}${entryReason}${executionModel}${entryMeta}</td>
+      <td class="${wc}">${t.exit_reason||'--'}${t.clean_win?' ★':''}${entryReason}${executionModel}${entryMeta}${planMeta}${depthMeta}</td>
       <td>${t.win?'✓':'✗'}</td>
     </tr>`;
   }).join('');

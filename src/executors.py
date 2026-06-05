@@ -10,7 +10,7 @@ from datetime import date
 from config import cfg
 from exchange_clients import BinanceSpotPrivateClient, UpbitPrivateClient
 from bithumb_private import BithumbPrivateClient
-from execution_plan import ExecutionPlan
+from execution_plan import ExecutionPlan, build_execution_plan
 from emergency_liquidator import EmergencyLiquidator
 from inventory_manager import InventoryManager
 from order_tracker import ACTIVE_STATUSES, BLOCKING_STATUSES, OrderTracker
@@ -298,7 +298,13 @@ def _create_upbit_bithumb_plan(readiness: dict) -> dict:
         preflight_status='PASS' if not blockers else 'BLOCKED', blockers=_unique(blockers),
         warnings=list(readiness['warnings']), executable=not blockers,
     )
-    return {**readiness, 'ready': not blockers, 'blockers': _unique(blockers), 'plan': plan.to_dict()}
+    plan_dict = plan.to_dict()
+    plan_dict.update(build_execution_plan({**calc, **plan_dict}, cfg.mode, cfg))
+    if not plan_dict.get('plan_ok'):
+        blockers.extend(plan_dict.get('execution_plan_blockers', []))
+        plan_dict['preflight_status'] = 'BLOCKED'
+        plan_dict['executable'] = False
+    return {**readiness, 'ready': not blockers, 'blockers': _unique(blockers), 'plan': plan_dict}
 
 
 def create_preflight_plan(pair_id='UPBIT_BINANCE') -> dict:
@@ -343,7 +349,17 @@ def create_preflight_plan(pair_id='UPBIT_BINANCE') -> dict:
         preflight_status='PASS' if not blockers else 'BLOCKED', blockers=_unique(blockers),
         warnings=list(readiness['warnings']), executable=not blockers,
     )
-    result = {**readiness, 'ready': not blockers, 'blockers': _unique(blockers), 'plan': plan.to_dict()}
+    plan_dict = plan.to_dict()
+    plan_dict.update(build_execution_plan({
+        **calc, **plan_dict,
+        'upbit_orderbook': quote.get('upbit', {}),
+        'binance_orderbook': quote.get('binance', {}),
+    }, cfg.mode, cfg))
+    if not plan_dict.get('plan_ok'):
+        blockers.extend(plan_dict.get('execution_plan_blockers', []))
+        plan_dict['preflight_status'] = 'BLOCKED'
+        plan_dict['executable'] = False
+    result = {**readiness, 'ready': not blockers, 'blockers': _unique(blockers), 'plan': plan_dict}
     _write_json(PREFLIGHT_FILE, result)
     return result
 

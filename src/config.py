@@ -338,6 +338,8 @@ class Config:
     @property
     def binance_fee_bp(self): return self.get('binance_fee_bp', 10)
     @property
+    def fees(self): return self.get('fees', {})
+    @property
     def slippage_bp(self): return self.get('slippage_bp', 5)
     @property
     def fx_error_bp(self): return self.get('fx_error_bp', 5)

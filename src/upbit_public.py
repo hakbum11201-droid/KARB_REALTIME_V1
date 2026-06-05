@@ -28,12 +28,23 @@ class UpbitPublic(ExchangeBase):
             resp.raise_for_status()
             data = resp.json()
             if data and isinstance(data, list):
-                obu = data[0]['orderbook_units'][0]
+                units = data[0].get('orderbook_units') or []
+                if not units:
+                    return None
+                obu = units[0]
                 return {
                     'bid': float(obu['bid_price']),
                     'ask': float(obu['ask_price']),
                     'bid_size': float(obu['bid_size']),
                     'ask_size': float(obu['ask_size']),
+                    'bids': [
+                        {'price': float(unit['bid_price']), 'qty': float(unit['bid_size'])}
+                        for unit in units[:15]
+                    ],
+                    'asks': [
+                        {'price': float(unit['ask_price']), 'qty': float(unit['ask_size'])}
+                        for unit in units[:15]
+                    ],
                     'latency_ms': latency_ms,
                     'ts': time.time(),
                 }

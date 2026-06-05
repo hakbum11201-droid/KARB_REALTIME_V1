@@ -15,7 +15,7 @@ class BinancePublic(ExchangeBase):
     def fetch_order_book(self, symbol: str) -> dict | None:
         """{symbol}USDT 최우선 호가 반환."""
         market = f"{symbol}USDT"
-        url = f"{self.base_url}/ticker/bookTicker?symbol={market}"
+        url = f"{self.base_url}/depth?symbol={market}&limit=20"
         try:
             if not rate_limiter.acquire('binance'):
                 return None
@@ -27,12 +27,18 @@ class BinancePublic(ExchangeBase):
                 return None
             resp.raise_for_status()
             data = resp.json()
-            if 'bidPrice' in data:
+            bids = data.get('bids') or []
+            asks = data.get('asks') or []
+            if bids and asks:
+                bid = bids[0]
+                ask = asks[0]
                 return {
-                    'bid': float(data['bidPrice']),
-                    'ask': float(data['askPrice']),
-                    'bid_size': float(data['bidQty']),
-                    'ask_size': float(data['askQty']),
+                    'bid': float(bid[0]),
+                    'ask': float(ask[0]),
+                    'bid_size': float(bid[1]),
+                    'ask_size': float(ask[1]),
+                    'bids': [{'price': float(price), 'qty': float(qty)} for price, qty in bids[:15]],
+                    'asks': [{'price': float(price), 'qty': float(qty)} for price, qty in asks[:15]],
                     'latency_ms': latency_ms,
                     'ts': time.time(),
                 }

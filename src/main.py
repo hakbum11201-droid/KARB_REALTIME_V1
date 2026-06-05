@@ -32,6 +32,7 @@ from rate_limiter import rate_limiter
 from bithumb_quote_cache import BithumbQuoteCache
 from rest_fallback_cache import RestFallbackQuoteCache
 from executors import TinyLiveExecutor
+from execution_plan import build_execution_plan
 
 
 ENTRY_REASONS = ('NORMAL_GO', 'RECHECK_ACTIONABLE', 'WIDE_SPREAD_RECHECK_ACTIONABLE')
@@ -775,19 +776,6 @@ def _entry_quote_age_limit(signal, mode):
 def _execution_fields(signal, entry_reason):
     pair_id = signal.get('pair_id', 'UPBIT_BINANCE')
     direction = signal.get('best_direction') or signal.get('direction', '')
-    if pair_id == 'UPBIT_BITHUMB':
-        buy_venue, sell_venue = (
-            ('BITHUMB', 'UPBIT') if direction == 'UPBIT_BITHUMB_A' else ('UPBIT', 'BITHUMB')
-        )
-    else:
-        buy_venue, sell_venue = (
-            ('BINANCE', 'UPBIT') if direction == 'A' else ('UPBIT', 'BINANCE')
-        )
-    buy_price = float(signal.get('selected_buy_price_krw', 0) or 0)
-    sell_price = float(signal.get('selected_sell_price_krw', 0) or 0)
-    entry_fee = float(signal.get('selected_notional_krw', 0) or 0) * (
-        cfg.upbit_fee_bp + (cfg.bithumb_fee_bp if pair_id == 'UPBIT_BITHUMB' else cfg.binance_fee_bp)
-    ) / 10000
     entry_quote_age = _entry_quote_age_details(signal)
     entry_quote_age_cap_ms = _entry_quote_age_limit({**signal, 'entry_reason': entry_reason}, cfg.mode)
     entry_refreshed_at = entry_quote_age.get('refreshed_at')
@@ -796,16 +784,12 @@ def _execution_fields(signal, entry_reason):
         or signal.get('entry_refresh_started_at')
         or signal.get('refresh_started_at')
     )
-    return {
+    base = {
         **signal,
         'direction': direction,
         'entry_reason': entry_reason,
         'raw_depth_qty': signal.get('max_fillable_qty_raw', signal.get('max_qty', signal.get('max_fillable_qty', 0))),
         'effective_qty': signal.get('effective_qty', signal.get('selected_qty', signal.get('max_fillable_qty', 0))),
-        'buy_venue': buy_venue,
-        'sell_venue': sell_venue,
-        'buy_price': buy_price,
-        'sell_price': sell_price,
         'buy_leg_quote_age_ms': signal.get('buy_leg_quote_age_ms'),
         'sell_leg_quote_age_ms': signal.get('sell_leg_quote_age_ms'),
         'entry_quote_age_ms': entry_quote_age['age_ms'],
@@ -816,8 +800,6 @@ def _execution_fields(signal, entry_reason):
         'entry_fetch_ms': signal.get('stale_recheck_fetch_ms') or signal.get('fetch_ms'),
         'entry_decision_wait_ms': signal.get('stale_recheck_elapsed_decision_wait_ms'),
         'quote_source': signal.get('quote_source', signal.get('source', '')),
-        'expected_slippage_bp': signal.get('dynamic_slippage_bp', cfg.slippage_bp),
-        'expected_fee_krw': entry_fee,
         'entry_surplus_bp': signal.get('best_net_surplus_bp', 0),
         'entry_net_expected_profit_krw': signal.get('net_expected_profit_krw', 0),
         'recheck_status': signal.get('stale_recheck_status', ''),
@@ -826,6 +808,8 @@ def _execution_fields(signal, entry_reason):
             if entry_reason == 'WIDE_SPREAD_RECHECK_ACTIONABLE' else ''
         ),
     }
+    plan = build_execution_plan(base, cfg.mode, cfg)
+    return plan
 
 
 def _live_key_blockers(pair_id):
@@ -849,6 +833,8 @@ def _entry_blockers(signal, mode, entry_reason, paper_eng=None):
         blockers.append('ENTRY_NOTIONAL_INVALID')
     if cfg.paper_entry_require_positive_net and float(signal.get('net_expected_profit_krw', 0) or 0) <= 0:
         blockers.append('ENTRY_NET_NOT_POSITIVE')
+    if not signal.get('plan_ok', True):
+        blockers.extend(signal.get('execution_plan_blockers') or [signal.get('blocker') or 'EXECUTION_PLAN_BLOCKED'])
     if signal.get('liquidity_class', 'NORMAL') not in ('GOOD', 'NORMAL'):
         blockers.append('ENTRY_LIQUIDITY_BLOCKED')
     if any(bool(signal.get(name)) for name in ('stale', 'stale_grace', 'has_stale_quote')):
@@ -1656,6 +1642,8 @@ def main():
             calc_res['fx_status']   = fx_status
             calc_res['upbit_ts']    = upbit_q.get('ts')
             calc_res['binance_ts']  = binance_q.get('ts')
+            calc_res['upbit_orderbook'] = upbit_q
+            calc_res['binance_orderbook'] = binance_q
             freshness = RiskGuard.quote_freshness_status(calc_res)
             calc_res.update(freshness)
             if freshness['max_leg_quote_age_ms'] is not None:
@@ -1815,6 +1803,8 @@ def main():
                 domestic = arb_calc.calculate_domestic_krw(sym, q.get('upbit', {}), bithumb_q)
                 domestic['upbit_ts'] = q.get('upbit', {}).get('ts')
                 domestic['bithumb_ts'] = bithumb_q.get('ts')
+                domestic['upbit_orderbook'] = q.get('upbit', {})
+                domestic['bithumb_orderbook'] = bithumb_q
                 domestic['stale_grace'] = bool(bithumb_q.get('stale_grace'))
                 domestic['stale'] = bool(bithumb_q.get('stale'))
                 domestic_freshness = RiskGuard.quote_freshness_status(domestic)

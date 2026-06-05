@@ -57,6 +57,14 @@ class BithumbPublic(ExchangeBase):
                     'ask': float(top['ask_price']),
                     'bid_size': float(top['bid_size']),
                     'ask_size': float(top['ask_size']),
+                    'bids': [
+                        {'price': float(unit['bid_price']), 'qty': float(unit['bid_size'])}
+                        for unit in units[:15]
+                    ],
+                    'asks': [
+                        {'price': float(unit['ask_price']), 'qty': float(unit['ask_size'])}
+                        for unit in units[:15]
+                    ],
                     'timestamp': quote_ts,
                     'ts': quote_ts,
                     'quote_ts_fallback': ts_fallback,

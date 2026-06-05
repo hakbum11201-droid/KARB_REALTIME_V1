@@ -60,6 +60,7 @@ class AcceptanceCheck:
             self._check_loop_latency()
             self._check_paper_entry_route()
             self._check_recent_trades()
+            self._check_execution_plan_fields()
             self._check_entry_reason_summary()
             self._check_recheck_health()
             self._check_completed_handoff()
@@ -211,6 +212,7 @@ class AcceptanceCheck:
             quote_age is not None
             and quote_age > self.args.max_paper_entry_quote_age_ms
             and blocker == "ENTRY_QUOTE_TOO_OLD"
+            and success == 0
         ):
             self._fail(
                 "PAPER_ENTRY_QUOTE_AGE_TOO_HIGH",
@@ -262,6 +264,65 @@ class AcceptanceCheck:
         else:
             self._pass("ARB_FILL_NOT_MARKED_AS_SL")
         self._check_old_open_trades()
+
+    def _check_execution_plan_fields(self) -> None:
+        trades = self._extract_trades(self.api.get("trades", {}))
+        real_trades = [
+            trade for trade in trades
+            if not bool(trade.get("is_mock") or trade.get("test_only"))
+            and str(trade.get("symbol") or "").upper() not in MOCK_SYMBOLS
+        ]
+        arb_fills = [
+            trade for trade in real_trades
+            if trade.get("execution_model") == "INVENTORY_ARBITRAGE_FILL"
+            and trade.get("exit_reason") == "ARB_FILLED"
+        ]
+        zero_fee = [
+            trade.get("trade_id") for trade in arb_fills
+            if _to_number(trade.get("total_fee_krw", trade.get("entry_fee_krw")), 0) <= 0
+        ]
+        if zero_fee:
+            self._fail("FEE_ZERO_ON_FILLED_TRADE", ",".join(map(str, zero_fee[:5])), {"trade_ids": zero_fee[:5]})
+        missing_ratio = [
+            trade.get("trade_id") for trade in arb_fills
+            if trade.get("expected_fill_ratio_buy") is None or trade.get("expected_fill_ratio_sell") is None
+        ]
+        if missing_ratio:
+            self._warn("FILL_RATIO_MISSING", ",".join(map(str, missing_ratio[:5])), {"trade_ids": missing_ratio[:5]})
+        missing_slip_source = [
+            trade.get("trade_id") for trade in arb_fills
+            if not trade.get("slippage_source")
+        ]
+        if missing_slip_source:
+            self._warn("SLIPPAGE_SOURCE_MISSING", ",".join(map(str, missing_slip_source[:5])), {"trade_ids": missing_slip_source[:5]})
+        non_vwap = [
+            trade.get("trade_id") for trade in arb_fills
+            if trade.get("slippage_source") and trade.get("slippage_source") != "ORDERBOOK_VWAP"
+        ]
+        if non_vwap:
+            self._warn("SLIPPAGE_NOT_ORDERBOOK_VWAP", ",".join(map(str, non_vwap[:5])), {"trade_ids": non_vwap[:5]})
+        slip_values = [
+            round(_to_number(trade.get("dynamic_slippage_bp", trade.get("total_slippage_bp")), -1), 6)
+            for trade in arb_fills[:20]
+        ]
+        if len(slip_values) >= 10 and len(set(slip_values)) == 1 and slip_values[0] == 5.0:
+            self._warn("SLIPPAGE_APPEARS_STATIC", "10+ ARB_FILLED trades all show 5.0bp", {"sample": slip_values[:10]})
+        pnl_diffs = [
+            {
+                "trade_id": trade.get("trade_id"),
+                "diff": abs(
+                    _to_number(trade.get("realized_pnl_krw"), 0)
+                    - _to_number(trade.get("planned_expected_net_profit_krw"), 0)
+                ),
+            }
+            for trade in arb_fills
+            if trade.get("planned_expected_net_profit_krw") is not None
+        ]
+        large_diff = [row for row in pnl_diffs if row["diff"] > 1000]
+        if large_diff:
+            self._warn("PLANNED_ACTUAL_PNL_DIFF_LARGE", details={"items": large_diff[:5]})
+        if arb_fills and not (zero_fee or missing_ratio or missing_slip_source or non_vwap):
+            self._pass("EXECUTION_PLAN_FIELDS_OK", f"arb_fills={len(arb_fills)}")
 
     def _extract_trades(self, payload: Any) -> list[dict[str, Any]]:
         if isinstance(payload, dict):

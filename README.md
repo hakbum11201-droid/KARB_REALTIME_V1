@@ -394,6 +394,11 @@ For long paper smoke tests, the recommended checks are:
   and later rebalance remain separate concerns. Partial or missed fills are
   marked as `PARTIAL_FILL_UNWIND` or `LEG_MISS_UNWIND`; none of these paper
   fill records call live or tiny-live order functions.
+- Paper, live preflight, and tiny-live preflight share the same execution-plan
+  fee/slippage calculation. Venue taker fees come from `fees.*.taker_fee_bp`,
+  and market-fill slippage is estimated from the current orderbook VWAP with
+  `slippage_source=ORDERBOOK_VWAP`. Risk buffers and FX error buffers remain
+  entry filters; they are not subtracted again from realized paper PnL.
 - Entry signals now pass through a common `route_signal_to_execution` gate.
   In `paper` mode, eligible `NORMAL_GO`, `RECHECK_ACTIONABLE`, and
   `WIDE_SPREAD_RECHECK_ACTIONABLE` signals enter `PaperEngine` only after
