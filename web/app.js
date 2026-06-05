@@ -37,6 +37,7 @@ let latestCalibration = {};
 let latestNotionalSweep = {};
 let latestTinyLivePreflight = {};
 let latestEntryDiagnostics = {};
+let latestTradingCapital = {};
 let lastSummaryFetchAt = 0;
 
 const durationText = seconds => {
@@ -70,7 +71,7 @@ document.querySelectorAll('.nav-item').forEach(btn => {
     btn.classList.add('active');
     document.getElementById(`tab-${tab}`)?.classList.add('active');
     setText('page-title', btn.textContent.trim());
-    if (tab === 'keys')    fetchKeyStatus();
+    if (tab === 'keys')    { fetchKeyStatus(); fetchTradingCapital(); }
     if (tab === 'session') fetchLastSession();
     if (tab === 'inventory') fetchInventory();
     if (tab === 'perf')    fetchPerf();
@@ -808,6 +809,79 @@ async function fetchKeyStatus() {
   } catch {}
 }
 
+const CAPITAL_FIELD_IDS = {
+  order_size_mode: 'capital-order-size-mode',
+  fixed_order_krw: 'capital-fixed-order-krw',
+  max_order_krw: 'capital-max-order-krw',
+  max_trades_per_session: 'capital-max-trades-per-session',
+  session_cap_krw: 'capital-session-cap-krw',
+  daily_loss_limit_krw: 'capital-daily-loss-limit-krw',
+  upbit_reserve_krw: 'capital-upbit-reserve-krw',
+  bithumb_reserve_krw: 'capital-bithumb-reserve-krw',
+  binance_reserve_usdt: 'capital-binance-reserve-usdt',
+  compounding_mode: 'capital-compounding-mode',
+};
+
+async function fetchTradingCapital() {
+  try {
+    const r = await fetch('/api/trading-capital');
+    if (!r.ok) return;
+    latestTradingCapital = await r.json();
+    renderTradingCapital(latestTradingCapital);
+  } catch (error) {
+    console.error('[Trading Capital] failed', error);
+  }
+}
+
+function renderTradingCapital(payload={}) {
+  const settings = payload.settings || {};
+  const runtime = payload.runtime || {};
+  Object.entries(CAPITAL_FIELD_IDS).forEach(([key, id]) => {
+    const el = $(id);
+    if (!el || settings[key] == null) return;
+    el.value = settings[key];
+  });
+  const status = $('capital-runtime');
+  if (status) {
+    status.innerHTML = [
+      `enabled=${Boolean(runtime.capital_enabled ?? settings.enabled)}`,
+      `used=${fmt(runtime.session_used_krw||0)} KRW`,
+      `trades=${runtime.session_trade_count||0}`,
+      `loss remaining=${fmt(runtime.daily_loss_remaining_krw||0)} KRW`,
+      `last blocker=${esc(runtime.last_blocker||'NONE')}`,
+    ].join(' · ');
+  }
+}
+
+async function saveTradingCapital() {
+  const body = {};
+  Object.entries(CAPITAL_FIELD_IDS).forEach(([key, id]) => {
+    const el = $(id);
+    if (!el) return;
+    body[key] = el.tagName === 'SELECT' ? el.value : Number(el.value||0);
+  });
+  const result = $('capital-save-result');
+  if (result) { result.textContent = 'Saving...'; result.className = 'save-result'; }
+  try {
+    const res = await fetch('/api/trading-capital', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (result) {
+      result.textContent = data.ok ? 'Saved' : `Blocked: ${data.error||'UNKNOWN_ERROR'}`;
+      result.className = `save-result ${data.ok?'ok':'err'}`;
+    }
+    latestTradingCapital = data;
+    renderTradingCapital(data);
+    fetchTelemetry();
+  } catch (error) {
+    console.error('[Trading Capital save] failed', error);
+    if (result) { result.textContent = 'Connection failed'; result.className = 'save-result err'; }
+  }
+}
+
 async function fetchInventory() {
   try {
     const pair = selectedPair();
@@ -1396,6 +1470,7 @@ on('btn-save-keys', 'click', async () => {
     fetchKeyStatus();
   } catch { r.textContent='연결 실패'; r.className='save-result err'; }
 });
+on('btn-save-capital', 'click', saveTradingCapital);
 
 // ── Init ─────────────────────────────────────────────────────────────────
 fetchData();
@@ -1407,6 +1482,7 @@ fetchDecisions();
 fetchPerf();
 fetchLastSession();
 fetchInventory();
+fetchTradingCapital();
 setInterval(fetchData,   POLL_MS);
 setInterval(fetchPerf,   POLL_MS*2);
 setInterval(fetchTrades, POLL_MS*2);

@@ -104,6 +104,14 @@ PROFITABLE_STALE_RECOVERY_STATS = {
 }
 PROFITABLE_STALE_RECOVERY_KEYS = {}
 PROFITABLE_STALE_SYMBOL_COUNTS = {}
+CAPITAL_RUNTIME = {
+    'session_used_krw': 0.0,
+    'session_trade_count': 0,
+    'daily_realized_pnl_krw': 0.0,
+    'last_blocker': '',
+    'last_allowed_order_krw': 0.0,
+    'last_symbol': '',
+}
 
 
 def _decision_record(calc_res, reason, is_safe, quote_source, quote_age_ms):
@@ -1202,9 +1210,160 @@ def _request_entry_recovery(signal, blockers, rest_cache=None, bithumb_cache=Non
     return result
 
 
+def _to_float(value, default=0.0):
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _capital_applies(settings, mode):
+    if not bool(settings.get('enabled', True)):
+        return False
+    key = {
+        'paper': 'apply_to_paper',
+        'tiny_live': 'apply_to_tiny_live',
+        'live': 'apply_to_live',
+    }.get(mode, 'apply_to_paper')
+    return bool(settings.get(key, True))
+
+
+def _capital_runtime_snapshot():
+    settings = cfg.trading_capital
+    daily_loss_limit = _to_float(settings.get('daily_loss_limit_krw'), 3000)
+    realized = _to_float(CAPITAL_RUNTIME.get('daily_realized_pnl_krw'), 0)
+    daily_loss = abs(min(0.0, realized))
+    return {
+        'capital_limit_enabled': bool(settings.get('enabled', True)),
+        'capital_order_size_mode': settings.get('order_size_mode', 'FIXED'),
+        'capital_compounding_mode': settings.get('compounding_mode', 'OFF'),
+        'capital_fixed_order_krw': _to_float(settings.get('fixed_order_krw'), 10000),
+        'capital_max_order_krw': _to_float(settings.get('max_order_krw'), 10000),
+        'capital_session_cap_krw': _to_float(settings.get('session_cap_krw'), 30000),
+        'capital_session_used_krw': round(_to_float(CAPITAL_RUNTIME.get('session_used_krw'), 0), 2),
+        'capital_session_trade_count': int(CAPITAL_RUNTIME.get('session_trade_count', 0) or 0),
+        'capital_daily_realized_pnl_krw': round(realized, 2),
+        'capital_daily_loss_remaining_krw': round(max(0.0, daily_loss_limit - daily_loss), 2),
+        'capital_last_blocker': CAPITAL_RUNTIME.get('last_blocker', ''),
+        'capital_last_allowed_order_krw': round(_to_float(CAPITAL_RUNTIME.get('last_allowed_order_krw'), 0), 2),
+        'capital_last_symbol': CAPITAL_RUNTIME.get('last_symbol', ''),
+    }
+
+
+def _capital_block(plan, blocker):
+    CAPITAL_RUNTIME['last_blocker'] = blocker
+    CAPITAL_RUNTIME['last_symbol'] = plan.get('symbol', '')
+    plan['capital_ok'] = False
+    plan['capital_blocker'] = blocker
+    plan['capital_blockers'] = [blocker]
+    return plan
+
+
+def _capital_required_assets(plan):
+    required = plan.get('selected_required_assets') or {}
+    if not isinstance(required, dict):
+        required = {}
+    return required
+
+
+def _capital_balances_from_plan(plan):
+    balances = plan.get('available_assets') or plan.get('balances') or {}
+    if not isinstance(balances, dict):
+        balances = {}
+    return balances
+
+
+def _balance_value(balances, *keys):
+    for key in keys:
+        if key in balances:
+            return _to_float(balances.get(key), 0)
+    return None
+
+
+def apply_capital_limits(plan, balances=None, settings=None, mode=None):
+    """Apply the same capital gate before paper/tiny/live executor routing."""
+    mode = mode or plan.get('mode') or cfg.mode
+    settings = settings or cfg.trading_capital
+    balances = balances or {}
+    plan = dict(plan or {})
+    max_order = _to_float(settings.get('max_order_krw'), 10000)
+    selected_notional = _to_float(plan.get('selected_notional_krw'), 0)
+    allowed_order = min(selected_notional, max_order) if max_order > 0 else selected_notional
+    plan.update({
+        'capital_limit_enabled': bool(settings.get('enabled', True)),
+        'capital_order_size_mode': settings.get('order_size_mode', 'FIXED'),
+        'capital_compounding_mode': settings.get('compounding_mode', 'OFF'),
+        'capital_allowed_order_krw': allowed_order,
+        'capital_selected_order_krw': selected_notional,
+        'capital_max_order_krw': max_order,
+    })
+    CAPITAL_RUNTIME['last_allowed_order_krw'] = allowed_order
+    CAPITAL_RUNTIME['last_symbol'] = plan.get('symbol', '')
+
+    if not _capital_applies(settings, mode):
+        plan['capital_ok'] = True
+        plan['capital_blocker'] = ''
+        plan['capital_blockers'] = []
+        return plan
+    if selected_notional <= 0:
+        return _capital_block(plan, 'MAX_ORDER_EXCEEDED')
+    if max_order > 0 and selected_notional > max_order + 1e-9:
+        return _capital_block(plan, 'MAX_ORDER_EXCEEDED')
+    if int(CAPITAL_RUNTIME.get('session_trade_count', 0) or 0) >= int(settings.get('max_trades_per_session', 3) or 0):
+        return _capital_block(plan, 'SESSION_TRADE_LIMIT_REACHED')
+    session_cap = _to_float(settings.get('session_cap_krw'), 30000)
+    if session_cap > 0 and _to_float(CAPITAL_RUNTIME.get('session_used_krw'), 0) + selected_notional > session_cap + 1e-9:
+        return _capital_block(plan, 'SESSION_CAP_EXCEEDED')
+    daily_loss_limit = _to_float(settings.get('daily_loss_limit_krw'), 3000)
+    if daily_loss_limit > 0 and abs(min(0.0, _to_float(CAPITAL_RUNTIME.get('daily_realized_pnl_krw'), 0))) >= daily_loss_limit:
+        return _capital_block(plan, 'DAILY_LOSS_LIMIT_REACHED')
+    if _to_float(plan.get('net_expected_profit_krw', plan.get('expected_net_profit_krw')), 0) <= 0:
+        return _capital_block(plan, 'EXPECTED_NET_NOT_POSITIVE')
+
+    required = _capital_required_assets(plan)
+    upbit_krw = _balance_value(balances, 'UPBIT.KRW', 'upbit_krw', 'upbit_krw_available')
+    bithumb_krw = _balance_value(balances, 'BITHUMB.KRW', 'bithumb_krw', 'bithumb_krw_available')
+    binance_usdt = _balance_value(balances, 'BINANCE.USDT', 'binance_usdt', 'binance_usdt_available')
+    if upbit_krw is not None and upbit_krw - _to_float(required.get('upbit_krw'), 0) < _to_float(settings.get('upbit_reserve_krw'), 50000):
+        return _capital_block(plan, 'UPBIT_RESERVE_REQUIRED')
+    if bithumb_krw is not None and bithumb_krw - _to_float(required.get('bithumb_krw'), 0) < _to_float(settings.get('bithumb_reserve_krw'), 50000):
+        return _capital_block(plan, 'BITHUMB_RESERVE_REQUIRED')
+    if binance_usdt is not None and binance_usdt - _to_float(required.get('binance_usdt'), 0) < _to_float(settings.get('binance_reserve_usdt'), 20):
+        return _capital_block(plan, 'BINANCE_RESERVE_REQUIRED')
+
+    symbol = str(plan.get('symbol', '')).upper()
+    for venue, key in (('UPBIT', 'upbit_coin_qty'), ('BITHUMB', 'bithumb_coin_qty'), ('BINANCE', 'binance_coin_qty')):
+        need = _to_float(required.get(key), 0)
+        have = _balance_value(balances, f'{venue}.{symbol}', f'{venue.lower()}_{symbol.lower()}', f'{venue.lower()}_coin_qty')
+        if need > 0 and have is not None and have + 1e-12 < need:
+            return _capital_block(plan, 'INSUFFICIENT_SELL_ASSET')
+
+    CAPITAL_RUNTIME['last_blocker'] = ''
+    plan['capital_ok'] = True
+    plan['capital_blocker'] = ''
+    plan['capital_blockers'] = []
+    return plan
+
+
+def _record_capital_execution(plan, route_result):
+    if not plan.get('capital_ok', True) or not route_result.get('ok'):
+        return
+    notional = _to_float(plan.get('selected_notional_krw'), 0)
+    CAPITAL_RUNTIME['session_used_krw'] = _to_float(CAPITAL_RUNTIME.get('session_used_krw'), 0) + notional
+    CAPITAL_RUNTIME['session_trade_count'] = int(CAPITAL_RUNTIME.get('session_trade_count', 0) or 0) + 1
+    trade = route_result.get('trade') or {}
+    if isinstance(trade, dict) and trade.get('realized_pnl_krw') is not None:
+        CAPITAL_RUNTIME['daily_realized_pnl_krw'] = (
+            _to_float(CAPITAL_RUNTIME.get('daily_realized_pnl_krw'), 0)
+            + _to_float(trade.get('realized_pnl_krw'), 0)
+        )
+
+
 def _entry_blockers(signal, mode, entry_reason, paper_eng=None):
     blockers = []
     pair_id = signal.get('pair_id', 'UPBIT_BINANCE')
+    if signal.get('capital_ok') is False:
+        blockers.append(signal.get('capital_blocker') or 'CAPITAL_BLOCKED')
     if entry_reason not in ENTRY_REASONS:
         blockers.append('ENTRY_REASON_UNKNOWN')
     if float(signal.get('selected_qty', signal.get('max_fillable_qty', 0)) or 0) <= 0:
@@ -1281,6 +1440,12 @@ def route_signal_to_execution(signal, entry_reason=None, paper_eng=None, rest_ca
         else _execution_fields(signal, entry_reason, mode)
     )
     prepared = {**prepared, 'entry_reason': entry_reason, 'mode': mode}
+    prepared = apply_capital_limits(
+        prepared,
+        _capital_balances_from_plan(prepared),
+        cfg.trading_capital,
+        mode,
+    )
     blockers = _entry_blockers(prepared, mode, entry_reason, paper_eng)
     result = {
         'ok': False,
@@ -1346,6 +1511,7 @@ def route_signal_to_execution(signal, entry_reason=None, paper_eng=None, rest_ca
         if ok:
             status = reason if isinstance(trade, dict) and trade.get('status') == 'CLOSED' else 'ENTERED'
         result.update({'ok': ok, 'status': status, 'trade': trade})
+        _record_capital_execution(prepared, result)
         if not ok:
             result['blockers'] = [reason]
             result['paper_engine_reject_reason'] = reason
@@ -1360,6 +1526,7 @@ def route_signal_to_execution(signal, entry_reason=None, paper_eng=None, rest_ca
         'order_submit_attempted': bool(execution_route.get('order_submit_attempted')),
         'blockers': execution_route.get('blockers', []),
     })
+    _record_capital_execution(prepared, result)
     return result
 
 
@@ -3151,6 +3318,7 @@ def main():
             'paper_recheck_entry_last_reason': paper_recheck_entry_last_reason,
             'execution_candidates_this_loop': execution_candidates_this_loop,
             'max_execution_candidates_per_loop': cfg.max_execution_candidates_per_loop,
+            **_capital_runtime_snapshot(),
             'paper_wide_spread_recheck_request_count': stale_recheck_counters['wide_request'],
             'paper_wide_spread_recheck_actionable_count': stale_recheck_counters['wide_actionable'],
             'profitable_stale_recheck_request_count': stale_recheck_counters['profitable_request'],

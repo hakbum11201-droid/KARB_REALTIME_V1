@@ -139,6 +139,44 @@ def _krw_price(price: float, venue: str, signal: dict) -> float:
     return price
 
 
+def _capital_applies(mode: str, config=cfg) -> bool:
+    settings = getattr(config, 'trading_capital', {}) or {}
+    if not bool(settings.get('enabled', True)):
+        return False
+    key = {
+        'paper': 'apply_to_paper',
+        'tiny_live': 'apply_to_tiny_live',
+        'live': 'apply_to_live',
+    }.get(mode, 'apply_to_paper')
+    return bool(settings.get(key, True))
+
+
+def _capital_target_order_krw(signal: dict, mode: str, config=cfg) -> float:
+    if not _capital_applies(mode, config):
+        return 0.0
+    settings = getattr(config, 'trading_capital', {}) or {}
+    max_order = max(0.0, float(settings.get('max_order_krw', 10000) or 0))
+    fixed_order = max(0.0, float(settings.get('fixed_order_krw', 10000) or 0))
+    order_size_mode = str(settings.get('order_size_mode', 'FIXED') or 'FIXED').upper()
+    if order_size_mode == 'BALANCE_RATIO':
+        ratio = min(0.2, max(0.0, float(settings.get('balance_ratio', 0.0) or 0)))
+        available = float(
+            signal.get('capital_available_krw')
+            or signal.get('available_krw')
+            or signal.get('upbit_krw_available')
+            or signal.get('bithumb_krw_available')
+            or 0
+        )
+        target = available * ratio
+    else:
+        target = fixed_order
+    if str(settings.get('compounding_mode', 'OFF') or 'OFF').upper() == 'DAILY_PROFIT_ONLY':
+        profit = max(0.0, float(signal.get('daily_realized_pnl_krw', 0) or 0))
+        reinvest = min(1.0, max(0.0, float(settings.get('daily_profit_reinvest_ratio', 0.0) or 0)))
+        target += profit * reinvest
+    return min(target, max_order) if max_order > 0 else target
+
+
 def _leg_quote_age_cap_ms(mode: str, entry_reason: str, config=cfg) -> float:
     freshness = config.get('quote_freshness', {}) or {}
     mode_key = 'tiny_live' if mode == 'tiny_live' else 'live' if mode == 'live' else 'paper'
@@ -206,10 +244,17 @@ def build_execution_plan(signal: dict, mode: str, config=cfg) -> dict:
     pair_id = signal.get('pair_id', 'UPBIT_BINANCE')
     direction = signal.get('best_direction') or signal.get('direction', '')
     buy_venue, sell_venue = _direction_venues(signal)
-    qty = float(signal.get('selected_qty', signal.get('effective_qty', signal.get('max_fillable_qty', 0))) or 0)
+    raw_qty = float(signal.get('selected_qty', signal.get('effective_qty', signal.get('max_fillable_qty', 0))) or 0)
+    qty = raw_qty
     min_fill_ratio = float(signal.get('min_fill_ratio', config.min_fill_ratio) or config.min_fill_ratio)
     buy_book = _venue_book(signal, buy_venue)
     sell_book = _venue_book(signal, sell_venue)
+    buy_levels = _levels(buy_book, 'BUY')
+    buy_top_probe = _krw_price(buy_levels[0][0], buy_venue, signal) if buy_levels else 0.0
+    capital_order_krw = _capital_target_order_krw(signal, mode, config)
+    if capital_order_krw > 0 and buy_top_probe > 0:
+        capital_qty = capital_order_krw / buy_top_probe
+        qty = min(qty, capital_qty) if qty > 0 else capital_qty
     buy_fill = estimate_market_fill('BUY', qty, buy_book)
     sell_fill = estimate_market_fill('SELL', qty, sell_book)
     buy_vwap = _krw_price(buy_fill['vwap_price'], buy_venue, signal)
@@ -217,6 +262,19 @@ def build_execution_plan(signal: dict, mode: str, config=cfg) -> dict:
     buy_top = _krw_price(buy_fill['top_price'], buy_venue, signal)
     sell_top = _krw_price(sell_fill['top_price'], sell_venue, signal)
     selected_notional = float(signal.get('selected_notional_krw', 0) or buy_vwap * qty)
+    if capital_order_krw > 0:
+        selected_notional = min(buy_vwap * qty if buy_vwap > 0 else selected_notional, capital_order_krw)
+    required_assets = dict(signal.get('selected_required_assets') or {})
+    if required_assets and raw_qty > 0:
+        required_notional = float(required_assets.get('notional_krw', 0) or 0)
+        notional_scale = selected_notional / required_notional if required_notional > 0 else 1.0
+        scale = min(1.0, qty / raw_qty, notional_scale)
+        for key in (
+            'notional_krw', 'upbit_krw', 'bithumb_krw', 'binance_usdt',
+            'upbit_coin_qty', 'bithumb_coin_qty', 'binance_coin_qty',
+        ):
+            if key in required_assets:
+                required_assets[key] = float(required_assets.get(key) or 0) * scale
     fee_model = FeeModel(config)
     buy_fee = fee_model.leg_fee(buy_venue, selected_notional)
     sell_fee = fee_model.leg_fee(sell_venue, selected_notional)
@@ -274,6 +332,9 @@ def build_execution_plan(signal: dict, mode: str, config=cfg) -> dict:
         'normalized_qty': qty,
         'quantity': qty,
         'selected_notional_krw': selected_notional,
+        'selected_required_assets': required_assets,
+        'selected_order_krw': selected_notional,
+        'capital_target_order_krw': capital_order_krw,
         'order_krw': selected_notional,
         'order_krw_used': selected_notional,
         'order_usdt': selected_notional / float(signal.get('krw_usdt', 0) or 1),

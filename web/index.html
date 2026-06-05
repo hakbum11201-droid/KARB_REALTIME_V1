@@ -384,6 +384,28 @@
           <span>Withdrawals / Deposits / Address management</span>
         </div>
       </div>
+      <div class="keys-form trading-capital-panel">
+        <div class="form-section-label">Trading Capital</div>
+        <div class="capital-guidance">
+          First run recommended: <strong>FIXED 10,000 KRW / compounding OFF</strong>.
+          Applies equally to paper, tiny_live, and live. Do not grant withdraw/deposit permissions.
+        </div>
+        <div class="form-row"><label for="capital-order-size-mode">Order size mode</label><select id="capital-order-size-mode"><option value="FIXED">FIXED</option><option value="BALANCE_RATIO">BALANCE_RATIO</option></select></div>
+        <div class="form-row"><label for="capital-fixed-order-krw">Fixed order KRW</label><input id="capital-fixed-order-krw" type="number" min="5000" step="1000"></div>
+        <div class="form-row"><label for="capital-max-order-krw">Max order KRW</label><input id="capital-max-order-krw" type="number" min="5000" step="1000"></div>
+        <div class="form-row"><label for="capital-max-trades-per-session">Max trades per session</label><input id="capital-max-trades-per-session" type="number" min="1" step="1"></div>
+        <div class="form-row"><label for="capital-session-cap-krw">Session cap KRW</label><input id="capital-session-cap-krw" type="number" min="5000" step="1000"></div>
+        <div class="form-row"><label for="capital-daily-loss-limit-krw">Daily loss limit KRW</label><input id="capital-daily-loss-limit-krw" type="number" min="0" step="1000"></div>
+        <div class="form-row"><label for="capital-upbit-reserve-krw">Upbit reserve KRW</label><input id="capital-upbit-reserve-krw" type="number" min="0" step="1000"></div>
+        <div class="form-row"><label for="capital-bithumb-reserve-krw">Bithumb reserve KRW</label><input id="capital-bithumb-reserve-krw" type="number" min="0" step="1000"></div>
+        <div class="form-row"><label for="capital-binance-reserve-usdt">Binance reserve USDT</label><input id="capital-binance-reserve-usdt" type="number" min="0" step="1"></div>
+        <div class="form-row"><label for="capital-compounding-mode">Compounding mode</label><select id="capital-compounding-mode"><option value="OFF">OFF</option><option value="DAILY_PROFIT_ONLY">DAILY_PROFIT_ONLY</option><option value="BALANCE_RATIO">BALANCE_RATIO</option></select></div>
+        <div class="capital-runtime" id="capital-runtime">Loading capital limits...</div>
+        <div class="form-actions">
+          <button class="btn-save" id="btn-save-capital">Save Trading Capital</button>
+          <span class="save-result" id="capital-save-result"></span>
+        </div>
+      </div>
       <div class="keys-status-grid">
         <div class="key-status-card"><div class="key-status-label">Upbit Access</div><div class="key-status-badge" id="badge-UPBIT_ACCESS_KEY">--</div></div>
         <div class="key-status-card"><div class="key-status-label">Upbit Secret</div><div class="key-status-badge" id="badge-UPBIT_SECRET_KEY">--</div></div>

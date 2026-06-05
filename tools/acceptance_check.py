@@ -70,6 +70,7 @@ class AcceptanceCheck:
             self._check_tiny_live_preflight()
             self._check_entry_diagnostics()
             self._check_notional_sweep()
+            self._check_trading_capital()
         self._build_summary()
         self._print()
         return 1 if self.failures else 0
@@ -86,6 +87,7 @@ class AcceptanceCheck:
             "tiny_live_preflight": "/api/tiny-live/preflight",
             "entry_diagnostics": "/api/entry-diagnostics",
             "data": "/api/data",
+            "trading_capital": "/api/trading-capital",
         }
         optional = {
             "live_readiness": "/api/live/readiness",
@@ -706,6 +708,52 @@ class AcceptanceCheck:
             self._warn("NOTIONAL_SWEEP_DEPTH_LIMITED", details={"rows": depth_limited[:5]})
         if not zero_fee:
             self._pass("NOTIONAL_SWEEP_OK", f"items={len(items)}", {"item_count": len(items)})
+
+    def _check_trading_capital(self) -> None:
+        payload = self.api.get("trading_capital", {})
+        if not isinstance(payload, dict) or not payload.get("ok", False):
+            self._fail("TRADING_CAPITAL_API_FAIL", details={"payload": payload})
+            return
+        settings = payload.get("settings") if isinstance(payload.get("settings"), dict) else {}
+        runtime = payload.get("runtime") if isinstance(payload.get("runtime"), dict) else {}
+        fixed = _to_number(settings.get("fixed_order_krw"), 0)
+        max_order = _to_number(settings.get("max_order_krw"), 0)
+        session_cap = _to_number(settings.get("session_cap_krw"), 0)
+        balance_ratio = _to_number(settings.get("balance_ratio"), 0)
+        reinvest_ratio = _to_number(settings.get("daily_profit_reinvest_ratio"), 0)
+        compounding = str(settings.get("compounding_mode", "OFF"))
+        if fixed > max_order:
+            self._fail("CAPITAL_FIXED_EXCEEDS_MAX", details={"fixed_order_krw": fixed, "max_order_krw": max_order})
+        if session_cap < fixed:
+            self._fail("CAPITAL_SESSION_CAP_TOO_SMALL", details={"session_cap_krw": session_cap, "fixed_order_krw": fixed})
+        if balance_ratio > 0.2:
+            self._fail("CAPITAL_BALANCE_RATIO_TOO_HIGH", details={"balance_ratio": balance_ratio})
+        if reinvest_ratio > 1:
+            self._fail("CAPITAL_REINVEST_RATIO_TOO_HIGH", details={"daily_profit_reinvest_ratio": reinvest_ratio})
+        if compounding == "BALANCE_RATIO" and balance_ratio <= 0:
+            self._warn("CAPITAL_BALANCE_RATIO_ZERO", details={"compounding_mode": compounding, "balance_ratio": balance_ratio})
+        enabled = bool(settings.get("enabled", True))
+        telemetry = self._telemetry()
+        tiny_or_live_enabled = any(bool(x) for x in (
+            telemetry.get("tiny_live_enabled"),
+            telemetry.get("live_order_enabled"),
+            telemetry.get("live_mode_enabled"),
+        ))
+        if tiny_or_live_enabled and not enabled:
+            self._fail("TINY_LIVE_OR_LIVE_WITH_CAPITAL_DISABLED", details={"settings": settings})
+        trades = self._extract_trades(self.api.get("trades", {}))
+        over = []
+        for trade in trades:
+            mode = str(trade.get("mode") or trade.get("execution_mode") or "").lower()
+            notional = _to_number(trade.get("selected_notional_krw"), 0)
+            if mode in {"tiny_live", "live"} and notional > max_order:
+                over.append({"trade_id": trade.get("trade_id"), "mode": mode, "notional": notional})
+        if over:
+            self._fail("LIVE_TRADE_OVER_CAPITAL_MAX", details={"trades": over[:5], "max_order_krw": max_order})
+        if _to_number(runtime.get("session_trade_count"), 0) > _to_number(settings.get("max_trades_per_session"), 0):
+            self._fail("CAPITAL_SESSION_TRADE_LIMIT_EXCEEDED", details={"runtime": runtime, "settings": settings})
+        if not any(item.code.startswith("CAPITAL_") or item.code == "TINY_LIVE_OR_LIVE_WITH_CAPITAL_DISABLED" for item in self.failures):
+            self._pass("TRADING_CAPITAL_OK", details={"settings": settings, "runtime": runtime})
 
     def _build_summary(self) -> None:
         telemetry = self._telemetry()

@@ -501,3 +501,13 @@ For long paper smoke tests, the recommended checks are:
   live keep strict freshness guards. `NO_ELIGIBLE_CANDIDATE` in
   `/api/tiny-live/preflight` is normal when no allowed-symbol candidate has
   positive expected net, sufficient depth/fill, and fresh legs.
+- Trading Capital controls are separate from API keys and order permissions.
+  The recommended first run is `FIXED` `10,000 KRW` with compounding `OFF`.
+  The same capital limit gate is applied to paper, tiny_live, and live
+  `ExecutionPlan` routing before the final executor is selected. The
+  `/api/trading-capital` endpoint and dashboard section expose order size,
+  max order, session cap, max trades, daily loss, venue reserves, and
+  compounding mode, but never expose secrets. Even with API keys present,
+  disabled tiny/live gates and capital limits still block submission; do not
+  grant withdrawal, deposit, address, futures, margin, P2P, or transfer
+  permissions.

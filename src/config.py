@@ -248,6 +248,38 @@ class Config:
     @property
     def max_execution_candidates_per_loop(self): return self.execution.get('max_execution_candidates_per_loop', 5)
     @property
+    def trading_capital(self):
+        defaults = {
+            'enabled': True,
+            'order_size_mode': 'FIXED',
+            'fixed_order_krw': 10000,
+            'max_order_krw': 10000,
+            'max_trades_per_session': 3,
+            'session_cap_krw': 30000,
+            'daily_loss_limit_krw': 3000,
+            'upbit_reserve_krw': 50000,
+            'bithumb_reserve_krw': 50000,
+            'binance_reserve_usdt': 20,
+            'compounding_mode': 'OFF',
+            'daily_profit_reinvest_ratio': 0.0,
+            'balance_ratio': 0.0,
+            'apply_to_paper': True,
+            'apply_to_tiny_live': True,
+            'apply_to_live': True,
+        }
+        data = self.get('trading_capital', {}) or {}
+        return {**defaults, **data}
+    @property
+    def trading_capital_enabled(self): return bool(self.trading_capital.get('enabled', True))
+    @property
+    def capital_fixed_order_krw(self): return self.trading_capital.get('fixed_order_krw', 10000)
+    @property
+    def capital_max_order_krw(self): return self.trading_capital.get('max_order_krw', 10000)
+    @property
+    def capital_session_cap_krw(self): return self.trading_capital.get('session_cap_krw', 30000)
+    @property
+    def capital_max_trades_per_session(self): return self.trading_capital.get('max_trades_per_session', 3)
+    @property
     def use_websocket_market_data(self): return self.get('use_websocket_market_data', True)
     @property
     def rest_fallback_enabled(self): return self.get('rest_fallback_enabled', True)

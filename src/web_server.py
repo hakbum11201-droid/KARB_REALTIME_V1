@@ -18,6 +18,7 @@ import os
 import sys
 import argparse
 import time
+import yaml
 from urllib.parse import parse_qs, urlparse
 
 BASE_DIR    = os.path.dirname(os.path.abspath(__file__))
@@ -29,7 +30,7 @@ sys.path.insert(0, BASE_DIR)
 import secrets_manager
 import control as ctrl_module
 import process_manager
-from config import cfg
+from config import CONFIG_PATH, cfg
 from executors import (
     TinyLiveExecutor, build_tiny_live_preflight, create_preflight_plan,
     get_inventory_summary, get_tiny_live_readiness,
@@ -215,6 +216,93 @@ def _pair_performance_payload():
         'most_active_entry_reason': perf.get('most_active_entry_reason', ''),
         'updated_at': perf.get('updated_at', 0),
     }
+
+
+_CAPITAL_UPDATE_FIELDS = {
+    'fixed_order_krw', 'max_order_krw', 'max_trades_per_session', 'session_cap_krw',
+    'daily_loss_limit_krw', 'upbit_reserve_krw', 'bithumb_reserve_krw',
+    'binance_reserve_usdt', 'order_size_mode', 'compounding_mode',
+    'daily_profit_reinvest_ratio', 'balance_ratio',
+}
+
+
+def _capital_runtime():
+    telemetry = _read_json(os.path.join(RUNTIME_DIR, 'telemetry.json'))
+    settings = cfg.trading_capital
+    daily_loss_limit = float(settings.get('daily_loss_limit_krw', 3000) or 0)
+    realized = float(telemetry.get('capital_daily_realized_pnl_krw', 0) or 0)
+    daily_loss = abs(min(0.0, realized))
+    return {
+        'session_used_krw': telemetry.get('capital_session_used_krw', 0),
+        'session_trade_count': telemetry.get('capital_session_trade_count', 0),
+        'daily_realized_pnl_krw': realized,
+        'daily_loss_remaining_krw': max(0.0, daily_loss_limit - daily_loss),
+        'last_blocker': telemetry.get('capital_last_blocker', ''),
+        'last_allowed_order_krw': telemetry.get('capital_last_allowed_order_krw', 0),
+        'last_symbol': telemetry.get('capital_last_symbol', ''),
+        'capital_enabled': bool(settings.get('enabled', True)),
+    }
+
+
+def _trading_capital_payload():
+    settings = dict(cfg.trading_capital)
+    return {
+        'ok': True,
+        'error': '',
+        'blockers': [],
+        'settings': settings,
+        'runtime': _capital_runtime(),
+    }
+
+
+def _validate_trading_capital_update(body):
+    current = dict(cfg.trading_capital)
+    update = {key: body[key] for key in _CAPITAL_UPDATE_FIELDS if key in body}
+    data = {**current, **update}
+    data['order_size_mode'] = str(data.get('order_size_mode', 'FIXED')).upper()
+    data['compounding_mode'] = str(data.get('compounding_mode', 'OFF')).upper()
+    if data['order_size_mode'] not in ('FIXED', 'BALANCE_RATIO'):
+        return None, 'INVALID_ORDER_SIZE_MODE'
+    if data['compounding_mode'] not in ('OFF', 'DAILY_PROFIT_ONLY', 'BALANCE_RATIO'):
+        return None, 'INVALID_COMPOUNDING_MODE'
+    numeric_fields = [
+        'fixed_order_krw', 'max_order_krw', 'session_cap_krw', 'daily_loss_limit_krw',
+        'upbit_reserve_krw', 'bithumb_reserve_krw', 'binance_reserve_usdt',
+        'daily_profit_reinvest_ratio', 'balance_ratio',
+    ]
+    try:
+        for key in numeric_fields:
+            data[key] = float(data.get(key, 0) or 0)
+        data['max_trades_per_session'] = int(data.get('max_trades_per_session', 0) or 0)
+    except (TypeError, ValueError):
+        return None, 'INVALID_NUMERIC_VALUE'
+    if data['fixed_order_krw'] < 5000:
+        return None, 'FIXED_ORDER_TOO_SMALL'
+    if data['max_order_krw'] < 5000:
+        return None, 'MAX_ORDER_TOO_SMALL'
+    if data['fixed_order_krw'] > data['max_order_krw']:
+        return None, 'FIXED_ORDER_EXCEEDS_MAX'
+    if data['session_cap_krw'] < data['fixed_order_krw']:
+        return None, 'SESSION_CAP_TOO_SMALL'
+    if data['max_trades_per_session'] < 1:
+        return None, 'MAX_TRADES_TOO_SMALL'
+    if data['balance_ratio'] < 0 or data['balance_ratio'] > 0.2:
+        return None, 'BALANCE_RATIO_OUT_OF_RANGE'
+    if data['daily_profit_reinvest_ratio'] < 0 or data['daily_profit_reinvest_ratio'] > 1:
+        return None, 'REINVEST_RATIO_OUT_OF_RANGE'
+    return data, ''
+
+
+def _save_trading_capital(body):
+    data, error = _validate_trading_capital_update(body)
+    if error:
+        payload = _trading_capital_payload()
+        payload.update({'ok': False, 'error': error, 'blockers': [error]})
+        return payload
+    cfg._cfg['trading_capital'] = data
+    with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
+        yaml.safe_dump(cfg._cfg, f, allow_unicode=True, sort_keys=False)
+    return {'ok': True, 'error': '', 'blockers': [], 'settings': data, 'runtime': _capital_runtime()}
 
 
 def _is_actionable_signal(row):
@@ -938,6 +1026,9 @@ class KarbHandler(SimpleHTTPRequestHandler):
         elif self.path == '/api/performance/pairs':
             self._send_guarded_json(_pair_performance_payload)
 
+        elif self.path == '/api/trading-capital':
+            self._send_guarded_json(_trading_capital_payload)
+
         elif self.path == '/api/telemetry':
             self._send_guarded_json(_telemetry_payload)
 
@@ -1050,7 +1141,14 @@ class KarbHandler(SimpleHTTPRequestHandler):
             super().do_GET()
 
     def do_POST(self):
-        if self.path == '/api/execution/preflight':
+        if self.path == '/api/trading-capital':
+            if not self._is_localhost():
+                self._send_403()
+                return
+            body = self._request_json()
+            self._send_guarded_json(lambda: _save_trading_capital(body))
+
+        elif self.path == '/api/execution/preflight':
             if not self._is_localhost():
                 self._send_403()
                 return

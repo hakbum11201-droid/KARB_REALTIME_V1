@@ -245,6 +245,10 @@ class PaperEngine:
             'direction':             dirn,
             'selected_qty':          qty,
             'selected_notional_krw': selected_notional_krw,
+            'capital_ok':            calc_result.get('capital_ok', True),
+            'capital_allowed_order_krw': calc_result.get('capital_allowed_order_krw', selected_notional_krw),
+            'capital_selected_order_krw': calc_result.get('capital_selected_order_krw', selected_notional_krw),
+            'capital_max_order_krw': calc_result.get('capital_max_order_krw'),
             'raw_depth_qty':         calc_result.get('raw_depth_qty', calc_result.get('max_fillable_qty_raw', qty)),
             'effective_qty':         calc_result.get('effective_qty', qty),
             'selected_required_assets': calc_result.get('selected_required_assets', {}),
@@ -359,6 +363,11 @@ class PaperEngine:
         freshness decisions from build_execution_plan(). Paper keeps the same
         guards as tiny/live and only records a simulated fill.
         """
+        if plan.get('capital_ok') is False:
+            return self._entry_result(False, 'PAPER_CAPITAL_BLOCKED', detail={
+                'capital_blocker': plan.get('capital_blocker', 'CAPITAL_BLOCKED'),
+                'capital_blockers': plan.get('capital_blockers', []),
+            })
         if not plan.get('plan_ok', False):
             return self._entry_result(False, 'PAPER_PLAN_BLOCKED', detail={
                 'blockers': plan.get('execution_plan_blockers', []),

@@ -115,6 +115,23 @@ execution:
   max_refresh_once_for_stale: true
   stale_refresh_cooldown_sec: 0.5
   max_execution_candidates_per_loop: 5
+trading_capital:
+  enabled: true
+  order_size_mode: FIXED
+  fixed_order_krw: 10000
+  max_order_krw: 10000
+  max_trades_per_session: 3
+  session_cap_krw: 30000
+  daily_loss_limit_krw: 3000
+  upbit_reserve_krw: 50000
+  bithumb_reserve_krw: 50000
+  binance_reserve_usdt: 20
+  compounding_mode: OFF
+  daily_profit_reinvest_ratio: 0.0
+  balance_ratio: 0.0
+  apply_to_paper: true
+  apply_to_tiny_live: true
+  apply_to_live: true
 use_websocket_market_data: true
 rest_fallback_enabled: true
 rate_limiter_enabled: true
