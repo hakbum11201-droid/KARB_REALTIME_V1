@@ -68,17 +68,42 @@ def start_engine(mode: str) -> dict:
             proc = subprocess.Popen(cmd)
             
         _write_pid(proc.pid)
+        
+        try:
+            proc.wait(timeout=2.5)
+            _remove_pid()
+            return {'ok': False, 'message': f'Engine process exited prematurely with code {proc.returncode}.'}
+        except subprocess.TimeoutExpired:
+            pass
+            
+        ctrl = control.get_control_state()
+        ctrl['mode'] = mode
+        control.set_control_state(ctrl)
+        
         return {'ok': True, 'message': f'Engine started in {mode} mode.', 'pid': proc.pid}
     except Exception as e:
         return {'ok': False, 'message': f'Failed to start engine: {e}'}
 
 def stop_engine() -> dict:
-    if not is_engine_running():
+    pid = _read_pid()
+    if not pid:
         return {'ok': False, 'message': 'Engine is not running.'}
     
-    # Graceful stop
-    control.request_stop()
-    return {'ok': True, 'message': 'Stop requested. Engine will finalize and generate session report.'}
+    try:
+        proc = psutil.Process(pid)
+        if proc.is_running() and proc.status() != psutil.STATUS_ZOMBIE:
+            control.request_stop()
+            try:
+                proc.wait(timeout=3.0)
+            except psutil.TimeoutExpired:
+                proc.terminate()
+            _remove_pid()
+            return {'ok': True, 'message': 'Stop requested and engine terminated.'}
+    except psutil.NoSuchProcess:
+        pass
+    
+    _remove_pid()
+    return {'ok': False, 'message': 'Engine was not running.'}
 
 def get_engine_status() -> dict:
     running = is_engine_running()
@@ -93,5 +118,5 @@ def get_engine_status() -> dict:
         'running': running,
         'status': status,
         'run_id': ctrl.get('run_id', ''),
-        'mode': cfg.mode
+        'mode': ctrl.get('mode') or cfg.mode
     }
