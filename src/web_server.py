@@ -1223,6 +1223,9 @@ class KarbHandler(SimpleHTTPRequestHandler):
                 ),
             })
 
+        elif self.path == '/api/inventory/seed-config':
+            self._send_json({'ok': True, 'config': cfg.inventory_auto_seed})
+
         else:
             super().do_GET()
 
@@ -1385,6 +1388,204 @@ class KarbHandler(SimpleHTTPRequestHandler):
                 bithumb_secret=body.get('bithumb_secret_key', ''),
             )
             self._send_json(result)
+        elif self.path == '/api/system/cleanup-duplicates':
+            if not self._is_localhost():
+                self._send_403()
+                return
+            
+            import subprocess
+            import psutil
+            import process_manager
+            
+            try:
+                current_pid = os.getpid()
+                engine_pid_str = process_manager._read_pid()
+                engine_pid = int(engine_pid_str) if engine_pid_str else None
+                
+                kept_pids = [current_pid]
+                if engine_pid:
+                    kept_pids.append(engine_pid)
+                    
+                killed_pids = []
+                skipped_pids = []
+                
+                cmd = ['powershell', '-NoProfile', '-Command', 
+                       "Get-CimInstance Win32_Process -Filter \"Name LIKE 'python%'\" | Where-Object { $_.CommandLine -like '*KARB_REALTIME_V1*' -and ($_.CommandLine -like '*app_launcher.py*' -or $_.CommandLine -like '*src\\web_server.py*') } | Select-Object ProcessId, CommandLine | ConvertTo-Json -Compress"]
+                
+                res = subprocess.run(cmd, capture_output=True, text=True)
+                if res.returncode == 0 and res.stdout.strip():
+                    processes = json.loads(res.stdout)
+                    if isinstance(processes, dict):
+                        processes = [processes]
+                        
+                    for p in processes:
+                        pid = p.get('ProcessId')
+                        if not pid: continue
+                        if pid in kept_pids:
+                            skipped_pids.append(pid)
+                        else:
+                            try:
+                                proc = psutil.Process(pid)
+                                proc.kill()
+                                killed_pids.append(pid)
+                            except Exception:
+                                skipped_pids.append(pid)
+                
+                self._send_json({
+                    'ok': True,
+                    'kept_pids': kept_pids,
+                    'killed_pids': killed_pids,
+                    'skipped_pids': skipped_pids,
+                    'message': f"Cleanup complete. Killed {len(killed_pids)} duplicate processes."
+                })
+            except Exception as e:
+                self._send_json({'ok': False, 'message': str(e)})
+
+        elif self.path == '/api/inventory/seed-preview':
+            if not self._is_localhost():
+                self._send_403()
+                return
+            
+            try:
+                preflight = _read_json(os.path.join(RUNTIME_DIR, 'tiny_live_preflight.json'))
+                if not preflight:
+                    self._send_json({'seed_needed': False, 'message': 'No preflight available'})
+                    return
+                
+                missing_assets = preflight.get('missing_assets', [])
+                blockers = preflight.get('blockers', [])
+                
+                if 'BALANCE_INSUFFICIENT' not in blockers or not missing_assets:
+                    self._send_json({'seed_needed': False, 'message': 'Balance sufficient. No seed needed.'})
+                    return
+                
+                seed_asset = None
+                for m in missing_assets:
+                    asset = m.get('asset', '')
+                    if 'KRW' not in asset and 'USDT' not in asset:
+                        seed_asset = m
+                        break
+                
+                if not seed_asset:
+                    self._send_json({'seed_needed': False, 'message': 'KRW or USDT is missing. Please deposit manually.'})
+                    return
+                
+                venue, symbol = seed_asset['asset'].split('.')
+                shortfall = seed_asset['shortfall']
+                
+                cfg_seed = cfg.inventory_auto_seed
+                if not cfg_seed.get('enabled'):
+                    self._send_json({'seed_needed': False, 'message': 'inventory_auto_seed is disabled in config.'})
+                    return
+                
+                target_krw = float(cfg_seed.get('target_coin_notional_krw', 12000))
+                max_krw = float(cfg_seed.get('max_seed_order_krw', 12000))
+                
+                order_krw = min(target_krw, max_krw)
+                
+                self._send_json({
+                    'seed_needed': True,
+                    'venue': venue,
+                    'symbol': symbol,
+                    'missing_qty': shortfall,
+                    'order_krw': order_krw
+                })
+            except Exception as e:
+                self._send_json({'seed_needed': False, 'message': f'Error: {e}'})
+
+        elif self.path == '/api/inventory/seed-execute':
+            if not self._is_localhost():
+                self._send_403()
+                return
+            
+            try:
+                cfg_seed = cfg.inventory_auto_seed
+                if not cfg_seed.get('enabled'):
+                    self._send_json({'ok': False, 'message': 'inventory_auto_seed is disabled in config'})
+                    return
+                    
+                preflight = _read_json(os.path.join(RUNTIME_DIR, 'tiny_live_preflight.json'))
+                if not preflight:
+                    self._send_json({'ok': False, 'message': 'No preflight available'})
+                    return
+                
+                missing_assets = preflight.get('missing_assets', [])
+                blockers = preflight.get('blockers', [])
+                
+                if 'BALANCE_INSUFFICIENT' not in blockers or not missing_assets:
+                    self._send_json({'ok': False, 'message': 'Balance sufficient. No seed needed.'})
+                    return
+                
+                seed_asset = None
+                for m in missing_assets:
+                    asset = m.get('asset', '')
+                    if 'KRW' not in asset and 'USDT' not in asset:
+                        seed_asset = m
+                        break
+                
+                if not seed_asset:
+                    self._send_json({'ok': False, 'message': 'KRW/USDT missing, manual deposit needed'})
+                    return
+                
+                venue, symbol = seed_asset['asset'].split('.')
+                target_krw = float(cfg_seed.get('target_coin_notional_krw', 12000))
+                max_krw = float(cfg_seed.get('max_seed_order_krw', 12000))
+                order_krw = min(target_krw, max_krw)
+                
+                if venue == 'UPBIT':
+                    from exchange_clients import UpbitPrivateClient
+                    client = UpbitPrivateClient()
+                    res = client.place_order(symbol, 'BUY', 'MARKET', None, order_krw)
+                elif venue == 'BITHUMB':
+                    from bithumb_private import BithumbPrivateClient
+                    client = BithumbPrivateClient()
+                    res = client.place_order(symbol, 'BUY', 'MARKET', None, order_krw)
+                else:
+                    self._send_json({'ok': False, 'message': f'Unsupported venue: {venue}'})
+                    return
+                
+                import time
+                log_entry = {
+                    'time': time.strftime('%Y-%m-%d %H:%M:%S'),
+                    'venue': venue,
+                    'symbol': symbol,
+                    'order_krw': order_krw,
+                    'result': res,
+                    'filled_qty': res.get('executed_qty', 0) if isinstance(res, dict) else 0,
+                    'avg_price': res.get('average_price', 0) if isinstance(res, dict) else 0,
+                    'fee': res.get('paid_fee', 0) if isinstance(res, dict) else 0,
+                }
+                
+                log_dir = os.path.join(os.path.dirname(__file__), '..', 'logs')
+                os.makedirs(log_dir, exist_ok=True)
+                with open(os.path.join(log_dir, 'inventory_seed.jsonl'), 'a', encoding='utf-8') as f:
+                    f.write(json.dumps(log_entry, ensure_ascii=False) + '\n')
+                    
+                self._send_json({'ok': True, 'message': f'Inventory seed executed for {venue} {symbol}', 'result': res})
+            except Exception as e:
+                self._send_json({'ok': False, 'message': f'Execution failed: {e}'})
+
+        elif self.path == '/api/inventory/seed-config':
+            if not self._is_localhost():
+                self._send_403()
+                return
+            
+            try:
+                body = self._request_json()
+                if 'inventory_auto_seed' not in cfg._cfg:
+                    cfg._cfg['inventory_auto_seed'] = {}
+                
+                cfg._cfg['inventory_auto_seed']['enabled'] = bool(body.get('enabled', False))
+                cfg._cfg['inventory_auto_seed']['target_coin_notional_krw'] = float(body.get('target_coin_notional_krw', 12000))
+                cfg._cfg['inventory_auto_seed']['max_seed_order_krw'] = float(body.get('max_seed_order_krw', 12000))
+                
+                with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
+                    yaml.safe_dump(cfg._cfg, f, allow_unicode=True, sort_keys=False)
+                
+                self._send_json({'ok': True, 'message': 'Seed config saved', 'config': cfg._cfg['inventory_auto_seed']})
+            except Exception as e:
+                self._send_json({'ok': False, 'message': f'Failed to save config: {e}'})
+
         else:
             self.send_error(404)
 

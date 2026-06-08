@@ -1,6 +1,6 @@
 mode: paper
 enable_live_trading: true
-tiny_live_enabled: true
+tiny_live_enabled: false
 live_order_enabled: true
 live_mode_enabled: false
 withdrawals_enabled: false
@@ -145,6 +145,17 @@ trading_capital:
   apply_to_paper: true
   apply_to_tiny_live: true
   apply_to_live: true
+inventory_auto_seed:
+  enabled: false
+  target_coin_notional_krw: 12000
+  max_seed_order_krw: 12000
+  seed_buffer_ratio: 0.05
+  allowed_pairs:
+    - UPBIT_BITHUMB
+  allowed_symbols:
+    - SAHARA
+    - JTO
+  one_seed_per_symbol_venue: true
 use_websocket_market_data: true
 rest_fallback_enabled: true
 rate_limiter_enabled: true
@@ -340,4 +351,4 @@ paper_initial_coin_qty:
   DOGE: 1000
   SOL: 3
 calibration_session:
-  enabled: true
+  enabled: false

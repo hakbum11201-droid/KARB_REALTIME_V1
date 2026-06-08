@@ -139,6 +139,9 @@ class Config:
     def paper_entry_require_positive_net(self): return self.get('paper_entry_require_positive_net', True)
     @property
     def paper_entry_allow_live_blocked(self): return self.get('paper_entry_allow_live_blocked', True)
+    
+    @property
+    def inventory_auto_seed(self): return self.get('inventory_auto_seed', {})
     @property
     def completed_handoff_entry_ttl_ms(self): return self.get('completed_handoff_entry_ttl_ms', 2000)
     @property

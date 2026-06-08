@@ -50,6 +50,7 @@
           <button class="btn btn-live" id="btn-start-live" disabled title="Full live mode is disabled">▶ LIVE BLOCKED</button>
           <button class="btn btn-stop" id="btn-stop-engine" disabled>⏹ STOP</button>
           <button class="btn btn-restart" id="btn-restart-engine">↻ RESTART</button>
+          <button class="btn" id="btn-cleanup-duplicates" style="background:var(--accent-red);color:white;">🧹 중복 정리</button>
         </div>
         <div class="stat-pill system">
           <span class="pill-label">Server Status</span>
@@ -414,6 +415,27 @@
         <div class="form-actions">
           <button class="btn-save" id="btn-save-capital">자금 설정 저장</button>
           <span class="save-result" id="capital-save-result"></span>
+        </div>
+      </div>
+      
+      <div class="keys-form inventory-seed-panel">
+        <div class="form-section-label">Inventory Auto-Seed</div>
+        <div class="capital-guidance">
+          재고 기반 차익거래 시 목표 코인이 부족할 경우, 프로그램이 해당 코인을 자동으로 매수하여 초기 재고를 확보합니다.<br>
+          ※ 차익거래 자체 주문이 아닌 <b>재고 확보용</b> 단방향 매수입니다. 반복 과매수를 피하기 위해 목표액까지만 1회 주문합니다.
+        </div>
+        <div class="form-row"><label for="seed-enabled">자동 재고 세팅 사용</label><select id="seed-enabled"><option value="false">사용 안 함</option><option value="true">사용</option></select></div>
+        <div class="form-row"><label for="seed-target-krw">목표 코인 재고 (KRW)</label><input id="seed-target-krw" type="number" min="5000" step="1000"></div>
+        <div class="form-row"><label for="seed-max-order-krw">최대 seed 주문금액 (KRW)</label><input id="seed-max-order-krw" type="number" min="5000" step="1000"></div>
+        <div class="capital-runtime" id="seed-allowed-symbols">허용 심볼: --</div>
+        
+        <div class="form-actions" style="margin-top: 15px; background: rgba(0,0,0,0.2); padding: 10px; border-radius: 4px;">
+          <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 10px;">
+            <button class="btn-save" id="btn-preview-seed" style="background: var(--bg-card);">재고 세팅 미리보기</button>
+            <span class="save-result" id="seed-preview-result">미리보기를 실행해 주세요.</span>
+          </div>
+          <button class="btn-save" id="btn-execute-seed" style="background: var(--accent-red);" disabled>재고 세팅 실행</button>
+          <span class="save-result" id="seed-execute-result"></span>
         </div>
       </div>
       <div class="keys-status-grid">

@@ -194,6 +194,22 @@ async function restartEngine(confirmRestart=false) {
 }
 on('btn-restart-engine', 'click', () => restartEngine(false));
 
+on('btn-cleanup-duplicates', 'click', async () => {
+  if (!confirm('중복 실행된 web_server.py 및 app_launcher.py 프로세스를 종료하시겠습니까?\n(현재 엔진 프로세스는 유지됩니다.)')) return;
+  try {
+    const res = await fetch('/api/system/cleanup-duplicates', { method: 'POST' });
+    const data = await res.json();
+    if (data.ok) {
+      alert(`성공: ${data.message}\n종료된 PID: ${data.killed_pids.join(', ')}`);
+    } else {
+      alert(`실패: ${data.message}`);
+    }
+  } catch (error) {
+    console.error('[cleanup duplicates] failed', error);
+    alert('요청 중 오류가 발생했습니다.');
+  }
+});
+
 async function fetchSystemStatus() {
   try {
     const r = await fetch('/api/system/status');
@@ -1595,3 +1611,89 @@ setInterval(fetchNotionalSweep, POLL_MS*2);
 setInterval(fetchIcebergStatus, POLL_MS*2);
 setInterval(fetchDecisions, POLL_MS*2);
 setInterval(() => renderTelemetry(latestState, latestEngine, latestControl), 1000);
+async function fetchSeedConfig() {
+  try {
+    const res = await fetch('/api/inventory/seed-config');
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.ok && data.config) {
+      $('seed-enabled').value = data.config.enabled ? 'true' : 'false';
+      $('seed-target-krw').value = data.config.target_coin_notional_krw || 12000;
+      $('seed-max-order-krw').value = data.config.max_seed_order_krw || 12000;
+      setText('seed-allowed-symbols', '허용 심볼: ' + (data.config.allowed_symbols?.join(', ') || 'ALL'));
+    }
+  } catch (err) {
+    console.error('Failed to fetch seed config', err);
+  }
+}
+
+async function saveSeedConfig() {
+  const body = {
+    enabled: $('seed-enabled').value === 'true',
+    target_coin_notional_krw: Number($('seed-target-krw').value || 12000),
+    max_seed_order_krw: Number($('seed-max-order-krw').value || 12000)
+  };
+  try {
+    await fetch('/api/inventory/seed-config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+  } catch (err) {
+    console.error('Failed to save seed config', err);
+  }
+}
+
+on('seed-enabled', 'change', saveSeedConfig);
+on('seed-target-krw', 'change', saveSeedConfig);
+on('seed-max-order-krw', 'change', saveSeedConfig);
+
+on('btn-preview-seed', 'click', async () => {
+  await saveSeedConfig();
+  const resLabel = $('seed-preview-result');
+  const btnExec = $('btn-execute-seed');
+  resLabel.textContent = '불러오는 중...';
+  resLabel.className = 'save-result';
+  btnExec.disabled = true;
+  
+  try {
+    const res = await fetch('/api/inventory/seed-preview');
+    const data = await res.json();
+    if (data.seed_needed) {
+      resLabel.textContent = `[진행가능] ${data.venue}에서 ${data.symbol} 부족. 매수 주문금액: ${fmt(data.order_krw)} KRW`;
+      resLabel.className = 'save-result ok';
+      btnExec.disabled = false;
+    } else {
+      resLabel.textContent = `[불가] ${data.message}`;
+      resLabel.className = 'save-result err';
+    }
+  } catch (err) {
+    resLabel.textContent = 'API 오류';
+    resLabel.className = 'save-result err';
+  }
+});
+
+on('btn-execute-seed', 'click', async () => {
+  const resLabel = $('seed-execute-result');
+  resLabel.textContent = '실행 중...';
+  resLabel.className = 'save-result';
+  $('btn-execute-seed').disabled = true;
+  
+  try {
+    const res = await fetch('/api/inventory/seed-execute', { method: 'POST' });
+    const data = await res.json();
+    if (data.ok) {
+      resLabel.textContent = `성공: ${data.message} / Filled: ${data.result?.executed_qty||0}`;
+      resLabel.className = 'save-result ok';
+      $('seed-preview-result').textContent = '완료 (다시 확인하려면 미리보기 클릭)';
+    } else {
+      resLabel.textContent = `실패: ${data.message}`;
+      resLabel.className = 'save-result err';
+    }
+  } catch (err) {
+    resLabel.textContent = 'API 오류';
+    resLabel.className = 'save-result err';
+  }
+});
+
+fetchSeedConfig();

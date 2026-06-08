@@ -298,8 +298,9 @@ body {
   font-weight: 700; cursor: pointer; font-family: var(--font-sans);
   transition: opacity var(--transition);
 }
-.btn-save:hover { opacity: .85; }
-.save-result { font-size: 12px; color: var(--text-secondary); }
+.btn-save:hover { opacity: .9; }
+.btn-save:disabled { opacity: .5; cursor: not-allowed; }
+.save-result { font-size: 13px; color: var(--text-secondary); }
 .save-result.ok  { color: var(--accent-green); }
 .save-result.err { color: var(--accent-red); }
 
