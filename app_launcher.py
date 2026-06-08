@@ -19,9 +19,12 @@ def main():
     
     time.sleep(1.5)  # Wait for server to start
     
-    url = "http://localhost:8000"
-    print(f"[Launcher] Opening Browser at {url}...")
-    webbrowser.open(url)
+    if '--no-browser' not in sys.argv:
+        url = "http://localhost:8000"
+        print(f"[Launcher] Opening Browser at {url}...")
+        webbrowser.open(url)
+    else:
+        print("[Launcher] --no-browser flag detected. Skipping browser auto-open.")
     
     print("\n[Launcher] Keep this window open. Close it to stop the server.")
     print("[Launcher] ALL operations (Start, Stop) should be done from the Dashboard UI.\n")

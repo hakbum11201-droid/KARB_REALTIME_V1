@@ -8,5 +8,5 @@ echo ============================================
 
 call STOP_KARB.bat /nopause
 timeout /t 2 /nobreak >nul
-call START_KARB.bat
+call START_KARB.bat /nobrowser
 endlocal
