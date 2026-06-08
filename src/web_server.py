@@ -1260,7 +1260,19 @@ class KarbHandler(SimpleHTTPRequestHandler):
                 cfg._cfg['enable_live_trading'] = True
                 with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
                     yaml.safe_dump(cfg._cfg, f, allow_unicode=True, sort_keys=False)
-            self._send_guarded_json(lambda: tiny_live_executor.arm(body.get('pair_id', 'UPBIT_BITHUMB')))
+            def _do_arm():
+                res = tiny_live_executor.arm(body.get('pair_id', 'UPBIT_BITHUMB'))
+                preflight = tiny_live_executor.preflight(body.get('pair_id', 'UPBIT_BITHUMB'))
+                if not preflight.get('config_blockers'):
+                    from executors import _write_status
+                    status = _write_status(
+                        armed=True, status='ARMED', pair_id=body.get('pair_id', 'UPBIT_BITHUMB'),
+                        blockers=preflight.get('blockers', []),
+                        warnings=preflight.get('warnings', []), last_error=''
+                    )
+                    return {'ok': True, **status}
+                return res
+            self._send_guarded_json(_do_arm)
 
         elif self.path == '/api/tiny-live/disarm':
             if not self._is_localhost():

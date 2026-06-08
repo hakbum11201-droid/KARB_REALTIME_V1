@@ -104,6 +104,7 @@ async function startEngine(mode) {
 
 on('btn-start-paper', 'click', () => startEngine('paper'));
 on('btn-start-tiny', 'click', async () => {
+  if (!confirm('TINY_LIVE 모드로 엔진을 시작하시겠습니까?')) return;
   try {
     const pair = window.selectedPairId || 'UPBIT_BITHUMB';
     const body = {
@@ -123,13 +124,22 @@ on('btn-start-tiny', 'click', async () => {
     const armData = await armRes.json();
     if (!armData.ok) {
       alert(`Tiny Live ARM Blocked: ${armData.blockers?.join(', ')}`);
-    } else {
-      console.log('Tiny Live ARMED');
+      return;
     }
+    console.log('Tiny Live ARMED');
+    const startRes = await fetch('/api/engine/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: 'tiny_live' })
+    });
+    const startData = await startRes.json();
+    alert(startData.message);
+    fetchData();
+    if (typeof fetchSystemStatus === 'function') fetchSystemStatus();
   } catch (e) {
-    console.error('ARM failed', e);
+    console.error('Tiny Live start failed', e);
+    alert('엔진 시작 요청 실패');
   }
-  startEngine('tiny_live');
 });
 on('btn-start-live', 'click', () => startEngine('live'));
 
