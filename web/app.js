@@ -890,6 +890,9 @@ async function fetchTradingCapital() {
 function renderTradingCapital(payload={}) {
   const settings = payload.settings || {};
   const runtime = payload.runtime || {};
+  if (!settings.compounding_mode) {
+    settings.compounding_mode = 'OFF';
+  }
   Object.entries(CAPITAL_FIELD_IDS).forEach(([key, id]) => {
     const el = $(id);
     if (!el || settings[key] == null) return;
@@ -914,6 +917,9 @@ async function saveTradingCapital() {
     if (!el) return;
     body[key] = el.tagName === 'SELECT' ? el.value : Number(el.value||0);
   });
+  if (!body.compounding_mode) {
+    body.compounding_mode = 'OFF';
+  }
   const result = $('capital-save-result');
   if (result) { result.textContent = 'Saving...'; result.className = 'save-result'; }
   try {

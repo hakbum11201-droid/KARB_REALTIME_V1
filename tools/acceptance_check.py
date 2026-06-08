@@ -724,7 +724,7 @@ class AcceptanceCheck:
         compounding = str(settings.get("compounding_mode", "OFF"))
         if fixed > max_order:
             self._fail("CAPITAL_FIXED_EXCEEDS_MAX", details={"fixed_order_krw": fixed, "max_order_krw": max_order})
-        if session_cap < fixed:
+        if session_cap > 0 and session_cap < fixed:
             self._fail("CAPITAL_SESSION_CAP_TOO_SMALL", details={"session_cap_krw": session_cap, "fixed_order_krw": fixed})
         if balance_ratio > 0.2:
             self._fail("CAPITAL_BALANCE_RATIO_TOO_HIGH", details={"balance_ratio": balance_ratio})
@@ -750,7 +750,8 @@ class AcceptanceCheck:
                 over.append({"trade_id": trade.get("trade_id"), "mode": mode, "notional": notional})
         if over:
             self._fail("LIVE_TRADE_OVER_CAPITAL_MAX", details={"trades": over[:5], "max_order_krw": max_order})
-        if _to_number(runtime.get("session_trade_count"), 0) > _to_number(settings.get("max_trades_per_session"), 0):
+        max_trades = _to_number(settings.get("max_trades_per_session"), 0)
+        if max_trades > 0 and _to_number(runtime.get("session_trade_count"), 0) > max_trades:
             self._fail("CAPITAL_SESSION_TRADE_LIMIT_EXCEEDED", details={"runtime": runtime, "settings": settings})
         if not any(item.code.startswith("CAPITAL_") or item.code == "TINY_LIVE_OR_LIVE_WITH_CAPITAL_DISABLED" for item in self.failures):
             self._pass("TRADING_CAPITAL_OK", details={"settings": settings, "runtime": runtime})

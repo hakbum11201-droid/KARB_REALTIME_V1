@@ -23,10 +23,10 @@ tiny_live_calibration:
   require_balance_check: true
   one_shot_first: true
   allowed_pairs:
-    - UPBIT_BITHUMB
+  - UPBIT_BITHUMB
   allowed_symbols:
-    - JTO
-    - SAHARA
+  - JTO
+  - SAHARA
   min_fill_ratio: 0.8
   cancel_after_ms: 1500
   record_only_after_fail: true
@@ -58,14 +58,25 @@ completed_handoff_entry_ttl_ms: 2000
 completed_handoff_domestic_entry_ttl_ms: 2500
 completed_handoff_cross_border_entry_ttl_ms: 1800
 paper_active_symbol_count: 20
-live_active_symbols: [BTC, ETH, XRP, SOL, DOGE, ADA, TRX, SUI]
+live_active_symbols:
+- BTC
+- ETH
+- XRP
+- SOL
+- DOGE
+- ADA
+- TRX
+- SUI
 live_use_dynamic_symbols: false
 stale_recheck_enabled: true
 stale_recheck_paper_only: true
-stale_recheck_pair_ids: [UPBIT_BITHUMB]
+stale_recheck_pair_ids:
+- UPBIT_BITHUMB
 stale_recheck_min_surplus_bp_extra: 10
 stale_recheck_min_net_profit_krw: 10
-stale_recheck_allowed_liquidity: [GOOD, NORMAL]
+stale_recheck_allowed_liquidity:
+- GOOD
+- NORMAL
 stale_recheck_cooldown_sec: 5
 stale_recheck_fast_pass_ms: 1000
 stale_recheck_late_pass_ms: 3000
@@ -81,7 +92,9 @@ wide_spread_recheck_enabled: true
 wide_spread_recheck_paper_only: true
 wide_spread_recheck_min_surplus_bp_extra: 10
 wide_spread_recheck_min_net_profit_krw: 10
-wide_spread_recheck_allowed_liquidity: [GOOD, NORMAL]
+wide_spread_recheck_allowed_liquidity:
+- GOOD
+- NORMAL
 entry_recovery:
   enabled: false
   paper_only: true
@@ -90,9 +103,9 @@ entry_recovery:
   max_queue_size: 50
   min_expected_net_krw: 30
   allowed_reasons:
-    - BUY_LEG_QUOTE_TOO_OLD
-    - SELL_LEG_QUOTE_TOO_OLD
-    - MAX_LEG_QUOTE_TOO_OLD
+  - BUY_LEG_QUOTE_TOO_OLD
+  - SELL_LEG_QUOTE_TOO_OLD
+  - MAX_LEG_QUOTE_TOO_OLD
 profitable_stale_recovery:
   enabled: false
   paper_only: true
@@ -103,11 +116,11 @@ profitable_stale_recovery:
   retry_cooldown_sec: 2
   max_queue_size: 100
   allowed_reasons:
-    - STALE_QUOTE
-    - PAPER_EDGE_FAIL
+  - STALE_QUOTE
+  - PAPER_EDGE_FAIL
   allowed_sources:
-    - rest
-    - stale_recheck
+  - rest
+  - stale_recheck
   require_depth_ok: true
   require_positive_after_refresh: true
 execution:
@@ -118,15 +131,15 @@ execution:
 trading_capital:
   enabled: true
   order_size_mode: FIXED
-  fixed_order_krw: 10000
-  max_order_krw: 10000
-  max_trades_per_session: 3
-  session_cap_krw: 30000
-  daily_loss_limit_krw: 3000
-  upbit_reserve_krw: 50000
-  bithumb_reserve_krw: 50000
-  binance_reserve_usdt: 20
-  compounding_mode: OFF
+  fixed_order_krw: 10000.0
+  max_order_krw: 10000.0
+  max_trades_per_session: 0
+  session_cap_krw: 0.0
+  daily_loss_limit_krw: 3000.0
+  upbit_reserve_krw: 50000.0
+  bithumb_reserve_krw: 50000.0
+  binance_reserve_usdt: 20.0
+  compounding_mode: 'OFF'
   daily_profit_reinvest_ratio: 0.0
   balance_ratio: 0.0
   apply_to_paper: true
@@ -224,11 +237,13 @@ iceberg_min_order_krw: 1000000
 iceberg_slice_count: 3
 iceberg_slice_interval_ms: 120
 iceberg_max_total_slippage_bp: 20
-
-symbols: [BTC, ETH, XRP, DOGE, SOL]
-
+symbols:
+- BTC
+- ETH
+- XRP
+- DOGE
+- SOL
 loop_interval_sec: 1
-
 upbit_fee_bp: 5
 binance_fee_bp: 10
 slippage_bp: 5
@@ -245,22 +260,17 @@ fees:
     taker_fee_bp: 10.0
     maker_fee_bp: 10.0
     bnb_discount_enabled: false
-
 min_net_surplus_bp: 35
 min_expected_profit_krw: 1000
-
 max_position_krw: 100000
 max_one_trade_krw: 50000
-
 min_depth_multiplier: 2.0
 max_spread_bp: 20
 stale_quote_ms: 1500
 max_latency_ms: 800
-
 cooldown_sec: 10
 daily_loss_limit_krw: 30000
 consecutive_fail_limit: 3
-
 paper_timeout_sec: 300
 paper_take_profit_bp: 20
 paper_stop_loss_bp: 20
@@ -296,19 +306,17 @@ quote_freshness:
 notional_sweep:
   enabled: true
   notionals_krw:
-    - 10000
-    - 50000
-    - 100000
+  - 10000
+  - 50000
+  - 100000
   max_symbols: 20
   cache_ttl_sec: 3
   include_only_actionable: false
 wide_spread_entry_min_net_profit_krw: 30
 wide_spread_entry_min_surplus_bp: 40
 wide_spread_entry_max_dynamic_slippage_bp: 20
-
 raw_save_enabled: false
 bounded_collector_enabled: false
-
 log_decisions_only_when_candidate: true
 decision_log_min_surplus_bp: 0
 state_write_interval_sec: 5
@@ -319,16 +327,12 @@ session_summary_interval_sec: 3600
 console_summary_interval_sec: 15
 max_log_file_mb: 20
 log_retention_days: 14
-
 paper_initial_upbit_krw: 1000000
 paper_initial_binance_usdt: 700
 paper_auto_seed_inventory: true
 paper_auto_seed_active_symbols: true
 paper_seed_notional_krw_per_symbol: 100000
 paper_seed_krw_per_venue: 10000000
-
-# paper 검증용 가상 코인 재고
-# 실제 보유량이 아니라 양방향 김프/역김프 검증을 위한 paper inventory임
 paper_initial_coin_qty:
   BTC: 0.002
   ETH: 0.05

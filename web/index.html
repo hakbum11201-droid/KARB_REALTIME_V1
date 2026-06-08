@@ -396,22 +396,23 @@
       <div class="keys-form trading-capital-panel">
         <div class="form-section-label">Trading Capital</div>
         <div class="capital-guidance">
-          First run recommended: <strong>FIXED 10,000 KRW / compounding OFF</strong>.
-          Applies equally to paper, tiny_live, and live. Do not grant withdraw/deposit permissions.
+          세션 최대 거래 횟수와 세션 총 투입 한도는 0 입력 시 제한 없음<br>
+          1회 주문금액, 하루 손실 한도, 예비금 제한은 유지됩니다<br>
+          처음 실거래는 1회 주문금액 10,000원, 복리 OFF 권장
         </div>
-        <div class="form-row"><label for="capital-order-size-mode">Order size mode</label><select id="capital-order-size-mode"><option value="FIXED">FIXED</option><option value="BALANCE_RATIO">BALANCE_RATIO</option></select></div>
-        <div class="form-row"><label for="capital-fixed-order-krw">Fixed order KRW</label><input id="capital-fixed-order-krw" type="number" min="5000" step="1000"></div>
-        <div class="form-row"><label for="capital-max-order-krw">Max order KRW</label><input id="capital-max-order-krw" type="number" min="5000" step="1000"></div>
-        <div class="form-row"><label for="capital-max-trades-per-session">Max trades per session</label><input id="capital-max-trades-per-session" type="number" min="1" step="1"></div>
-        <div class="form-row"><label for="capital-session-cap-krw">Session cap KRW</label><input id="capital-session-cap-krw" type="number" min="5000" step="1000"></div>
-        <div class="form-row"><label for="capital-daily-loss-limit-krw">Daily loss limit KRW</label><input id="capital-daily-loss-limit-krw" type="number" min="0" step="1000"></div>
-        <div class="form-row"><label for="capital-upbit-reserve-krw">Upbit reserve KRW</label><input id="capital-upbit-reserve-krw" type="number" min="0" step="1000"></div>
-        <div class="form-row"><label for="capital-bithumb-reserve-krw">Bithumb reserve KRW</label><input id="capital-bithumb-reserve-krw" type="number" min="0" step="1000"></div>
-        <div class="form-row"><label for="capital-binance-reserve-usdt">Binance reserve USDT</label><input id="capital-binance-reserve-usdt" type="number" min="0" step="1"></div>
-        <div class="form-row"><label for="capital-compounding-mode">Compounding mode</label><select id="capital-compounding-mode"><option value="OFF">OFF</option><option value="DAILY_PROFIT_ONLY">DAILY_PROFIT_ONLY</option><option value="BALANCE_RATIO">BALANCE_RATIO</option></select></div>
+        <div class="form-row"><label for="capital-order-size-mode">주문금액 방식</label><select id="capital-order-size-mode"><option value="FIXED">고정금액</option><option value="BALANCE_RATIO">잔고비율</option></select></div>
+        <div class="form-row"><label for="capital-fixed-order-krw">1회 주문금액</label><input id="capital-fixed-order-krw" type="number" min="5000" step="1000"></div>
+        <div class="form-row"><label for="capital-max-order-krw">1회 최대 주문금액</label><input id="capital-max-order-krw" type="number" min="5000" step="1000"></div>
+        <div class="form-row"><label for="capital-max-trades-per-session">세션 최대 거래 횟수</label><input id="capital-max-trades-per-session" type="number" min="0" step="1"></div>
+        <div class="form-row"><label for="capital-session-cap-krw">세션 총 투입 한도</label><input id="capital-session-cap-krw" type="number" min="0" step="1000"></div>
+        <div class="form-row"><label for="capital-daily-loss-limit-krw">하루 최대 손실 한도</label><input id="capital-daily-loss-limit-krw" type="number" min="0" step="1000"></div>
+        <div class="form-row"><label for="capital-upbit-reserve-krw">업비트 예비 원화</label><input id="capital-upbit-reserve-krw" type="number" min="0" step="1000"></div>
+        <div class="form-row"><label for="capital-bithumb-reserve-krw">빗썸 예비 원화</label><input id="capital-bithumb-reserve-krw" type="number" min="0" step="1000"></div>
+        <div class="form-row"><label for="capital-binance-reserve-usdt">바이낸스 예비 USDT</label><input id="capital-binance-reserve-usdt" type="number" min="0" step="1"></div>
+        <div class="form-row"><label for="capital-compounding-mode">복리 방식</label><select id="capital-compounding-mode"><option value="OFF">사용 안 함</option><option value="DAILY_PROFIT_ONLY">당일 수익 일부만 재투입</option><option value="BALANCE_RATIO">잔고 비율</option></select></div>
         <div class="capital-runtime" id="capital-runtime">Loading capital limits...</div>
         <div class="form-actions">
-          <button class="btn-save" id="btn-save-capital">Save Trading Capital</button>
+          <button class="btn-save" id="btn-save-capital">자금 설정 저장</button>
           <span class="save-result" id="capital-save-result"></span>
         </div>
       </div>

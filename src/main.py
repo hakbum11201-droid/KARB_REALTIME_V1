@@ -1309,7 +1309,8 @@ def apply_capital_limits(plan, balances=None, settings=None, mode=None):
         return _capital_block(plan, 'MAX_ORDER_EXCEEDED')
     if max_order > 0 and selected_notional > max_order + 1e-9:
         return _capital_block(plan, 'MAX_ORDER_EXCEEDED')
-    if int(CAPITAL_RUNTIME.get('session_trade_count', 0) or 0) >= int(settings.get('max_trades_per_session', 3) or 0):
+    max_trades = int(settings.get('max_trades_per_session', 3) or 0)
+    if max_trades > 0 and int(CAPITAL_RUNTIME.get('session_trade_count', 0) or 0) >= max_trades:
         return _capital_block(plan, 'SESSION_TRADE_LIMIT_REACHED')
     session_cap = _to_float(settings.get('session_cap_krw'), 30000)
     if session_cap > 0 and _to_float(CAPITAL_RUNTIME.get('session_used_krw'), 0) + selected_notional > session_cap + 1e-9:

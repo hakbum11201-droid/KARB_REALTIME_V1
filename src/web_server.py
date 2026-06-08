@@ -341,7 +341,7 @@ def _validate_trading_capital_update(body):
     update = {key: body[key] for key in _CAPITAL_UPDATE_FIELDS if key in body}
     data = {**current, **update}
     data['order_size_mode'] = str(data.get('order_size_mode', 'FIXED')).upper()
-    data['compounding_mode'] = str(data.get('compounding_mode', 'OFF')).upper()
+    data['compounding_mode'] = str(data.get('compounding_mode', '') or 'OFF').upper()
     if data['order_size_mode'] not in ('FIXED', 'BALANCE_RATIO'):
         return None, 'INVALID_ORDER_SIZE_MODE'
     if data['compounding_mode'] not in ('OFF', 'DAILY_PROFIT_ONLY', 'BALANCE_RATIO'):
@@ -361,11 +361,13 @@ def _validate_trading_capital_update(body):
         return None, 'FIXED_ORDER_TOO_SMALL'
     if data['max_order_krw'] < 5000:
         return None, 'MAX_ORDER_TOO_SMALL'
+    if data['daily_loss_limit_krw'] <= 0:
+        return None, 'DAILY_LOSS_LIMIT_TOO_SMALL'
     if data['fixed_order_krw'] > data['max_order_krw']:
         return None, 'FIXED_ORDER_EXCEEDS_MAX'
-    if data['session_cap_krw'] < data['fixed_order_krw']:
+    if data['session_cap_krw'] > 0 and data['session_cap_krw'] < data['fixed_order_krw']:
         return None, 'SESSION_CAP_TOO_SMALL'
-    if data['max_trades_per_session'] < 1:
+    if data['max_trades_per_session'] < 0:
         return None, 'MAX_TRADES_TOO_SMALL'
     if data['balance_ratio'] < 0 or data['balance_ratio'] > 0.2:
         return None, 'BALANCE_RATIO_OUT_OF_RANGE'

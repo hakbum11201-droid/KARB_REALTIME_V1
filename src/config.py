@@ -268,7 +268,10 @@ class Config:
             'apply_to_live': True,
         }
         data = self.get('trading_capital', {}) or {}
-        return {**defaults, **data}
+        merged = {**defaults, **data}
+        if not merged.get('compounding_mode'):
+            merged['compounding_mode'] = 'OFF'
+        return merged
     @property
     def trading_capital_enabled(self): return bool(self.trading_capital.get('enabled', True))
     @property
