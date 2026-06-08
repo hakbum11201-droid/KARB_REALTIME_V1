@@ -91,7 +91,7 @@ def start_engine(mode: str) -> dict:
             
         ctrl = control.get_control_state()
         ctrl['mode'] = mode
-        control.set_control_state(ctrl)
+        control._write_control(ctrl)
         
         return {'ok': True, 'message': f'Engine started in {mode} mode.', 'pid': proc.pid}
     except Exception as e:
