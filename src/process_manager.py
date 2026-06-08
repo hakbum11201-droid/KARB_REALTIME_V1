@@ -61,18 +61,28 @@ def start_engine(mode: str) -> dict:
     cmd = ['python', main_script, '--until-stop', '--mode', mode]
     
     try:
-        # Spawn in background
-        if os.name == 'nt':
-            proc = subprocess.Popen(cmd, creationflags=subprocess.CREATE_NO_WINDOW)
-        else:
-            proc = subprocess.Popen(cmd)
+        log_dir = os.path.join(BASE_DIR, '..', 'logs')
+        os.makedirs(log_dir, exist_ok=True)
+        log_filename = f'engine_start_{int(time.time())}.log'
+        log_path = os.path.join(log_dir, log_filename)
+        
+        with open(log_path, 'w', encoding='utf-8') as log_file:
+            if os.name == 'nt':
+                proc = subprocess.Popen(cmd, creationflags=subprocess.CREATE_NO_WINDOW, stdout=log_file, stderr=subprocess.STDOUT)
+            else:
+                proc = subprocess.Popen(cmd, stdout=log_file, stderr=subprocess.STDOUT)
             
         _write_pid(proc.pid)
         
         try:
-            proc.wait(timeout=2.5)
+            proc.wait(timeout=3.0)
             _remove_pid()
-            return {'ok': False, 'message': f'Engine process exited prematurely with code {proc.returncode}.'}
+            return {
+                'ok': False, 
+                'error': 'ENGINE_PROCESS_EXITED_EARLY', 
+                'message': f'Engine exited prematurely (code {proc.returncode}). Check logs/{log_filename}',
+                'pid': proc.pid
+            }
         except subprocess.TimeoutExpired:
             pass
             

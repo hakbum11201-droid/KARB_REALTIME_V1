@@ -133,6 +133,10 @@ on('btn-start-tiny', 'click', async () => {
       body: JSON.stringify({ mode: 'tiny_live' })
     });
     const startData = await startRes.json();
+    if (!startData.ok) {
+      alert(`[오류] ${startData.error || ''}: ${startData.message}`);
+      return;
+    }
     alert(startData.message);
     fetchData();
     if (typeof fetchSystemStatus === 'function') fetchSystemStatus();
