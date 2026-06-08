@@ -559,6 +559,83 @@ def build_tiny_live_preflight(pair_id='UPBIT_BITHUMB', candidate=None, check_bal
         executor_blockers.append('SESSION_TRADE_LIMIT_REACHED')
     if abs(_num(status.get('daily_loss_krw'))) >= _num(cal.get('max_daily_loss_krw'), 3000):
         risk_blockers.append('DAILY_LOSS_LIMIT_REACHED')
+        
+    is_quote_too_old = any(b in candidate_blockers for b in ('LEG_QUOTE_TOO_OLD', 'BUY_LEG_QUOTE_TOO_OLD', 'SELL_LEG_QUOTE_TOO_OLD', 'MAX_LEG_QUOTE_AGE_EXCEEDED'))
+    if is_quote_too_old and _num(plan.get('expected_net_profit_krw')) > 0 and plan.get('depth_ok', False) and symbol and direction in ('UPBIT_BITHUMB_A', 'UPBIT_BITHUMB_B'):
+        import time
+        from upbit_public import UpbitPublic
+        from bithumb_public import BithumbPublic
+        from execution_plan import build_execution_plan
+        
+        started_at = time.time()
+        age_before = max(_num(plan.get('buy_leg_quote_age_ms')), _num(plan.get('sell_leg_quote_age_ms')))
+        
+        try:
+            telemetry = _read_json('telemetry.json')
+            telemetry['final_quote_refresh_count'] = telemetry.get('final_quote_refresh_count', 0) + 1
+            
+            if direction == 'UPBIT_BITHUMB_A':
+                buy_quote = BithumbPublic().fetch_order_book(symbol)
+                sell_quote = UpbitPublic().fetch_order_book(symbol)
+            else:
+                buy_quote = UpbitPublic().fetch_order_book(symbol)
+                sell_quote = BithumbPublic().fetch_order_book(symbol)
+                
+            if buy_quote and sell_quote and buy_quote.get('ok') and sell_quote.get('ok'):
+                if direction == 'UPBIT_BITHUMB_A':
+                    selected['bithumb_ask'] = buy_quote.get('ask', 0)
+                    selected['bithumb_ask_size'] = buy_quote.get('ask_size', 0)
+                    selected['upbit_bid'] = sell_quote.get('bid', 0)
+                    selected['upbit_bid_size'] = sell_quote.get('bid_size', 0)
+                else:
+                    selected['upbit_ask'] = buy_quote.get('ask', 0)
+                    selected['upbit_ask_size'] = buy_quote.get('ask_size', 0)
+                    selected['bithumb_bid'] = sell_quote.get('bid', 0)
+                    selected['bithumb_bid_size'] = sell_quote.get('bid_size', 0)
+                
+                selected['buy_leg_quote'] = buy_quote
+                selected['sell_leg_quote'] = sell_quote
+                
+                plan_signal = {
+                    **selected,
+                    'entry_reason': entry_reason,
+                    'selected_notional_krw': planned_notional,
+                    'order_krw_used': planned_notional,
+                    'selected_qty': selected_qty,
+                    'effective_qty': selected_qty,
+                }
+                new_plan = build_execution_plan(plan_signal, 'tiny_live', cfg)
+                
+                if new_plan and new_plan.get('plan_ok') and new_plan.get('leg_freshness_ok'):
+                    plan = new_plan
+                    plan['entry_reason'] = entry_reason
+                    candidate_blockers = [b for b in candidate_blockers if b not in ('LEG_QUOTE_TOO_OLD', 'BUY_LEG_QUOTE_TOO_OLD', 'SELL_LEG_QUOTE_TOO_OLD', 'MAX_LEG_QUOTE_AGE_EXCEEDED')]
+                    
+                    if not plan.get('depth_ok', False):
+                        if 'DEPTH_INSUFFICIENT' not in candidate_blockers:
+                            candidate_blockers.append('DEPTH_INSUFFICIENT')
+                    else:
+                        candidate_blockers = [b for b in candidate_blockers if b != 'DEPTH_INSUFFICIENT']
+                        
+                    if _num(plan.get('expected_net_profit_krw')) <= 0:
+                        if 'EXPECTED_NET_NOT_POSITIVE' not in candidate_blockers:
+                            candidate_blockers.append('EXPECTED_NET_NOT_POSITIVE')
+                    else:
+                        candidate_blockers = [b for b in candidate_blockers if b != 'EXPECTED_NET_NOT_POSITIVE']
+                    
+                    if new_plan.get('execution_plan_blockers'):
+                        candidate_blockers.extend(new_plan['execution_plan_blockers'])
+                        
+                    telemetry['final_quote_refresh_success_count'] = telemetry.get('final_quote_refresh_success_count', 0) + 1
+                    telemetry['final_quote_refresh_last_symbol'] = symbol
+                    telemetry['final_quote_refresh_last_age_before_ms'] = age_before
+                    telemetry['final_quote_refresh_last_age_after_ms'] = max(_num(plan.get('buy_leg_quote_age_ms')), _num(plan.get('sell_leg_quote_age_ms')))
+                    telemetry['final_quote_refresh_last_fetch_ms'] = (time.time() - started_at) * 1000
+                    
+            _write_json('telemetry.json', telemetry)
+        except Exception:
+            pass
+
     blockers = _unique(
         config_blockers + candidate_blockers + balance_blockers + executor_blockers + risk_blockers
     )
