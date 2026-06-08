@@ -82,6 +82,172 @@ def _read_jsonl_tail(path, n=50):
         return []
 
 
+def _inventory_seed_preview():
+    """Inventory auto-seed preview. 실제 주문 없음."""
+    result = {
+        'ok': True,
+        'seed_needed': False,
+        'valid': False,
+        'venue': '',
+        'symbol': '',
+        'side': '',
+        'order_krw': 0.0,
+        'missing_asset': '',
+        'required_qty': 0.0,
+        'available_qty': 0.0,
+        'shortfall_qty': 0.0,
+        'reason': '',
+        'message': '',
+        'manual_required': False,
+    }
+    preflight = _read_json(os.path.join(RUNTIME_DIR, 'tiny_live_preflight.json'))
+    if not preflight:
+        result['ok'] = False
+        result['reason'] = 'NO_PREFLIGHT'
+        result['message'] = 'No preflight available'
+        return result
+
+    missing_assets = preflight.get('missing_assets', [])
+    blockers = preflight.get('blockers', [])
+    if 'BALANCE_INSUFFICIENT' not in blockers or not missing_assets:
+        result['reason'] = 'BALANCE_SUFFICIENT'
+        result['message'] = 'Balance sufficient. No seed needed.'
+        return result
+
+    seed_asset = None
+    krw_shortfall = False
+    for m in missing_assets:
+        asset_key = str(m.get('asset', ''))
+        if '.' not in asset_key:
+            continue
+        _venue, symbol = asset_key.split('.', 1)
+        if symbol in ('KRW', 'USDT'):
+            if symbol == 'KRW':
+                krw_shortfall = True
+            continue
+        seed_asset = m
+        break
+
+    if not seed_asset:
+        if krw_shortfall:
+            result['manual_required'] = True
+            result['reason'] = 'KRW_SHORTFALL_MANUAL_DEPOSIT_REQUIRED'
+            result['message'] = 'KRW shortfall requires manual deposit.'
+        else:
+            result['message'] = 'No seedable coin shortfall found.'
+        return result
+
+    asset_key = str(seed_asset.get('asset', ''))
+    try:
+        venue, symbol = asset_key.split('.', 1)
+    except ValueError:
+        result['ok'] = False
+        result['reason'] = 'INVALID_ASSET'
+        result['message'] = f'Invalid asset key: {asset_key}'
+        return result
+
+    required_qty = float(seed_asset.get('required', 0) or 0)
+    available_qty = float(seed_asset.get('available', 0) or 0)
+    shortfall_qty = max(required_qty - available_qty, 0.0)
+
+    cfg_seed = cfg.inventory_auto_seed
+    target_krw = float(cfg_seed.get('target_coin_notional_krw', 12000))
+    max_krw = float(cfg_seed.get('max_seed_order_krw', 12000))
+    order_krw = min(target_krw, max_krw)
+
+    result.update({
+        'seed_needed': True,
+        'venue': venue,
+        'symbol': symbol,
+        'side': 'BUY',
+        'order_krw': order_krw,
+        'missing_asset': asset_key,
+        'required_qty': required_qty,
+        'available_qty': available_qty,
+        'shortfall_qty': shortfall_qty,
+    })
+
+    if not cfg_seed.get('enabled'):
+        result['reason'] = 'INVENTORY_AUTO_SEED_DISABLED'
+        result['message'] = 'inventory_auto_seed is disabled in config.'
+        return result
+
+    if order_krw <= 0 or order_krw > max_krw:
+        result['reason'] = 'ORDER_KRW_OUT_OF_RANGE'
+        result['message'] = f'order_krw {order_krw} exceeds max_seed_order_krw {max_krw}'
+        return result
+
+    result['valid'] = True
+    result['message'] = f'Seed preview: BUY {symbol} on {venue} for {order_krw} KRW'
+    return result
+
+
+def _inventory_seed_execute():
+    """Inventory auto-seed 실행. preview 재계산 후 조건 충족 시에만 시장가 매수."""
+    preview = _inventory_seed_preview()
+    cfg_seed = cfg.inventory_auto_seed
+    max_krw = float(cfg_seed.get('max_seed_order_krw', 12000))
+
+    base = {
+        'ok': False,
+        'reason': preview.get('reason', ''),
+        'message': preview.get('message', ''),
+        'preview': preview,
+    }
+
+    if not cfg_seed.get('enabled'):
+        base['reason'] = 'INVENTORY_AUTO_SEED_DISABLED'
+        base['message'] = 'inventory_auto_seed is disabled in config'
+        return base
+
+    if not preview.get('valid'):
+        base['reason'] = preview.get('reason') or 'PREVIEW_INVALID'
+        base['message'] = preview.get('message') or 'Seed preview is not valid'
+        return base
+
+    venue = preview.get('venue', '')
+    symbol = preview.get('symbol', '')
+    order_krw = float(preview.get('order_krw', 0) or 0)
+    if order_krw <= 0 or order_krw > max_krw:
+        base['reason'] = 'ORDER_KRW_OUT_OF_RANGE'
+        base['message'] = f'order_krw {order_krw} is out of allowed range (0, {max_krw}]'
+        return base
+
+    if venue == 'UPBIT':
+        from exchange_clients import UpbitPrivateClient
+        client = UpbitPrivateClient()
+        res = client.place_market_buy_krw(symbol, order_krw)
+    elif venue == 'BITHUMB':
+        client = BithumbPrivateClient()
+        res = client.place_market_buy_krw(symbol, order_krw)
+    else:
+        base['reason'] = 'UNSUPPORTED_VENUE'
+        base['message'] = f'Unsupported venue: {venue}'
+        return base
+
+    log_entry = {
+        'time': time.strftime('%Y-%m-%d %H:%M:%S'),
+        'venue': venue,
+        'symbol': symbol,
+        'order_krw': order_krw,
+        'result': res,
+        'filled_qty': res.get('executed_volume', 0) if isinstance(res, dict) else 0,
+        'avg_price': res.get('avg_price', 0) if isinstance(res, dict) else 0,
+        'fee': res.get('paid_fee', 0) if isinstance(res, dict) else 0,
+    }
+    os.makedirs(LOGS_DIR, exist_ok=True)
+    with open(os.path.join(LOGS_DIR, 'inventory_seed.jsonl'), 'a', encoding='utf-8') as f:
+        f.write(json.dumps(log_entry, ensure_ascii=False) + '\n')
+
+    return {
+        'ok': True,
+        'reason': '',
+        'message': f'Inventory seed executed for {venue} {symbol}',
+        'result': res,
+        'preview': preview,
+    }
+
+
 def _git_value(args):
     try:
         out = subprocess.check_output(
@@ -1226,6 +1392,18 @@ class KarbHandler(SimpleHTTPRequestHandler):
         elif self.path == '/api/inventory/seed-config':
             self._send_json({'ok': True, 'config': cfg.inventory_auto_seed})
 
+        elif self.path == '/api/inventory/seed-preview':
+            if not self._is_localhost():
+                self._send_403()
+                return
+            try:
+                self._send_json(_inventory_seed_preview())
+            except Exception as e:
+                self._send_json({
+                    'ok': False, 'seed_needed': False, 'valid': False,
+                    'reason': 'PREVIEW_ERROR', 'message': f'Error: {e}',
+                })
+
         else:
             super().do_GET()
 
@@ -1445,125 +1623,25 @@ class KarbHandler(SimpleHTTPRequestHandler):
             if not self._is_localhost():
                 self._send_403()
                 return
-            
             try:
-                preflight = _read_json(os.path.join(RUNTIME_DIR, 'tiny_live_preflight.json'))
-                if not preflight:
-                    self._send_json({'seed_needed': False, 'message': 'No preflight available'})
-                    return
-                
-                missing_assets = preflight.get('missing_assets', [])
-                blockers = preflight.get('blockers', [])
-                
-                if 'BALANCE_INSUFFICIENT' not in blockers or not missing_assets:
-                    self._send_json({'seed_needed': False, 'message': 'Balance sufficient. No seed needed.'})
-                    return
-                
-                seed_asset = None
-                for m in missing_assets:
-                    asset = m.get('asset', '')
-                    if 'KRW' not in asset and 'USDT' not in asset:
-                        seed_asset = m
-                        break
-                
-                if not seed_asset:
-                    self._send_json({'seed_needed': False, 'message': 'KRW or USDT is missing. Please deposit manually.'})
-                    return
-                
-                venue, symbol = seed_asset['asset'].split('.')
-                shortfall = seed_asset['shortfall']
-                
-                cfg_seed = cfg.inventory_auto_seed
-                if not cfg_seed.get('enabled'):
-                    self._send_json({'seed_needed': False, 'message': 'inventory_auto_seed is disabled in config.'})
-                    return
-                
-                target_krw = float(cfg_seed.get('target_coin_notional_krw', 12000))
-                max_krw = float(cfg_seed.get('max_seed_order_krw', 12000))
-                
-                order_krw = min(target_krw, max_krw)
-                
-                self._send_json({
-                    'seed_needed': True,
-                    'venue': venue,
-                    'symbol': symbol,
-                    'missing_qty': shortfall,
-                    'order_krw': order_krw
-                })
+                self._send_json(_inventory_seed_preview())
             except Exception as e:
-                self._send_json({'seed_needed': False, 'message': f'Error: {e}'})
+                self._send_json({
+                    'ok': False, 'seed_needed': False, 'valid': False,
+                    'reason': 'PREVIEW_ERROR', 'message': f'Error: {e}',
+                })
 
         elif self.path == '/api/inventory/seed-execute':
             if not self._is_localhost():
                 self._send_403()
                 return
-            
             try:
-                cfg_seed = cfg.inventory_auto_seed
-                if not cfg_seed.get('enabled'):
-                    self._send_json({'ok': False, 'message': 'inventory_auto_seed is disabled in config'})
-                    return
-                    
-                preflight = _read_json(os.path.join(RUNTIME_DIR, 'tiny_live_preflight.json'))
-                if not preflight:
-                    self._send_json({'ok': False, 'message': 'No preflight available'})
-                    return
-                
-                missing_assets = preflight.get('missing_assets', [])
-                blockers = preflight.get('blockers', [])
-                
-                if 'BALANCE_INSUFFICIENT' not in blockers or not missing_assets:
-                    self._send_json({'ok': False, 'message': 'Balance sufficient. No seed needed.'})
-                    return
-                
-                seed_asset = None
-                for m in missing_assets:
-                    asset = m.get('asset', '')
-                    if 'KRW' not in asset and 'USDT' not in asset:
-                        seed_asset = m
-                        break
-                
-                if not seed_asset:
-                    self._send_json({'ok': False, 'message': 'KRW/USDT missing, manual deposit needed'})
-                    return
-                
-                venue, symbol = seed_asset['asset'].split('.')
-                target_krw = float(cfg_seed.get('target_coin_notional_krw', 12000))
-                max_krw = float(cfg_seed.get('max_seed_order_krw', 12000))
-                order_krw = min(target_krw, max_krw)
-                
-                if venue == 'UPBIT':
-                    from exchange_clients import UpbitPrivateClient
-                    client = UpbitPrivateClient()
-                    res = client.place_order(symbol, 'BUY', 'MARKET', None, order_krw)
-                elif venue == 'BITHUMB':
-                    from bithumb_private import BithumbPrivateClient
-                    client = BithumbPrivateClient()
-                    res = client.place_order(symbol, 'BUY', 'MARKET', None, order_krw)
-                else:
-                    self._send_json({'ok': False, 'message': f'Unsupported venue: {venue}'})
-                    return
-                
-                import time
-                log_entry = {
-                    'time': time.strftime('%Y-%m-%d %H:%M:%S'),
-                    'venue': venue,
-                    'symbol': symbol,
-                    'order_krw': order_krw,
-                    'result': res,
-                    'filled_qty': res.get('executed_qty', 0) if isinstance(res, dict) else 0,
-                    'avg_price': res.get('average_price', 0) if isinstance(res, dict) else 0,
-                    'fee': res.get('paid_fee', 0) if isinstance(res, dict) else 0,
-                }
-                
-                log_dir = os.path.join(os.path.dirname(__file__), '..', 'logs')
-                os.makedirs(log_dir, exist_ok=True)
-                with open(os.path.join(log_dir, 'inventory_seed.jsonl'), 'a', encoding='utf-8') as f:
-                    f.write(json.dumps(log_entry, ensure_ascii=False) + '\n')
-                    
-                self._send_json({'ok': True, 'message': f'Inventory seed executed for {venue} {symbol}', 'result': res})
+                self._send_json(_inventory_seed_execute())
             except Exception as e:
-                self._send_json({'ok': False, 'message': f'Execution failed: {e}'})
+                self._send_json({
+                    'ok': False, 'reason': 'EXECUTION_ERROR',
+                    'message': f'Execution failed: {e}',
+                })
 
         elif self.path == '/api/inventory/seed-config':
             if not self._is_localhost():
