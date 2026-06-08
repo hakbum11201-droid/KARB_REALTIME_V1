@@ -103,7 +103,34 @@ async function startEngine(mode) {
 }
 
 on('btn-start-paper', 'click', () => startEngine('paper'));
-on('btn-start-tiny', 'click', () => startEngine('tiny_live'));
+on('btn-start-tiny', 'click', async () => {
+  try {
+    const pair = window.selectedPairId || 'UPBIT_BITHUMB';
+    const body = {
+      enabled: true,
+      calibration_enabled: true,
+      upbit_bithumb_live_enabled: true,
+      live_order_enabled: true,
+      bithumb_private_enabled: true,
+      enable_live_trading: true,
+      pair_id: pair
+    };
+    const armRes = await fetch('/api/tiny-live/arm', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    const armData = await armRes.json();
+    if (!armData.ok) {
+      alert(`Tiny Live ARM Blocked: ${armData.blockers?.join(', ')}`);
+    } else {
+      console.log('Tiny Live ARMED');
+    }
+  } catch (e) {
+    console.error('ARM failed', e);
+  }
+  startEngine('tiny_live');
+});
 on('btn-start-live', 'click', () => startEngine('live'));
 
 on('btn-stop-engine', 'click', async () => {

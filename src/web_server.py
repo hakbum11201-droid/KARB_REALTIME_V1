@@ -1246,12 +1246,28 @@ class KarbHandler(SimpleHTTPRequestHandler):
                 self._send_403()
                 return
             body = self._request_json()
-            self._send_guarded_json(lambda: tiny_live_executor.arm(body.get('pair_id', 'UPBIT_BINANCE')))
+            if body:
+                cfg._cfg['tiny_live_enabled'] = bool(body.get('enabled', True))
+                if 'calibration_session' not in cfg._cfg:
+                    cfg._cfg['calibration_session'] = {}
+                cfg._cfg['calibration_session']['enabled'] = bool(body.get('calibration_enabled', True))
+                cfg._cfg['upbit_bithumb_live_enabled'] = bool(body.get('upbit_bithumb_live_enabled', True))
+                cfg._cfg['live_order_enabled'] = bool(body.get('live_order_enabled', True))
+                cfg._cfg['bithumb_private_enabled'] = bool(body.get('bithumb_private_enabled', True))
+                cfg._cfg['enable_live_trading'] = True
+                with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
+                    yaml.safe_dump(cfg._cfg, f, allow_unicode=True, sort_keys=False)
+            self._send_guarded_json(lambda: tiny_live_executor.arm(body.get('pair_id', 'UPBIT_BITHUMB')))
 
         elif self.path == '/api/tiny-live/disarm':
             if not self._is_localhost():
                 self._send_403()
                 return
+            cfg._cfg['tiny_live_enabled'] = False
+            if 'calibration_session' in cfg._cfg:
+                cfg._cfg['calibration_session']['enabled'] = False
+            with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
+                yaml.safe_dump(cfg._cfg, f, allow_unicode=True, sort_keys=False)
             self._send_guarded_json(tiny_live_executor.disarm)
 
         elif self.path == '/api/tiny-live/execute-once':
@@ -1303,6 +1319,12 @@ class KarbHandler(SimpleHTTPRequestHandler):
             if not self._is_localhost():
                 self._send_403()
                 return
+            cfg._cfg['tiny_live_enabled'] = False
+            if 'calibration_session' in cfg._cfg:
+                cfg._cfg['calibration_session']['enabled'] = False
+            with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
+                yaml.safe_dump(cfg._cfg, f, allow_unicode=True, sort_keys=False)
+            tiny_live_executor.disarm()
             result = process_manager.stop_engine()
             self._send_json(result)
 

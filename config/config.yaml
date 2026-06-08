@@ -1,7 +1,7 @@
 mode: paper
-enable_live_trading: false
-tiny_live_enabled: false
-live_order_enabled: false
+enable_live_trading: true
+tiny_live_enabled: true
+live_order_enabled: true
 live_mode_enabled: false
 withdrawals_enabled: false
 futures_hedge_enabled: false
@@ -136,9 +136,9 @@ trading_capital:
   max_trades_per_session: 0
   session_cap_krw: 0.0
   daily_loss_limit_krw: 3000.0
-  upbit_reserve_krw: 50000.0
-  bithumb_reserve_krw: 50000.0
-  binance_reserve_usdt: 20.0
+  upbit_reserve_krw: 0.0
+  bithumb_reserve_krw: 0.0
+  binance_reserve_usdt: 0.0
   compounding_mode: 'OFF'
   daily_profit_reinvest_ratio: 0.0
   balance_ratio: 0.0
@@ -188,10 +188,10 @@ enabled_strategy_pairs:
   BINANCE_MAKER_DOMESTIC_TAKER: false
 bithumb_fee_bp: 4
 bithumb_public_enabled: true
-bithumb_private_enabled: false
+bithumb_private_enabled: true
 upbit_bithumb_paper_enabled: true
 upbit_bithumb_tiny_live_enabled: false
-upbit_bithumb_live_enabled: false
+upbit_bithumb_live_enabled: true
 upbit_bithumb_order_krw: 10000
 upbit_bithumb_max_order_krw: 20000
 upbit_bithumb_daily_loss_limit_krw: 10000
@@ -339,3 +339,5 @@ paper_initial_coin_qty:
   XRP: 300
   DOGE: 1000
   SOL: 3
+calibration_session:
+  enabled: true
