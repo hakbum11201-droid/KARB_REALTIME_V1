@@ -1250,7 +1250,10 @@ class KarbHandler(SimpleHTTPRequestHandler):
                 cfg._cfg['tiny_live_enabled'] = bool(body.get('enabled', True))
                 if 'calibration_session' not in cfg._cfg:
                     cfg._cfg['calibration_session'] = {}
+                if 'tiny_live_calibration' not in cfg._cfg:
+                    cfg._cfg['tiny_live_calibration'] = {}
                 cfg._cfg['calibration_session']['enabled'] = bool(body.get('calibration_enabled', True))
+                cfg._cfg['tiny_live_calibration']['enabled'] = bool(body.get('calibration_enabled', True))
                 cfg._cfg['upbit_bithumb_live_enabled'] = bool(body.get('upbit_bithumb_live_enabled', True))
                 cfg._cfg['live_order_enabled'] = bool(body.get('live_order_enabled', True))
                 cfg._cfg['bithumb_private_enabled'] = bool(body.get('bithumb_private_enabled', True))
@@ -1266,6 +1269,8 @@ class KarbHandler(SimpleHTTPRequestHandler):
             cfg._cfg['tiny_live_enabled'] = False
             if 'calibration_session' in cfg._cfg:
                 cfg._cfg['calibration_session']['enabled'] = False
+            if 'tiny_live_calibration' in cfg._cfg:
+                cfg._cfg['tiny_live_calibration']['enabled'] = False
             with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
                 yaml.safe_dump(cfg._cfg, f, allow_unicode=True, sort_keys=False)
             self._send_guarded_json(tiny_live_executor.disarm)
@@ -1322,6 +1327,8 @@ class KarbHandler(SimpleHTTPRequestHandler):
             cfg._cfg['tiny_live_enabled'] = False
             if 'calibration_session' in cfg._cfg:
                 cfg._cfg['calibration_session']['enabled'] = False
+            if 'tiny_live_calibration' in cfg._cfg:
+                cfg._cfg['tiny_live_calibration']['enabled'] = False
             with open(CONFIG_PATH, 'w', encoding='utf-8') as f:
                 yaml.safe_dump(cfg._cfg, f, allow_unicode=True, sort_keys=False)
             tiny_live_executor.disarm()
