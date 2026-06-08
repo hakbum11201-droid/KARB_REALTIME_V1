@@ -2012,7 +2012,9 @@ def main():
 
     # ── 모드 가드 ────────────────────────────────────────────────────────
     try:
-        assert_live_credentials_available(cfg.mode)
+        cal = cfg.tiny_live_calibration if cfg.mode == 'tiny_live' else cfg.get('calibration_session', {})
+        allowed_pairs = cal.get('allowed_pairs', []) if isinstance(cal, dict) else []
+        assert_live_credentials_available(cfg.mode, allowed_pairs)
     except RuntimeError as e:
         print(f"[STARTUP ERROR] {e}")
         sys.exit(1)

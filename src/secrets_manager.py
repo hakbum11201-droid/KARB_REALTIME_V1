@@ -71,7 +71,7 @@ def get_fx_api_key() -> str | None:
     return _get_env("FX_API_KEY")
 
 
-def assert_live_credentials_available(mode: str) -> None:
+def assert_live_credentials_available(mode: str, allowed_pairs: list[str] = None) -> None:
     """
     tiny_live / live 진입 전 반드시 호출.
     키가 없으면 RuntimeError → sys.exit(1).
@@ -80,8 +80,27 @@ def assert_live_credentials_available(mode: str) -> None:
     if mode == "paper":
         return
     if mode in ("tiny_live", "live"):
-        get_upbit_credentials()
-        get_binance_credentials()
+        if not allowed_pairs:
+            get_upbit_credentials()
+            get_binance_credentials()
+            return
+            
+        uses_binance = any('BINANCE' in p for p in allowed_pairs)
+        uses_upbit = any('UPBIT' in p for p in allowed_pairs)
+        uses_bithumb = any('BITHUMB' in p for p in allowed_pairs)
+        
+        if uses_upbit:
+            get_upbit_credentials()
+        if uses_bithumb:
+            get_bithumb_credentials()
+            
+        if uses_binance:
+            get_binance_credentials()
+        else:
+            try:
+                get_binance_credentials()
+            except RuntimeError:
+                print("[SecretsManager] Warning: Binance keys are missing, but no Binance pair is active. Continuing.")
     else:
         raise ValueError(f"[SecretsManager] 알 수 없는 모드: {mode}")
 
