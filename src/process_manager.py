@@ -66,11 +66,14 @@ def start_engine(mode: str) -> dict:
         log_filename = f'engine_start_{int(time.time())}.log'
         log_path = os.path.join(log_dir, log_filename)
         
+        env = os.environ.copy()
+        env['PYTHONUTF8'] = '1'
+        env['PYTHONIOENCODING'] = 'utf-8'
         with open(log_path, 'w', encoding='utf-8') as log_file:
             if os.name == 'nt':
-                proc = subprocess.Popen(cmd, creationflags=subprocess.CREATE_NO_WINDOW, stdout=log_file, stderr=subprocess.STDOUT)
+                proc = subprocess.Popen(cmd, env=env, creationflags=subprocess.CREATE_NO_WINDOW, stdout=log_file, stderr=subprocess.STDOUT)
             else:
-                proc = subprocess.Popen(cmd, stdout=log_file, stderr=subprocess.STDOUT)
+                proc = subprocess.Popen(cmd, env=env, stdout=log_file, stderr=subprocess.STDOUT)
             
         _write_pid(proc.pid)
         
